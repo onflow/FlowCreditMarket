@@ -15,7 +15,7 @@ access(all) contract AlpenFlow {
             destroy from
         }
 
-        access(Withdraw) fun withdraw(amount: UFix64): @FlowVault {
+        access(Withdraw) fun withdraw(amount: UFix64): @{Vault} {
             return <- create FlowVault()
         }
 
@@ -26,42 +26,89 @@ access(all) contract AlpenFlow {
 
     access(all) struct interface Sink {
         access(all) view fun sinkType(): Type
-        access(all) fun minimumCapacity(): UFix64
-        access(all) fun depositCapacity(from: auth(Withdraw) &{Vault})
+        access(all) view fun availableCapacity(): UFix64
+        access(all) fun depositAvailable(from: auth(Withdraw) &{Vault})
     }
 
     access(all) struct interface Source {
         access(all) view fun sourceType(): Type
-        access(all) fun minimumAvailable(): UFix64
+        access(all) view fun availableBalance(): UFix64
         access(all) fun withdrawAvailable(maxAmount: UFix64): @{Vault}
     }
 
-    access(all) struct DummySink: Sink {
+    access(all) struct interface PriceOracle {
+        access(all) view fun unitOfAccount(): Type
+        access(all) view fun price(token: Type): UFix64
+    }
+
+    access(all) struct interface Flasher {
+        access(all) view fun borrowType(): Type
+        access(all) fun flashLoan(amount: UFix64, sink: {Sink}, source: {Source}): UFix64
+    }
+
+    access(all) struct interface SwapQuote {
+        access(all) let amountIn: UFix64
+        access(all) let amountOut: UFix64
+    }
+
+    access(all) struct interface Swapper {
+        access(all) view fun inType(): Type
+        access(all) view fun outType(): Type
+        access(all) view fun quoteIn(outAmount: UFix64): {SwapQuote}
+        access(all) view fun quoteOut(inAmount: UFix64): {SwapQuote}
+        access(all) fun swap(inVault: @{Vault}, quote:{SwapQuote}?): @{Vault}
+        access(all) fun swapBack(residual: @{Vault}, quote:{SwapQuote}): @{Vault}
+    }
+
+    access(all) struct SwapSink: Sink {
+        access(self) let swapper: {Swapper}
+        access(self) let sink: {Sink}
+
+        init(swapper: {Swapper}, sink: {Sink}) {
+            pre {
+                swapper.outType() == sink.sinkType()
+            }
+
+            self.swapper = swapper
+            self.sink = sink
+        }
+
         access(all) view fun sinkType(): Type {
-            return self.getType()
+            return self.swapper.inType()
         }
 
-        access(all) fun minimumCapacity(): UFix64 {
-            return 0.0
+        access(all) view fun availableCapacity(): UFix64 {
+            return self.swapper.quoteIn(outAmount: self.sink.availableCapacity()).amountIn
         }
 
-        access(all) fun depositCapacity(from: auth(Withdraw) &{Vault}) {
+        access(all) fun depositAvailable(from: auth(Withdraw) &{Vault}) {
+            let limit = self.sink.availableCapacity()
+
+            let swapQuote = self.swapper.quoteIn(outAmount: limit)
+            let sinkLimit = swapQuote.amountIn
+            let swapVault <- from.withdraw(amount: 0.0)
+
+            if sinkLimit < swapVault.balance {
+                // The sink is limited to fewer tokens that we have available. Only swap
+                // the amount we need to meet the sink limit.
+                swapVault.deposit(from: <-from.withdraw(amount: sinkLimit))
+            }
+            else {
+                // The sink can accept all of the available tokens, so we swap everything
+                swapVault.deposit(from: <-from.withdraw(amount: from.balance))
+            }
+
+            let swappedTokens <- self.swapper.swap(inVault: <-swapVault, quote: swapQuote)
+            self.sink.depositAvailable(from: &swappedTokens as auth(Withdraw) &{Vault})
+
+            if swappedTokens.balance > 0.0 {
+                from.deposit(from: <-self.swapper.swapBack(residual: <-swappedTokens, quote: swapQuote))
+            } else {
+                destroy swappedTokens
+            }
         }
     }
 
-    access(all) struct DummySource: Source {
-        access(all) view fun sourceType(): Type {
-            return self.getType()
-        }
-
-        access(all) fun minimumAvailable(): UFix64 {
-            return 0.0
-        }
-
-        access(all) fun withdrawAvailable(maxAmount: UFix64): @{Vault} {
-            return <- create FlowVault()
-        }
-    }
 
     // AlpenFlow starts here!
 
@@ -117,9 +164,13 @@ access(all) contract AlpenFlow {
         // of magnitude as the actual balance (thus we can use UFix64 for the scaled balance).
         access(all) var scaledBalance: UFix64
 
-        init() {
+        view init() {
             self.direction = BalanceDirection.Credit
             self.scaledBalance = 0.0
+        }
+
+        access(all) view fun copy(): InternalBalance {
+            return self
         }
 
         access(all) fun recordDeposit(amount: UFix64, tokenState: auth(EImplementation) &TokenState) {
@@ -220,9 +271,19 @@ access(all) contract AlpenFlow {
 
     access(all) struct InternalPosition {
         access(mapping ImplementationUpdates) var balances: {Type: InternalBalance}
+        access(EImplementation) var targetHealth: UFix64
+        access(EImplementation) var minHealth: UFix64
+        access(EImplementation) var maxHealth: UFix64
+        access(EImplementation) var sink: {Sink}?
+        access(EImplementation) var source: {Source}?
 
-        init() {
+        view init() {
             self.balances = {}
+            self.targetHealth = 1.3
+            self.minHealth = 1.1
+            self.maxHealth = 1.5
+            self.sink = nil
+            self.source = nil
         }
     }
 
@@ -244,7 +305,7 @@ access(all) contract AlpenFlow {
     // A multiplication function for interest calcuations. It assumes that both values are very close to 1
     // and represent fixed point numbers with 16 decimal places of precision.
     access(self) fun interestMul(_ a: UInt64, _ b: UInt64): UInt64 {
-        let aScaled = a / 100000000
+        let aScaled: UInt64 = a / 100000000
         let bScaled = b / 100000000
 
         return aScaled * bScaled
@@ -270,6 +331,8 @@ access(all) contract AlpenFlow {
     access(self) fun compoundInterestIndex(oldIndex: UInt64, perSecondRate: UInt64, elapsedSeconds: UFix64): UInt64 {
         var result = oldIndex
         var current = perSecondRate
+
+        // Truncate the elapsed time to an integer number of seconds.
         var secondsCounter = UInt64(elapsedSeconds)
 
         while secondsCounter > 0 {
@@ -283,15 +346,15 @@ access(all) contract AlpenFlow {
         return result
     }
 
-    access(self) fun scaledBalanceToTrueBalance(scaledBalance: UFix64, interestIndex: UInt64): UFix64 {
+    access(self) view fun scaledBalanceToTrueBalance(scaledBalance: UFix64, interestIndex: UInt64): UFix64 {
         // The interest index is essentially a fixed point number with 16 decimal places, we convert
-        // it to a UFix64 by copying the byte representation, and then dividing by 10^8 (leaving and
+        // it to a UFix64 by copying the byte representation, and then dividing by 10^8 (leaving an
         // additional 10^8 as required for the UFix64 representation).
         let indexMultiplier = UFix64.fromBigEndianBytes(interestIndex.toBigEndianBytes())! / 100000000.0
         return scaledBalance * indexMultiplier
     }
 
-    access(self) fun trueBalanceToScaledBalance(trueBalance: UFix64, interestIndex: UInt64): UFix64 {
+    access(self) view fun trueBalanceToScaledBalance(trueBalance: UFix64, interestIndex: UInt64): UFix64 {
         // The interest index is essentially a fixed point number with 16 decimal places, we convert
         // it to a UFix64 by copying the byte representation, and then dividing by 10^8 (leaving and
         // additional 10^8 as required for the UFix64 representation).
@@ -300,7 +363,7 @@ access(all) contract AlpenFlow {
     }
 
     access(all) struct TokenState {
-        access(all) var lastUpdate: UFix64
+        access(all) var lastUpdateTime: UFix64
         access(all) var totalCreditBalance: UFix64
         access(all) var totalDebitBalance: UFix64
         access(all) var creditInterestIndex: UInt64
@@ -323,10 +386,12 @@ access(all) contract AlpenFlow {
 
         access(all) fun updateInterestIndices() {
             let currentTime = getCurrentBlock().timestamp
-            let timeDelta = currentTime - self.lastUpdate
-            self.creditInterestIndex = AlpenFlow.compoundInterestIndex(oldIndex: self.creditInterestIndex, perSecondRate: self.currentCreditRate, elapsedSeconds: timeDelta)
-            self.debitInterestIndex = AlpenFlow.compoundInterestIndex(oldIndex: self.debitInterestIndex, perSecondRate: self.currentDebitRate, elapsedSeconds: timeDelta)
-            self.lastUpdate = currentTime
+            let timeDelta = currentTime - self.lastUpdateTime
+            if timeDelta > 0.0 {
+                self.creditInterestIndex = AlpenFlow.compoundInterestIndex(oldIndex: self.creditInterestIndex, perSecondRate: self.currentCreditRate, elapsedSeconds: timeDelta)
+                self.debitInterestIndex = AlpenFlow.compoundInterestIndex(oldIndex: self.debitInterestIndex, perSecondRate: self.currentDebitRate, elapsedSeconds: timeDelta)
+                self.lastUpdateTime = currentTime
+            }
         }
 
         access(all) fun updateInterestRates() {
@@ -338,8 +403,14 @@ access(all) contract AlpenFlow {
             self.currentDebitRate = AlpenFlow.perSecondInterestRate(yearlyRate: debitRate)
         }
 
+        access(EImplementation) fun setInterestCurve(interestCurve: {InterestCurve}) {
+            self.updateInterestIndices()
+            self.interestCurve = interestCurve
+            self.updateInterestRates()
+        }
+
         init(interestCurve: {InterestCurve}) {
-            self.lastUpdate = 0.0
+            self.lastUpdateTime = 0.0
             self.totalCreditBalance = 0.0
             self.totalDebitBalance = 0.0
             self.creditInterestIndex = 10000000000000000
@@ -347,6 +418,51 @@ access(all) contract AlpenFlow {
             self.currentCreditRate = 10000000000000000
             self.currentDebitRate = 10000000000000000
             self.interestCurve = interestCurve
+        }
+    }
+
+    // A convenience function for computing a health value from effective collateral and debt values.
+    // Most of the time, this is just effectiveCollateral / effectiveDebt, but we need to
+    // handle the special cases where either value is zero, or where the debt is so small
+    // relative to the collateral that it would cause an overflow.
+    //
+    // Returns 0.0 if there is no collateral, and UFix64.max if there is no debt, or the debt
+    // is so small relative to the collateral that division would cause an overflow.
+    access(all) view fun healthComputation(effectiveCollateral: UFix64, effectiveDebt: UFix64): UFix64 {
+        var health = 0.0
+
+        if effectiveCollateral == 0.0 {
+            health = 0.0
+        } else if effectiveDebt == 0.0 {
+            health = UFix64.max
+        } else if (effectiveDebt / effectiveCollateral) == 0.0 {
+            // If we get to this point, both debt and collateral are non-zero, if this
+            // division rounds to zero, the debt is so small relative to the collateral
+            // that the health is essentially infinite.
+            // Two notes:
+            //   - The division above is intentially opposite to the normal health
+            //     computation (below). We are trying to catch the situation where the debt
+            //     is very small relative to the collateral, and the normal division
+            //     could overflow in that case. (For example, I have $1,000,000,000 in
+            //     collateral, and $0.00000001 in debt.)
+            //  - Huh! I seem to have forgotten the other thing... :thinking_face: 
+            health = UFix64.max
+        } else {
+            health = effectiveCollateral / effectiveDebt
+        }
+
+        return health
+    }
+
+    access(all) struct BalanceSheet {
+        access(all) let effectiveCollateral: UFix64
+        access(all) let effectiveDebt: UFix64
+        access(all) let health: UFix64
+
+        view init(effectiveCollateral: UFix64, effectiveDebt: UFix64) {
+            self.effectiveCollateral = effectiveCollateral
+            self.effectiveDebt = effectiveDebt
+            self.health = AlpenFlow.healthComputation(effectiveCollateral: effectiveCollateral, effectiveDebt: effectiveDebt)
         }
     }
 
@@ -368,29 +484,58 @@ access(all) contract AlpenFlow {
         // The default token type used as the "unit of account" for the pool.
         access(self) let defaultToken: Type
 
-        // The exchange rate between the default token and each other token supported by the pool.
-        // Multiplying a quantity of the specified token by the amount stored in this dictionary
-        // will provide the value of that quantity of tokens in terms of the default token.
-        access(self) var exchangeRates: {Type: UFix64}
+        // A price oracle that will return the price of each token in terms of the default token.
+        access(self) var priceOracle: {PriceOracle}
 
-        // The liquidation threshold for each token.
-        access(self) var liquidationThresholds: {Type: UFix64}
+        // These dictionaries determine borrowing limits. Each token has a collateral factor and a
+        // borrow factor.
+        //
+        // When determining the total collateral amount that can be borrowed against, the value of the
+        // token (as given by the oracle) is multiplied by the collateral factor. So, a token with a
+        // collateral factor of 0.8 would only allow you to borrow 80% as much as if you had a the same
+        // value of a token with a collateral factor of 1.0. The total "effective collateral" for a
+        // position is the value of each token multiplied by it collateral factor.
+        //
+        // At the same time, the "borrow factor" determines if the user can borrow against all of that
+        // effective collateral, or if they can only borrow a portion of it to manage risk.
+        // When determining the health the a position, the total debt is DIVIDED by the borrow factor
+        // to determine the maximum amount that can be borrowed.
+        //
+        // So, if a token has a borrow factor of 0.8, you can only borrow 80% as much as you could borrow
+        // of a token with a borrow factor of 1.0.
+        //
+        // Prelaunch, our best guess for reasonable borrow and collateral factors are:
+        //      Approved stables: (collateralFactor: 1.0, borrowFactor: 0.9)
+        //      Established cryptos: (collateralFactor: 0.8, borrowFactor: 0.8)
+        //      Speculative cryptos: (collateralFactor: 0.6, borrowFactor: 0.6)
+        //      Native stable: (collateralFactor: 1.0, borrowFactor: 1.0)
+        access(self) var collateralFactor: {Type: UFix64}
+        access(self) var borrowFactor: {Type: UFix64}
 
-        init(defaultToken: Type, defaultTokenThreshold: UFix64) {
+        init(defaultToken: Type, priceOracle: {PriceOracle}) {
+            pre {
+                priceOracle.unitOfAccount() == defaultToken: "Price oracle must return prices in terms of the default token"
+            }
+
             self.version = 0
             self.globalLedger = {}
             self.positions = {}
             self.reserves <- {}
             self.defaultToken = defaultToken
-            self.exchangeRates = {defaultToken: 1.0}
-            self.liquidationThresholds = {defaultToken: defaultTokenThreshold}
+            self.priceOracle = priceOracle
+            self.collateralFactor = {defaultToken: 1.0}
+            self.borrowFactor = {defaultToken: 1.0}
         }
 
         access(EPosition) fun deposit(pid: UInt64, funds: @{Vault}) {
             pre {
                 self.positions[pid] != nil: "Invalid position ID"
                 self.globalLedger[funds.getType()] != nil: "Invalid token type"
-                funds.balance > 0.0: "Deposit amount must be positive"
+            }
+
+            if funds.balance == 0.0 {
+                destroy funds
+                return
             }
 
             // Get a reference to the user's position and global token state for the affected token.
@@ -418,7 +563,7 @@ access(all) contract AlpenFlow {
             reserveVault.deposit(from: <-funds)
         }
 
-        access(EPosition) fun withdraw(pid: UInt64, amount: UFix64, type: Type): @{Vault} {
+        access(EPosition) fun withdraw(pid: UInt64, amount: UFix64, type: Type, useUpstreamLiquidity: Bool): @{Vault} {
             pre {
                 self.positions[pid] != nil: "Invalid position ID"
                 self.globalLedger[type] != nil: "Invalid token type"
@@ -451,15 +596,21 @@ access(all) contract AlpenFlow {
             return <- reserveVault.withdraw(amount: amount)
         }
 
-        // Returns the health of the given position, which is the ratio of the position's effective collateral
-        // to its debt (as denominated in the default token). ("Effective collateral" means the
-        // value of each credit balance times the liquidation threshold for that token. i.e. the maximum borrowable amount)
-        access(all) fun positionHealth(pid: UInt64): UFix64 {
+        access(all) view fun getAvailableCapacity(pid: UInt64, type: Type): UFix64 {
+            return 0.0
+        }
+        
+        access(all) view fun getAvailableBalance(pid: UInt64, type: Type): UFix64 {
+            return 0.0
+        }
+
+        access(self) view fun positionBalanceSheet(pid: UInt64): BalanceSheet {
             let position = &self.positions[pid]! as auth(EImplementation) &InternalPosition
+            let priceOracle = &self.priceOracle as &{PriceOracle}
 
             // Get the position's collateral and debt values in terms of the default token.
             var effectiveCollateral = 0.0
-            var totalDebt = 0.0
+            var effectiveDebt = 0.0
 
             for type in position.balances.keys {
                 let balance = position.balances[type]!
@@ -467,18 +618,546 @@ access(all) contract AlpenFlow {
                 if balance.direction == BalanceDirection.Credit {
                     let trueBalance = AlpenFlow.scaledBalanceToTrueBalance(scaledBalance: balance.scaledBalance,
                         interestIndex: tokenState.creditInterestIndex)
+                    
+                    let value = priceOracle.price(token: type) * trueBalance
 
-                    effectiveCollateral = effectiveCollateral + trueBalance * self.liquidationThresholds[type]!
+                    effectiveCollateral = effectiveCollateral + (value * self.collateralFactor[type]!)
                 } else {
                     let trueBalance = AlpenFlow.scaledBalanceToTrueBalance(scaledBalance: balance.scaledBalance,
                         interestIndex: tokenState.debitInterestIndex)
 
-                    totalDebt = totalDebt + trueBalance
+                    let value = priceOracle.price(token: type) * trueBalance
+
+                    effectiveDebt = effectiveDebt + (value / self.borrowFactor[type]!)
                 }
             }
 
-            // Calculate the health as the ratio of collateral to debt.
-            return effectiveCollateral / totalDebt
+            return BalanceSheet(effectiveCollateral: effectiveCollateral, effectiveDebt: effectiveDebt)
+        }
+
+        // Returns the health of the given position, which is the ratio of the position's effective collateral
+        // to its debt (as denominated in the default token). ("Effective collateral" means the
+        // value of each credit balance times the liquidation threshold for that token. i.e. the maximum borrowable amount)
+        access(all) view fun positionHealth(pid: UInt64): UFix64 {
+            let balanceSheet = self.positionBalanceSheet(pid: pid)
+
+            return balanceSheet.health
+        }
+
+        access(all) view fun positionAvailableCapacity(pid: UInt64, type: Type): UFix64 {
+            let balanceSheet = self.positionBalanceSheet(pid: pid)
+            let availableCapacity = balanceSheet.effectiveCollateral - balanceSheet.effectiveDebt
+
+            // We need to multiple the available capacity by the borrow factor to get the VALUE of
+            // what can be borrowed. We then need to convert that value into the units of the token
+            // based on the price from the oracle.
+            let value = availableCapacity * self.borrowFactor[type]!
+            return value / self.priceOracle.price(token: type)
+        }
+
+        // The quantity of funds of a specified token which would need to be deposited to bring the
+        // position to the target health. This function will return 0.0 if the position is already at or over
+        // that health value.
+        access(all) view fun fundsRequiredForTargetHealth(pid: UInt64, type: Type, targetHealth: UFix64): UFix64 {
+            return self.fundsRequiredForTargetHealthAfterWithdrawing(pid: pid, depositType: type, targetHealth: targetHealth, 
+                withdrawType: self.defaultToken, withdrawAmount: 0.0)
+        }
+
+        // The quantity of funds of a specified token which would need to be deposited to bring the
+        // position to the target health assuming we also withdraw a specified amount of another
+        // token. This function will return 0.0 if the position would already be at or over the target
+        // health value after the proposed withdrawal.
+        access(all) view fun fundsRequiredForTargetHealthAfterWithdrawing(pid: UInt64, depositType: Type, targetHealth: UFix64,
+                withdrawType: Type, withdrawAmount: UFix64): UFix64
+        {
+            if depositType == withdrawType && withdrawAmount > 0.0 {
+                // If the deposit and withdrawal types are the same, we compute the required deposit assuming 
+                // no withdrawal (which is less work) and increase that by the withdraw amount at the end
+                return self.fundsRequiredForTargetHealth(pid: pid, type: depositType, targetHealth: targetHealth) + withdrawAmount
+            }
+
+            let balanceSheet = self.positionBalanceSheet(pid: pid)
+
+            let position = &self.positions[pid]! as auth(EImplementation) &InternalPosition
+
+            var effectiveCollateralAfterWithdrawal = balanceSheet.effectiveCollateral
+            var effectiveDebtAfterWithdrawal = balanceSheet.effectiveDebt
+
+            if withdrawAmount != 0.0 {
+                if position.balances[withdrawType] == nil || position.balances[withdrawType]!.direction == BalanceDirection.Debit {
+                    // If the doesn't have any collateral for the withdrawn token, we can just compute how much
+                    // additional effective debt the withdrawal will create.
+                    effectiveDebtAfterWithdrawal = balanceSheet.effectiveDebt + (withdrawAmount * self.priceOracle.price(token: withdrawType) / self.borrowFactor[withdrawType]!)
+                } else {
+                    let withdrawTokenState = &self.globalLedger[withdrawType]! as auth(EImplementation) &TokenState
+
+                    // The user has a collateral position in the given token, we need to figure out if this withdrawal
+                    // will flip over into debt, or just draw down the collateral.
+                    let collateralBalance = position.balances[depositType]!.scaledBalance
+                    let trueCollateral = AlpenFlow.scaledBalanceToTrueBalance(scaledBalance: collateralBalance,
+                        interestIndex: withdrawTokenState.creditInterestIndex)
+
+                    if trueCollateral >= withdrawAmount {
+                        // This withdrawal will draw down collateral, but won't create debt, we just need to account
+                        // for the collateral decrease.
+                        effectiveCollateralAfterWithdrawal = balanceSheet.effectiveCollateral - (withdrawAmount * self.priceOracle.price(token: depositType) * self.collateralFactor[depositType]!)
+                    } else {
+                        // The withdrawal will wipe out all of the collateral, and create some debt.
+                        effectiveDebtAfterWithdrawal = balanceSheet.effectiveDebt +
+                                ((withdrawAmount - trueCollateral) * self.priceOracle.price(token: withdrawType) / self.borrowFactor[withdrawType]!)
+
+                        effectiveCollateralAfterWithdrawal = balanceSheet.effectiveCollateral -
+                                (trueCollateral * self.priceOracle.price(token: depositType) * self.collateralFactor[depositType]!)
+                    }
+                }
+            }
+
+            // We now have new effective collateral and debt values that reflect the proposed withdrawal (if any!)
+            // Now we can figure out how many of the given token would need to be deposited to bring the position
+            // to the target health value.
+
+            var healthAfterWithdrawal = AlpenFlow.healthComputation(effectiveCollateral: effectiveCollateralAfterWithdrawal, effectiveDebt: effectiveDebtAfterWithdrawal)
+
+            if healthAfterWithdrawal >= targetHealth {
+                // The position is already at or above the target health, so we don't need to deposit anything.
+                return 0.0
+            }
+
+            // For situations where the required deposit will BOTH pay off debt and accumulate collateral, we keep
+            // track of the number of tokens that went towards paying off debt.
+            var debtTokenCount = 0.0
+
+            if position.balances[depositType] != nil && position.balances[depositType]!.direction == BalanceDirection.Debit {
+                // The user has a debt position in the given token, we start by looking at the health impact of paying off
+                // the entire debt.
+                let depositTokenState = &self.globalLedger[depositType]! as auth(EImplementation) &TokenState
+                let debtBalance = position.balances[depositType]!.scaledBalance
+                let trueDebt = AlpenFlow.scaledBalanceToTrueBalance(scaledBalance: debtBalance,
+                    interestIndex: depositTokenState.debitInterestIndex)
+                let debtEffectiveValue = self.priceOracle.price(token: depositType) * trueDebt / self.borrowFactor[depositType]!
+
+                var debtIsEnough = false
+
+                if debtEffectiveValue == effectiveDebtAfterWithdrawal {
+                    // This token is the only debt in the position, so we can DEFINITELY effect the requested health change
+                    // just by paying off some of the debt.
+                    debtIsEnough = true
+                } else {
+                    // Check what the new health would be if we paid off the entire debt.
+                    let potentialHealth = AlpenFlow.healthComputation(effectiveCollateral:effectiveCollateralAfterWithdrawal,
+                            effectiveDebt: (effectiveDebtAfterWithdrawal - debtEffectiveValue))
+
+                    // Does debt payment alone bring the position up to the requested health?
+                    if potentialHealth >= targetHealth {
+                        debtIsEnough = true
+                    }
+                }
+
+                if debtIsEnough {
+                    // We can effect the requested health change just by paying off some of the deposit token's debt. We just need to work
+                    // out how many units of the token would be needed to bring the position up by the requested amount.
+
+                    // First determine the amount of debt to pay back in terms of the default token. This calculation is the result of
+                    // solving the equation:
+                    //
+                    //   health + healthChange = effectiveCollateral / (effectiveDebt - requiredEffectiveValue)
+                    //
+                    // for requiredEffectiveValue, using the fact that health = effectiveCollateral / effectiveDebt.
+                    // (H == health, dH == delta health, D = effective debt, dD = delta debt, C = effective collateral)
+                    //
+                    // H + dH = C / (D - dD)
+                    // (H + dH) * (D - dD) = C
+                    // H•D + dH•D - H•dD - dH•dD = C
+                    //
+                    // Subtract H•D = C from both sides:
+                    // dH•D - H•dD - dH•dD = 0
+                    // dH•D = H•dD + dH•dD
+                    // Factor out dD:
+                    // dH•D = dD * (H + dH)
+                    // dD = (dH•D) / (H + dH)
+                    let requiredHealthChange = targetHealth - healthAfterWithdrawal
+                    let requiredEffectiveValue = (requiredHealthChange * effectiveDebtAfterWithdrawal) / targetHealth
+
+                    // The amount of the token to pay back, in units of the token.
+                    let requiredTokenCount = requiredEffectiveValue * self.borrowFactor[depositType]! / self.priceOracle.price(token: depositType)
+
+                    return requiredTokenCount
+                } else {
+                    // We need to pay off more than just this token's debt to effect the requested health change.
+
+                    // We have logic below that can determine health changes for credit positions. Rather than copy that here,
+                    // fall through into it. But first we have to record the amount of tokens that went to the debt in
+                    // debtTokenCount, and then adjust the effective debt to reflect that repayment
+                    debtTokenCount = trueDebt
+                    effectiveDebtAfterWithdrawal = effectiveDebtAfterWithdrawal - debtEffectiveValue
+                    healthAfterWithdrawal = AlpenFlow.healthComputation(effectiveCollateral: effectiveCollateralAfterWithdrawal,
+                            effectiveDebt: effectiveDebtAfterWithdrawal)
+                }
+            }
+
+            // At this point, we're either dealing with a position that already had a credit balance (possibly zero!) in
+            // the deposit token, or we simulated paying off all of the positions' debt in the deposit token and adjusted
+            // the effective debt to account for that.
+
+            // Computing the amount of collateral needed for a health change is very simple. We just need to
+            // multiply the required health change by the effective debt, and turn that into a token amount.
+            let healthChange = targetHealth - healthAfterWithdrawal
+            let requiredEffectiveCollateral = healthChange * effectiveDebtAfterWithdrawal
+
+            // The amount of the token to pay back, in units of the token.
+            let collateralTokenCount = requiredEffectiveCollateral / self.priceOracle.price(token: depositType) / self.borrowFactor[depositType]!
+
+            // debtTokenCount is the number of tokens that went towards debt, zero if there was no debt.
+            return collateralTokenCount + debtTokenCount
+        }
+
+        // Returns the quantity of the specified token that could be withdraw while still keeping the position's health
+        // at or above the provided target.
+        access(all) view fun fundsAvailableAboveTargetHealth(pid: UInt64, type: Type, targetHealth: UFix64): UFix64 {
+            return self.fundsAvailableAboveTargetHealthAfterDepositing(pid: pid, withdrawType: type, targetHealth: targetHealth,
+                depositType: self.defaultToken, depositAmount: 0.0)
+        }
+
+
+        // Returns the quantity of the specified token that could be withdraw while still keeping the position's health
+        // at or above the provided target.
+        access(all) view fun fundsAvailableAboveTargetHealthAfterDepositing(pid: UInt64, withdrawType: Type, targetHealth: UFix64,
+                depositType: Type, depositAmount: UFix64): UFix64
+        {
+            if depositType == withdrawType && depositAmount > 0.0 {
+                // If the deposit and withdrawal types are the same, we compute the required deposit assuming 
+                // no deposit (which is less work) and increase that by the deposit amount at the end
+                return self.fundsAvailableAboveTargetHealth(pid: pid, type: withdrawType, targetHealth: targetHealth) + depositAmount
+            }
+
+            let balanceSheet = self.positionBalanceSheet(pid: pid)
+
+            let position = &self.positions[pid]! as auth(EImplementation) &InternalPosition
+
+            var effectiveCollateralAfterDeposit = balanceSheet.effectiveCollateral
+            var effectiveDebtAfterDeposit = balanceSheet.effectiveDebt
+
+            if depositAmount != 0.0 {
+                if position.balances[withdrawType] == nil || position.balances[withdrawType]!.direction == BalanceDirection.Debit {
+                    // If there's no debt for the deposit token, we can just compute how much additional effective collateral the deposit will create.
+                    effectiveCollateralAfterDeposit = balanceSheet.effectiveCollateral + (depositAmount * self.priceOracle.price(token: depositType) * self.collateralFactor[depositType]!)
+                } else {
+                    let depositTokenState = &self.globalLedger[depositType]! as auth(EImplementation) &TokenState
+
+                    // The user has a debt position in the given token, we need to figure out if this deposit
+                    // will result in net collateral, or just bring down the debt.
+                    let debtBalance = position.balances[depositType]!.scaledBalance
+                    let trueDebt = AlpenFlow.scaledBalanceToTrueBalance(scaledBalance: debtBalance,
+                        interestIndex: depositTokenState.debitInterestIndex)
+
+                    if trueDebt >= depositAmount {
+                        // This deposit will pay down some debt, but won't result in net collateral, we just need to account
+                        // for the debt decrease.
+                        effectiveDebtAfterDeposit = balanceSheet.effectiveDebt - (depositAmount * self.priceOracle.price(token: depositType) / self.collateralFactor[depositType]!)
+                    } else {
+                        // The depoist will wipe out all of the debt, and create some collaterol.
+                        effectiveDebtAfterDeposit = balanceSheet.effectiveDebt -
+                                (trueDebt * self.priceOracle.price(token: depositType) / self.borrowFactor[depositType]!)
+
+                        effectiveCollateralAfterDeposit = balanceSheet.effectiveCollateral +
+                                ((depositAmount - trueDebt) * self.priceOracle.price(token: depositType) * self.collateralFactor[depositType]!)
+                    }
+                }
+            }
+
+            // We now have new effective collateral and debt values that reflect the proposed deposit (if any!)
+            // Now we can figure out how many of the withdrawal token are available while keeping the position
+            // at or above the target health value.
+            var healthAfterDeposit = AlpenFlow.healthComputation(effectiveCollateral: effectiveCollateralAfterDeposit, effectiveDebt: effectiveDebtAfterDeposit)
+
+            if healthAfterDeposit <= targetHealth {
+                // The position is already at or below the target health, so we can't withdraw anything.
+                return 0.0
+            }
+
+            // For situations where the available withdrawal will BOTH draw down collateral and create debt, we keep
+            // track of the number of tokens are available from collateral
+            var collateralTokenCount = 0.0
+
+            if position.balances[withdrawType] != nil && position.balances[withdrawType]!.direction == BalanceDirection.Credit {
+                // The user has a credit position in the withdraw token, we start by looking at the health impact of pulling out all
+                // of that collateral
+                let withdrawTokenState = &self.globalLedger[withdrawType]! as auth(EImplementation) &TokenState
+                let creditBalance = position.balances[depositType]!.scaledBalance
+                let trueCredit = AlpenFlow.scaledBalanceToTrueBalance(scaledBalance: creditBalance,
+                    interestIndex: withdrawTokenState.creditInterestIndex)
+                let collateralEffectiveValue = self.priceOracle.price(token: withdrawType) * trueCredit * self.collateralFactor[withdrawType]!
+
+                // Check what the new health would be if we took out all of this collateral
+                let potentialHealth = AlpenFlow.healthComputation(effectiveCollateral: effectiveCollateralAfterDeposit - collateralEffectiveValue,
+                        effectiveDebt: effectiveDebtAfterDeposit)
+
+                // Does drawing down all of the collateral go below the target health? Then the max withdrawal comes from collateral only.
+                if potentialHealth <= targetHealth {
+                    // We can will hit the health target before using up all of the withdraw token credit. We can easily
+                    // compute how many units of the token would be bring the position down to the target health.
+
+                    let availableHeath = targetHealth - healthAfterDeposit
+                    let availableEffectiveValue = availableHeath * effectiveDebtAfterDeposit
+
+                    // The amount of the token we can take using that amount of heath
+                    let availableTokenCount = availableEffectiveValue * self.collateralFactor[withdrawType]! / self.priceOracle.price(token: withdrawType)
+
+                    return availableTokenCount
+                } else {
+                    // We can flip this credit position into a debit position, before hitting the target health.
+
+                    // We have logic below that can determine health changes for debit positions. Rather than copy that here,
+                    // fall through into it. But first we have to record the amount of tokens that are available as collateral
+                    // and then adjust the effective collateral to reflect that it has come out
+                    collateralTokenCount = trueCredit
+                    effectiveCollateralAfterDeposit = effectiveCollateralAfterDeposit - collateralEffectiveValue
+                    // NOTE: The above invalidates the healthAfterDeposit value, but it's not used below...
+                }
+            }
+
+            // At this point, we're either dealing with a position that either didn't have a credit balance in the withdraw
+            // token, or we've accounted for the credit balance and adjusted the effective collateral above.
+
+            // We have two cases to deal with: The normal case (handled second, and the case where
+            // the position's health (after any deposit made above) is at maximum (i.e the debt
+            // is at or near zero).
+            var availableDebtIncrease = (effectiveCollateralAfterDeposit / targetHealth) - effectiveDebtAfterDeposit
+
+            let availableTokens = availableDebtIncrease * self.borrowFactor[withdrawType]! / self.priceOracle.price(token: withdrawType)
+
+            return availableTokens + collateralTokenCount
+        }
+
+
+        // Returns the amount of health that would be added to the position if the given amount of
+        // the specified token were deposited.
+        access(all) view fun healthChangeForDeposit(pid: UInt64, type: Type, amount: UFix64): UFix64 {
+            let balanceSheet = self.positionBalanceSheet(pid: pid)
+
+            // Ask a meaningless question, get a meaningless answer... :sweat_smile:
+            if balanceSheet.effectiveDebt == 0.0 || balanceSheet.effectiveCollateral == 0.0 {
+                return 0.0
+            }
+
+            let position = &self.positions[pid]! as auth(EImplementation) &InternalPosition
+            let tokenState = &self.globalLedger[type]! as auth(EImplementation) &TokenState
+            let priceOracle = &self.priceOracle as &{PriceOracle}
+
+            var effectiveCollateralIncrease = 0.0
+            var effectiveDebtDecrease = 0.0
+
+            if position.balances[type] == nil || position.balances[type]!.direction == BalanceDirection.Credit {
+                // Since the user has a credit position in the given token, we can just compute how much
+                // additional collateral this deposit will create.
+                // The value of the collateral after the deposit
+                effectiveCollateralIncrease = amount * self.priceOracle.price(token: type) * self.collateralFactor[type]!
+            } else {
+                // The user has a debit position in the given token, we need to figure out if this deposit
+                // will only pay off some of the debt, or if it will also create new collateral.
+                let debtBalance = position.balances[type]!.scaledBalance
+                let trueDebt = AlpenFlow.scaledBalanceToTrueBalance(scaledBalance: debtBalance,
+                    interestIndex: tokenState.debitInterestIndex)
+
+                if trueDebt >= amount {
+                    // This deposit will wipe out some or all of the debt, but won't create new collateral, we
+                    // just need to account for the debt decrease.
+                    effectiveDebtDecrease = amount * self.priceOracle.price(token: type) / self.borrowFactor[type]!
+                } else {
+                    // This deposit will wipe out all of the debt, and create new collateral.
+                    effectiveDebtDecrease = trueDebt * self.priceOracle.price(token: type) / self.borrowFactor[type]!
+                    effectiveCollateralIncrease = (amount - trueDebt) * self.priceOracle.price(token: type) * self.collateralFactor[type]!
+                }
+            }
+
+            var newHealth = (balanceSheet.effectiveCollateral + effectiveCollateralIncrease) / (balanceSheet.effectiveDebt - effectiveDebtDecrease)
+
+            return newHealth - balanceSheet.health
+        }
+
+        // Returns the amount of health that would be removed from the position if the given amount of
+        // the specified token were withdrawn.
+        access(all) view fun healthChangeForWithdrawal(pid: UInt64, type: Type, amount: UFix64): UFix64 {
+            let balanceSheet = self.positionBalanceSheet(pid: pid)
+
+            // Ask a meaningless question, get a meaningless answer... :sweat_smile:
+            if balanceSheet.effectiveDebt == 0.0 || balanceSheet.effectiveCollateral == 0.0 {
+                return 0.0
+            }
+
+            let position = &self.positions[pid]! as auth(EImplementation) &InternalPosition
+            let tokenState = &self.globalLedger[type]! as auth(EImplementation) &TokenState
+            let priceOracle = &self.priceOracle as &{PriceOracle}
+
+            var oldEffectiveCollateral = 0.0
+            var newEffectiveCollateral = 0.0
+            var oldEffectiveDebt = 0.0
+            var newEffectiveDebt = 0.0
+
+            if position.balances[type] != nil {
+                if position.balances[type]!.direction == BalanceDirection.Debit {
+                    // Compute the current effective debt
+                    let debitBalance = position.balances[type]!.scaledBalance
+                    let trueDebt = AlpenFlow.scaledBalanceToTrueBalance(scaledBalance: debitBalance,
+                        interestIndex: tokenState.debitInterestIndex)
+
+                    // We're just increasing the debt, so this is a simple calculation
+                    oldEffectiveDebt = trueDebt * self.priceOracle.price(token: type) / self.borrowFactor[type]!
+                    newEffectiveDebt = (trueDebt + amount) * self.priceOracle.price(token: type) / self.borrowFactor[type]!
+
+                } else {
+                }
+            }
+
+            return 0.0
+        }
+        
+        
+
+        // Rebalances the position to the target health value. If force is true, the position will be
+        // rebalanced even if it is currently healthy, otherwise, this function will do nothing if the
+        // position is within the min/max health bounds.
+        access(EPosition) fun rebalancePosition(pid: UInt64, force: Bool) {
+            let balanceSheet = self.positionBalanceSheet(pid: pid)
+
+            let position = &self.positions[pid]! as auth(EImplementation) &InternalPosition
+            let targetHealth = position.targetHealth
+            let minHealth = position.minHealth
+            let maxHealth = position.maxHealth
+            let oldHealth = balanceSheet.health
+
+            if !force && (oldHealth >= minHealth && oldHealth <= maxHealth) {
+                return
+            }
+
+            if oldHealth < targetHealth {
+                // The position is undercollateralized, see if the source can get more collateral to bring it up to the target health.
+                if position.source != nil {
+                    let source = position.source!
+
+                    // Compute how much collateral of the type provided by the source is needed
+                    let sourceType = source.sourceType()
+                    let sourceState = &self.globalLedger[sourceType]! as auth(EImplementation) &TokenState
+
+                    // The value of collateral (in units of the default token) needed to bring the position up to the target health.
+                    var requiredCollateral = (targetHealth * balanceSheet.effectiveDebt) - balanceSheet.effectiveCollateral
+
+                    // Working amount: How many units of the source token are needed to bring the position up to the target health.
+                    var requiredFromSource = 0.0
+                    
+                    if position.balances[sourceType] != nil && position.balances[sourceType]!.direction == BalanceDirection.Debit {
+                        // The user has a debt position in the source token. Paying off $1 of debt could free up more than $1 of
+                        // collateral if the asset has a collateral factor less than 1.0. Let's determine how much
+                        // value would be freed up if we paid off the entire debt amount for this token.
+                        let debtBalance = position.balances[sourceType]!.scaledBalance
+                        let trueDebt = AlpenFlow.scaledBalanceToTrueBalance(scaledBalance: debtBalance,
+                            interestIndex: sourceState.debitInterestIndex)
+
+                        // Convert the value of the debt into default token terms and then determine how much collateral
+                        // value would be freed up if we paid off the debt.
+                        let debtValue = self.priceOracle.price(token: sourceType) * trueDebt
+                        let collateralValueOfDebt = debtValue / self.borrowFactor[sourceType]!
+
+                        if collateralValueOfDebt > requiredCollateral {
+                            // We can rebalance the position without clearing the entire debt, work out how many units of the source token
+                            // would be needed to bring the position up to the target health.
+                            requiredFromSource = requiredFromSource + (requiredCollateral / self.priceOracle.price(token: sourceType) * self.borrowFactor[sourceType]!)
+                        } else {
+                            // Even if we pay off the entire debt, we'll still need more collateral, start with the amount required to clear the debt.
+                            requiredFromSource = requiredFromSource + trueDebt
+                            requiredCollateral = requiredCollateral - collateralValueOfDebt
+
+                            // The number of credit tokens needed to cover the remaining collateral shortfall.
+                            let creditTokensRequired = requiredCollateral / self.priceOracle.price(token: sourceType) / self.borrowFactor[sourceType]!
+
+                            requiredFromSource = requiredFromSource + creditTokensRequired
+                        }
+                    } else {
+                        // We are currently in a credit (or at least no debt) position in the source token.
+                        // We can just withdraw the amount needed to bring the position up to the target health.
+                        requiredFromSource = requiredCollateral / self.priceOracle.price(token: sourceType) / self.borrowFactor[sourceType]!
+                    }
+
+                    // NOTE: withdrawAvailable might not provide all of the tokens we requested, but whatever it does provide
+                    // will be deposited into the position.
+                    let fundsFromSource <- source.withdrawAvailable(maxAmount: requiredFromSource)
+                    self.deposit(pid: pid, funds: <-fundsFromSource)
+                }
+            } else {
+                // The position is overcollateralized, we'll withdraw funds to match the target health and offer it to the sink.
+                if position.sink != nil {
+                    let sink = position.sink!
+
+                    // Compute how many tokens of the sink's type are available to hit our target health.
+                    let sinkType = sink.sinkType()
+                    let availableCapacity = balanceSheet.effectiveCollateral - (targetHealth * balanceSheet.effectiveDebt)
+                    let availableForSink = availableCapacity / self.priceOracle.price(token: sinkType) / self.borrowFactor[sinkType]!
+                    let fundsForSink <- self.withdraw(pid: pid, amount: availableForSink, type: sinkType)
+                    sink.depositAvailable(from: &fundsForSink as auth(Withdraw) &{Vault})
+                    self.deposit(pid: pid, funds: <-fundsForSink)
+                }
+            }
+
+            let healthDelta = targetHealth - oldHealth
+
+
+            let availableCapacity = balanceSheet.effectiveCollateral - balanceSheet.effectiveDebt * self.borrowFactor[self.defaultToken]!
+
+            // TODO: Implement the rebalance logic here.
+        }
+    }
+
+    access(all) struct PositionSink: Sink {
+        access(self) let pool: Capability<auth(EPosition) &Pool>
+        access(self) let id: UInt64
+        access(self) let type: Type
+
+        access(all) view fun sinkType(): Type {
+            return self.type
+        }
+
+        access(all) view fun availableCapacity(): UFix64 {
+            return UFix64.max
+        }
+        
+        access(all) fun depositAvailable(from: auth(Withdraw) &{Vault}) {
+            let pool = self.pool.borrow()!
+            pool.deposit(pid: self.id, funds: <-from.withdraw(amount: from.balance))
+        }
+       
+
+        init(id: UInt64, pool: Capability<auth(EPosition) &Pool>, type: Type) {
+            self.id = id
+            self.pool = pool
+            self.type = type
+        }
+    }
+
+    access(all) struct PositionSource: Source { 
+        access(all) let pool: Capability<auth(EPosition) &Pool>
+        access(all) let id: UInt64
+        access(all) let type: Type
+        access(all) let useUpstreamLiquidity: Bool
+
+        access(all) view fun sourceType(): Type {
+            return self.type
+        }
+
+        access(all) view fun availableBalance(): UFix64 {
+            let pool = self.pool.borrow()!
+            return pool.getAvailableBalance(pid: self.id, type: self.type)
+        }
+
+        access(all) fun withdrawAvailable(maxAmount: UFix64): @{Vault} {
+            let pool = self.pool.borrow()!
+            return <- pool.withdraw(pid: self.id, amount: maxAmount, type: self.type, useUpstreamLiquidity: self.useUpstreamLiquidity)
+        }
+
+        init(id: UInt64, pool: Capability<auth(EPosition) &Pool>, type: Type, useUpstreamLiquidity: Bool) {
+            self.id = id
+            self.pool = pool
+            self.type = type
+            self.useUpstreamLiquidity = useUpstreamLiquidity
         }
     }
 
@@ -492,26 +1171,54 @@ access(all) contract AlpenFlow {
         }
 
         // Returns the maximum amount of the given token type that could be withdrawn from this position.
-        access(all) fun getAvailableBalance(type: Type): UFix64 {
+        access(all) fun availableBalance(type: Type): UFix64 {
             return 0.0
         }
 
-        // Returns the maximum amount of the given token type that could be deposited into this position.
-        access(all) fun getDepositCapacity(type: Type): UFix64 {
+        access(all) fun getHealth(): UFix64 {
             return 0.0
         }
+
+        access(all) fun getTargetHealth(): UFix64 {
+            return 0.0
+        }
+
+        access(all) fun setTargetHealth(targetHealth: UFix64) {
+        }
+
+        access(all) fun getMinHealth(): UFix64 {
+            return 0.0
+        }
+
+        access(all) fun setMinHealth(minHealth: UFix64) {
+        }
+
+        access(all) fun getMaxHealth(): UFix64 {
+            return 0.0
+        }
+
+        access(all) fun setMaxHealth(maxHealth: UFix64) {
+        }
+
         // Deposits tokens into the position, paying down debt (if one exists) and/or
         // increasing collateral. The provided Vault must be a supported token type.
         access(all) fun deposit(from: @{Vault})
         {
-            destroy from
+            let pool = self.pool.borrow()!
+            pool.deposit(pid: self.id, funds: <-from)
         }
 
         // Withdraws tokens from the position by withdrawing collateral and/or
         // creating/increasing a loan. The requested Vault type must be a supported token.
-        access(all) fun withdraw(type: Type, amount: UFix64): @{Vault}
+        //
+        // If useUpstreamLiquidity is false, this method will only allow you to withdraw
+        // funds that are available in the position. If useUpstreamLiquidity is true, the
+        // position will also attempt to withdraw funds from the upstream liquidity Source to
+        // ensure the position is able to meet the entire request.
+        access(all) fun withdraw(type: Type, amount: UFix64, useUpstreamLiquidity: Bool): @{Vault}
         {
-            return <- create FlowVault()
+            let pool = self.pool.borrow()!
+            return <- pool.withdraw(pid: self.id, amount: amount, type: type, useUpstreamLiquidity: useUpstreamLiquidity)
         }
 
         // Returns a NEW sink for the given token type that will accept deposits of that token and
@@ -519,15 +1226,18 @@ access(all) contract AlpenFlow {
         // times will create multiple sinks, each of which will continue to work regardless of how many
         // other sinks have been created.
         access(all) fun createSink(type: Type): {Sink} {
-            return DummySink()
+            return PositionSink(id: self.id, pool: self.pool, type: type)
         }
 
         // Returns a NEW source for the given token type that will service withdrawals of that token and
         // update the position's collateral and/or debt accordingly. Note that calling this method multiple
         // times will create multiple sources, each of which will continue to work regardless of how many
         // other sources have been created.
-        access(all) fun createSource(type: Type): {Source} {
-            return DummySource()
+        //
+        // This source will pass its useUpstreamLiquidity value to the withdraw function. Use
+        // useUpstreamLiquidity == true with care!
+        access(all) fun createSource(type: Type, useUpstreamLiquidity: Bool): {Source} {
+            return PositionSource(id: self.id, pool: self.pool, type: type, useUpstreamLiquidity: useUpstreamLiquidity)
         }
 
         // Provides a sink to the Position that will have tokens proactively pushed into it when the
@@ -539,6 +1249,8 @@ access(all) contract AlpenFlow {
         // configured for the pool. Providing a new sink will replace the existing sink. Pass nil
         // to configure the position to not push tokens.
         access(all) fun provideSink(sink: {Sink}?) {
+            // let pool = self.pool.borrow()!
+            // pool.provideSink(pid: self.id, sink: sink)
         }
 
         // Provides a source to the Position that will have tokens proactively pulled from it when the
@@ -549,6 +1261,8 @@ access(all) contract AlpenFlow {
         // configured for the pool. Providing a new source will replace the existing source. Pass nil
         // to configure the position to not pull tokens.
         access(all) fun provideSource(source: {Source}?) {
+            // let pool = self.pool.borrow()!
+            // pool.provideSource(pid: self.id, source: source)
         }
 
         init(id: UInt64, pool: Capability<auth(EPosition) & Pool>) {
