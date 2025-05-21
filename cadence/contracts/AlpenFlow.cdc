@@ -347,6 +347,13 @@ access(all) contract AlpenFlow {
             let debitRate = self.interestCurve.interestRate(creditBalance: self.totalCreditBalance, debitBalance: self.totalDebitBalance)
             let debitIncome = self.totalDebitBalance * (1.0 + debitRate)
             let insuranceAmount = self.totalCreditBalance * 0.001
+
+            // START DEBUG LOGS
+            log("debitIncome: \(debitIncome)")
+            log("insuranceAmount: \(insuranceAmount)")
+            log("self.totalCreditBalance: \(self.totalCreditBalance)")
+            // END DEBUG LOGS
+
             let creditRate = ((debitIncome - insuranceAmount) / self.totalCreditBalance) - 1.0
             self.currentCreditRate = AlpenFlow.perSecondInterestRate(yearlyRate: creditRate)
             self.currentDebitRate = AlpenFlow.perSecondInterestRate(yearlyRate: debitRate)
@@ -372,7 +379,7 @@ access(all) contract AlpenFlow {
 
         // Global state for tracking each token
         access(self) var globalLedger: {Type: TokenState}
-        
+
         // Individual user positions
         access(self) var positions: {UInt64: InternalPosition}
 
