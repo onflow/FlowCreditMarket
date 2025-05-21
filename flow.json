@@ -4,7 +4,7 @@
 			"source": "cadence/contracts/AlpenFlow.cdc",
 			"aliases": {
 				"emulator": "f8d6e0586b0a20c7",
-				"testing": "179b6b1cb6755e31"
+				"testing": "0000000000000007"
 			}
 		}
 	},

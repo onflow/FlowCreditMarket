@@ -1,20 +1,17 @@
 import Test
-import AlpenFlow from 0xf8d6e0586b0a20c7
+import BlockchainHelpers
 
-/*
- * TROUBLESHOOTING NOTES FOR FLOW ENGINEERS:
- * 
- * Issue: "failed to load contract: f8d6e0586b0a20c7.AlpenFlow" at line 16
- * 
- * Relevant debugging information:
- * 1. This test tries to call the scaledBalanceToTrueBalance function
- * 2. Originally this function had access(self), but we changed it to access(all)
- * 3. Despite this change, the test still fails when trying to call the function
- * 4. Other utility functions in the contract were also changed from access(self) to access(all)
- *
- * We suspect this might be related to how the contract is loaded by the test runner
- * when utility functions are called directly, even when they don't involve resources.
- */
+import "AlpenFlow"
+
+access(all)
+fun setup() {
+    var err = Test.deployContract(
+        name: "AlpenFlow",
+        path: "../contracts/AlpenFlow.cdc",
+        arguments: [],
+    )
+    Test.expect(err, Test.beNil())
+}
 
 access(all)
 fun testScaledBalance() {

@@ -1,5 +1,17 @@
 import Test
-import AlpenFlow from 0xf8d6e0586b0a20c7
+import BlockchainHelpers
+
+import "AlpenFlow"
+
+access(all)
+fun setup() {
+    var err = Test.deployContract(
+        name: "AlpenFlow",
+        path: "../contracts/AlpenFlow.cdc",
+        arguments: [],
+    )
+    Test.expect(err, Test.beNil())
+}
 
 access(all)
 fun testFunctionCall() {

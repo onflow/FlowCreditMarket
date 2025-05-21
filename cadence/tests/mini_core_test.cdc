@@ -1,21 +1,17 @@
 import Test
-import AlpenFlow from 0xf8d6e0586b0a20c7
+import BlockchainHelpers
 
-/*
- * TROUBLESHOOTING NOTES FOR FLOW ENGINEERS:
- * 
- * Issue: "failed to load contract: f8d6e0586b0a20c7.AlpenFlow" at line 12
- * 
- * Relevant debugging information:
- * 1. The contract is deployed to the emulator account (0xf8d6e0586b0a20c7)
- * 2. Simple tests with no resource interaction work fine
- * 3. This test fails when trying to call createTestVault(), despite it being declared
- *    with access(all) in the contract
- *
- * This test is meant to be the simplest possible test that interacts with a resource helper.
- * If this test doesn't work, it suggests an issue with the test runner's ability to resolve
- * resource-creating functions in the contract.
- */
+import "AlpenFlow"
+
+access(all)
+fun setup() {
+    var err = Test.deployContract(
+        name: "AlpenFlow",
+        path: "../contracts/AlpenFlow.cdc",
+        arguments: [],
+    )
+    Test.expect(err, Test.beNil())
+}
 
 access(all)
 fun testMiniCore() {

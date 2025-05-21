@@ -1,29 +1,17 @@
 import Test
-import AlpenFlow from 0xf8d6e0586b0a20c7
+import BlockchainHelpers
 
-/*
- * TROUBLESHOOTING NOTES FOR FLOW ENGINEERS:
- * 
- * Issue: "failed to load contract: f8d6e0586b0a20c7.AlpenFlow" at line 16
- * 
- * Relevant debugging information:
- * 1. The contract is deployed to the emulator account (0xf8d6e0586b0a20c7)
- * 2. Simple tests like cadence/tests/simple_test.cdc that just import the contract PASS
- * 3. Tests that access type information (cadence/tests/access_test.cdc) also PASS
- * 4. Tests that call straightforward non-resource functions (cadence/tests/function_test.cdc) PASS
- * 5. But any test that tries to use resource-related functionality (createTestPool, createTestVault) FAILS
- *    with "failed to load contract" error
- * 
- * Attempted solutions:
- * 1. Changed all contract utility functions from access(self) to access(all)
- * 2. Fixed createTestPoolWithBalance to use AlpenFlow. instead of self.
- * 3. Restarted the emulator and redeployed the contract multiple times
- * 4. Updated flow.json to add an explicit emulator alias for the contract
- * 
- * Current hypothesis: There may be an issue with how the test runner is resolving
- * resource-related functionality in the contract, possibly related to authorization
- * or how resources are handled in the test environment.
- */
+import "AlpenFlow"
+
+access(all)
+fun setup() {
+    var err = Test.deployContract(
+        name: "AlpenFlow",
+        path: "../contracts/AlpenFlow.cdc",
+        arguments: [],
+    )
+    Test.expect(err, Test.beNil())
+}
 
 access(all)
 fun testDepositWithdrawSymmetry() {
