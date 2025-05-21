@@ -1,4 +1,6 @@
 
 # flow
 emulator-account.pkey
-imports
+imports/
+coverage.lcov
+coverage.json
