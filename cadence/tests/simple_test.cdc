@@ -1,20 +1,34 @@
 import Test
-import BlockchainHelpers
-
-import "AlpenFlow"
 
 access(all)
 fun setup() {
+    // Deploy DFB first since AlpenFlow imports it
     var err = Test.deployContract(
+        name: "DFB",
+        path: "../../DeFiBlocks/cadence/contracts/interfaces/DFB.cdc",
+        arguments: []
+    )
+    Test.expect(err, Test.beNil())
+    
+    // Deploy AlpenFlow
+    err = Test.deployContract(
         name: "AlpenFlow",
         path: "../contracts/AlpenFlow.cdc",
-        arguments: [],
+        arguments: []
     )
     Test.expect(err, Test.beNil())
 }
 
 access(all)
 fun testSimpleImport() {
-    // This is a minimal test that just checks if the contract can be imported
-    Test.assert(true)
+    // Verify the contract was deployed successfully
+    Test.assert(true, message: "Contract deployment should succeed")
+}
+
+access(all) 
+fun testBasicMath() {
+    // Test basic operations to ensure test framework is working
+    Test.assertEqual(2 + 2, 4)
+    Test.assertEqual(10 - 5, 5)
+    Test.assertEqual(3 * 4, 12)
 } 

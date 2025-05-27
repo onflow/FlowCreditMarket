@@ -1,119 +1,59 @@
-access(all) contract AlpenFlow {
+import "FungibleToken"
+import "ViewResolver"
+import "Burner"
+import "MetadataViews"
+import "FungibleTokenMetadataViews"
+import "DFB"
 
-    access(all) resource interface Vault {
-        access(all) var balance: UFix64
-        access(all) fun deposit(from: @{Vault})
-        access(Withdraw) fun withdraw(amount: UFix64): @{Vault}
-    }
+access(all) contract AlpenFlow: FungibleToken {
 
     access(all) entitlement Withdraw
 
-    access(all) resource FlowVault: Vault {
+    access(all) resource FlowVault: FungibleToken.Vault {
         access(all) var balance: UFix64
 
-        access(all) fun setBalance(newBalance: UFix64) {
-            self.balance = newBalance
+        // FungibleToken.Vault conformance
+        access(all) fun deposit(from: @{FungibleToken.Vault}) {
+            let vault <- from as! @FlowVault
+            self.balance = self.balance + vault.balance
+            vault.balance = 0.0
+            destroy vault
         }
 
-        access(all) fun deposit(from: @{Vault}) {
-            // Cast the incoming Vault to a FlowVault so we can read its balance
-            let incoming <- from as! @FlowVault
-            self.balance = self.balance + incoming.balance
-            destroy incoming
-        }
-
-        access(Withdraw) fun withdraw(amount: UFix64): @FlowVault {
-            pre {
-                amount > 0.0: "Withdrawal amount must be positive"
-                self.balance >= amount: "Insufficient balance"
-            }
+        access(FungibleToken.Withdraw) fun withdraw(amount: UFix64): @{FungibleToken.Vault} {
             self.balance = self.balance - amount
-            let newVault <- create FlowVault()
-            newVault.balance = amount
-            return <- newVault
+            return <- create FlowVault(balance: amount)
         }
 
-        init() {
+        access(all) view fun isAvailableToWithdraw(amount: UFix64): Bool {
+            return self.balance >= amount
+        }
+
+        access(all) fun createEmptyVault(): @{FungibleToken.Vault} {
+            return <- create FlowVault(balance: 0.0)
+        }
+
+        // ViewResolver conformance
+        access(all) view fun getViews(): [Type] {
+            return AlpenFlow.getContractViews(resourceType: nil)
+        }
+
+        access(all) fun resolveView(_ view: Type): AnyStruct? {
+            return AlpenFlow.resolveContractView(resourceType: nil, viewType: view)
+        }
+
+        // Burner.Burnable conformance
+        access(contract) fun burnCallback() {
+            if self.balance > 0.0 {
+                AlpenFlow.totalSupply = AlpenFlow.totalSupply - self.balance
+            }
             self.balance = 0.0
         }
-    }
 
-    access(all) struct interface Sink {
-        access(all) view fun sinkType(): Type
-        access(all) fun minimumCapacity(): UFix64
-        access(all) fun depositCapacity(from: auth(Withdraw) &{Vault})
-    }
-
-    access(all) struct interface Source {
-        access(all) view fun sourceType(): Type
-        access(all) fun minimumAvailable(): UFix64
-        access(all) fun withdrawAvailable(maxAmount: UFix64): @{Vault}
-    }
-
-    access(all) struct DummySink: Sink {
-        access(all) view fun sinkType(): Type {
-            return self.getType()
-        }
-
-        access(all) fun minimumCapacity(): UFix64 {
-            return 0.0
-        }
-
-        access(all) fun depositCapacity(from: auth(Withdraw) &{Vault}) {
-        }
-    }
-
-    access(all) struct DummySource: Source {
-        access(all) view fun sourceType(): Type {
-            return self.getType()
-        }
-
-        access(all) fun minimumAvailable(): UFix64 {
-            return 0.0
-        }
-
-        access(all) fun withdrawAvailable(maxAmount: UFix64): @{Vault} {
-            return <- create FlowVault()
-        }
-    }
-
-    // AlpenFlow starts here!
-
-    access(all) enum BalanceDirection: UInt8 {
-        access(all) case Credit
-        access(all) case Debit
-    }
-
-    // A structure returned externally to report a position's balance for a particular token.
-    // This structure is NOT used internally.
-    access(all) struct PositionBalance {
-        access(all) let type: Type
-        access(all) let direction: BalanceDirection
-        access(all) let balance: UFix64
-
-        init(type: Type, direction: BalanceDirection, balance: UFix64) {
-            self.type = type
-            self.direction = direction
+        init(balance: UFix64) {
             self.balance = balance
         }
     }
-
-    // A structure returned externally to report all of the details associated with a position.
-    // This structure is NOT used internally.
-    access(all) struct PositionDetails {
-        access(all) let balances: [PositionBalance]
-        access(all) let poolDefaultToken: Type
-        access(all) let defaultTokenAvailableBalance: UFix64
-        access(all) let health: UFix64
-
-        init(balances: [PositionBalance], poolDefaultToken: Type, defaultTokenAvailableBalance: UFix64, health: UFix64) {
-            self.balances = balances
-            self.poolDefaultToken = poolDefaultToken
-            self.defaultTokenAvailableBalance = defaultTokenAvailableBalance
-            self.health = health
-        }
-    }
-
 
     access(all) entitlement EPosition
     access(all) entitlement EGovernance
@@ -397,7 +337,7 @@ access(all) contract AlpenFlow {
         access(self) var positions: {UInt64: InternalPosition}
 
         // The actual reserves of each token
-        access(self) var reserves: @{Type: {Vault}}
+        access(self) var reserves: @{Type: {FungibleToken.Vault}}
 
         // Auto-incrementing position identifier counter
         access(self) var nextPositionID: UInt64
@@ -424,10 +364,10 @@ access(all) contract AlpenFlow {
             self.nextPositionID = 0
 
             // initialise empty reserve vault for the default token
-            self.reserves[defaultToken] <-! create FlowVault()
+            self.reserves[defaultToken] <-! create FlowVault(balance: 0.0)
         }
 
-        access(EPosition) fun deposit(pid: UInt64, funds: @{Vault}) {
+        access(EPosition) fun deposit(pid: UInt64, funds: @{FungibleToken.Vault}) {
             pre {
                 self.positions[pid] != nil: "Invalid position ID"
                 self.globalLedger[funds.getType()] != nil: "Invalid token type"
@@ -447,7 +387,7 @@ access(all) contract AlpenFlow {
             // Update the global interest indices on the affected token to reflect the passage of time.
             tokenState.updateInterestIndices()
 
-            let reserveVault = (&self.reserves[type] as auth(Withdraw) &{Vault}?)!
+            let reserveVault = (&self.reserves[type] as auth(FungibleToken.Withdraw) &{FungibleToken.Vault}?)!
 
             // Reflect the deposit in the position's balance
             position.balances[type]!.recordDeposit(amount: funds.balance, tokenState: tokenState)
@@ -459,7 +399,7 @@ access(all) contract AlpenFlow {
             reserveVault.deposit(from: <-funds)
         }
 
-        access(EPosition) fun withdraw(pid: UInt64, amount: UFix64, type: Type): @{Vault} {
+        access(EPosition) fun withdraw(pid: UInt64, amount: UFix64, type: Type): @{FungibleToken.Vault} {
             pre {
                 self.positions[pid] != nil: "Invalid position ID"
                 self.globalLedger[type] != nil: "Invalid token type"
@@ -478,7 +418,7 @@ access(all) contract AlpenFlow {
             // Update the global interest indices on the affected token to reflect the passage of time.
             tokenState.updateInterestIndices()
 
-            let reserveVault = (&self.reserves[type] as auth(Withdraw) &{Vault}?)!
+            let reserveVault = (&self.reserves[type] as auth(FungibleToken.Withdraw) &{FungibleToken.Vault}?)!
 
             // Reflect the withdrawal in the position's balance
             position.balances[type]!.recordWithdrawal(amount: amount, tokenState: tokenState)
@@ -534,8 +474,38 @@ access(all) contract AlpenFlow {
 
         // Helper function for testing – returns the current reserve balance for the specified token type.
         access(all) fun reserveBalance(type: Type): UFix64 {
-            let vaultRef = (&self.reserves[type] as auth(Withdraw) &{Vault}?)!
+            let vaultRef = (&self.reserves[type] as auth(FungibleToken.Withdraw) &{FungibleToken.Vault}?)!
             return vaultRef.balance
+        }
+
+        // Add getPositionDetails function that's used by DFB implementations
+        access(all) fun getPositionDetails(pid: UInt64): PositionDetails {
+            let position = &self.positions[pid]! as auth(EImplementation) &InternalPosition
+            let balances: [PositionBalance] = []
+            
+            for type in position.balances.keys {
+                let balance = position.balances[type]!
+                let tokenState = &self.globalLedger[type]! as auth(EImplementation) &TokenState
+                
+                let trueBalance = balance.direction == BalanceDirection.Credit
+                    ? AlpenFlow.scaledBalanceToTrueBalance(scaledBalance: balance.scaledBalance, interestIndex: tokenState.creditInterestIndex)
+                    : AlpenFlow.scaledBalanceToTrueBalance(scaledBalance: balance.scaledBalance, interestIndex: tokenState.debitInterestIndex)
+                
+                balances.append(PositionBalance(
+                    type: type,
+                    direction: balance.direction,
+                    balance: trueBalance
+                ))
+            }
+            
+            let health = self.positionHealth(pid: pid)
+            
+            return PositionDetails(
+                balances: balances,
+                poolDefaultToken: self.defaultToken,
+                defaultTokenAvailableBalance: 0.0, // TODO: Calculate this properly
+                health: health
+            )
         }
     }
 
@@ -559,32 +529,34 @@ access(all) contract AlpenFlow {
         }
         // Deposits tokens into the position, paying down debt (if one exists) and/or
         // increasing collateral. The provided Vault must be a supported token type.
-        access(all) fun deposit(from: @{Vault})
+        access(all) fun deposit(from: @{FungibleToken.Vault})
         {
             destroy from
         }
 
         // Withdraws tokens from the position by withdrawing collateral and/or
         // creating/increasing a loan. The requested Vault type must be a supported token.
-        access(all) fun withdraw(type: Type, amount: UFix64): @{Vault}
+        access(all) fun withdraw(type: Type, amount: UFix64): @{FungibleToken.Vault}
         {
-            return <- create FlowVault()
+            return <- create FlowVault(balance: 0.0)
         }
 
         // Returns a NEW sink for the given token type that will accept deposits of that token and
         // update the position's collateral and/or debt accordingly. Note that calling this method multiple
         // times will create multiple sinks, each of which will continue to work regardless of how many
         // other sinks have been created.
-        access(all) fun createSink(type: Type): {Sink} {
-            return DummySink()
+        access(all) fun createSink(type: Type): {DFB.Sink} {
+            let pool = self.pool.borrow()!
+            return AlpenFlowSink(pool: pool, positionID: self.id)
         }
 
         // Returns a NEW source for the given token type that will service withdrawals of that token and
         // update the position's collateral and/or debt accordingly. Note that calling this method multiple
         // times will create multiple sources, each of which will continue to work regardless of how many
         // other sources have been created.
-        access(all) fun createSource(type: Type): {Source} {
-            return DummySource()
+        access(all) fun createSource(type: Type): {DFB.Source} {
+            let pool = self.pool.borrow()!
+            return AlpenFlowSource(pool: pool, positionID: self.id, tokenType: type)
         }
 
         // Provides a sink to the Position that will have tokens proactively pushed into it when the
@@ -595,7 +567,7 @@ access(all) contract AlpenFlow {
         // Each position can have only one sink, and the sink must accept the default token type
         // configured for the pool. Providing a new sink will replace the existing sink. Pass nil
         // to configure the position to not push tokens.
-        access(all) fun provideSink(sink: {Sink}?) {
+        access(all) fun provideSink(sink: {DFB.Sink}?) {
         }
 
         // Provides a source to the Position that will have tokens proactively pulled from it when the
@@ -605,7 +577,7 @@ access(all) contract AlpenFlow {
         // Each position can have only one source, and the source must accept the default token type
         // configured for the pool. Providing a new source will replace the existing source. Pass nil
         // to configure the position to not pull tokens.
-        access(all) fun provideSource(source: {Source}?) {
+        access(all) fun provideSource(source: {DFB.Source}?) {
         }
 
         init(id: UInt64, pool: Capability<auth(EPosition) & Pool>) {
@@ -623,9 +595,7 @@ access(all) contract AlpenFlow {
 
     // Helper for unit-tests - creates a new FlowVault with the specified balance
     access(all) fun createTestVault(balance: UFix64): @FlowVault {
-        let vault <- create FlowVault()
-        vault.setBalance(newBalance: balance)
-        return <- vault
+        return <- create FlowVault(balance: balance)
     }
 
     // Helper for unit-tests - initializes a pool with a vault containing the specified balance
@@ -636,5 +606,191 @@ access(all) contract AlpenFlow {
         let pid = poolRef.createPosition()
         poolRef.deposit(pid: pid, funds: <- vault)
         return <- pool
+    }
+
+    // Events are now handled by FungibleToken standard
+    // Total supply tracking
+    access(all) var totalSupply: UFix64
+
+    // Storage paths
+    access(all) let VaultStoragePath: StoragePath
+    access(all) let VaultPublicPath: PublicPath
+    access(all) let ReceiverPublicPath: PublicPath
+    access(all) let AdminStoragePath: StoragePath
+
+    // FungibleToken contract interface requirement
+    access(all) fun createEmptyVault(vaultType: Type): @{FungibleToken.Vault} {
+        return <- create FlowVault(balance: 0.0)
+    }
+
+    // ViewResolver conformance for metadata
+    access(all) view fun getContractViews(resourceType: Type?): [Type] {
+        return [
+            Type<FungibleTokenMetadataViews.FTView>(),
+            Type<FungibleTokenMetadataViews.FTDisplay>(),
+            Type<FungibleTokenMetadataViews.FTVaultData>(),
+            Type<FungibleTokenMetadataViews.TotalSupply>()
+        ]
+    }
+
+    access(all) fun resolveContractView(resourceType: Type?, viewType: Type): AnyStruct? {
+        switch viewType {
+            case Type<FungibleTokenMetadataViews.FTView>():
+                return FungibleTokenMetadataViews.FTView(
+                    ftDisplay: self.resolveContractView(resourceType: nil, viewType: Type<FungibleTokenMetadataViews.FTDisplay>()) as! FungibleTokenMetadataViews.FTDisplay?,
+                    ftVaultData: self.resolveContractView(resourceType: nil, viewType: Type<FungibleTokenMetadataViews.FTVaultData>()) as! FungibleTokenMetadataViews.FTVaultData?
+                )
+            case Type<FungibleTokenMetadataViews.FTDisplay>():
+                let media = MetadataViews.Media(
+                    file: MetadataViews.HTTPFile(
+                        url: "https://example.com/alpenflow-logo.svg"
+                    ),
+                    mediaType: "image/svg+xml"
+                )
+                return FungibleTokenMetadataViews.FTDisplay(
+                    name: "AlpenFlow Token",
+                    symbol: "ALPF",
+                    description: "AlpenFlow is a decentralized lending protocol on Flow blockchain",
+                    externalURL: MetadataViews.ExternalURL("https://alpenflow.com"),
+                    logos: MetadataViews.Medias([media]),
+                    socials: {
+                        "twitter": MetadataViews.ExternalURL("https://twitter.com/alpenflow")
+                    }
+                )
+            case Type<FungibleTokenMetadataViews.FTVaultData>():
+                return FungibleTokenMetadataViews.FTVaultData(
+                    storagePath: self.VaultStoragePath,
+                    receiverPath: self.ReceiverPublicPath,
+                    metadataPath: self.VaultPublicPath,
+                    receiverLinkedType: Type<&{FungibleToken.Receiver}>(),
+                    metadataLinkedType: Type<&{FungibleToken.Balance, ViewResolver.Resolver}>(),
+                    createEmptyVaultFunction: (fun(): @{FungibleToken.Vault} {
+                        return <-AlpenFlow.createEmptyVault(vaultType: Type<@AlpenFlow.FlowVault>())
+                    })
+                )
+            case Type<FungibleTokenMetadataViews.TotalSupply>():
+                return FungibleTokenMetadataViews.TotalSupply(
+                    totalSupply: AlpenFlow.totalSupply
+                )
+        }
+        return nil
+    }
+
+    // DFB.Sink implementation for AlpenFlow
+    access(all) struct AlpenFlowSink: DFB.Sink {
+        access(contract) let uniqueID: {DFB.UniqueIdentifier}?
+        access(contract) let pool: auth(EPosition) &Pool
+        access(contract) let positionID: UInt64
+        
+        access(all) view fun getSinkType(): Type {
+            return Type<@AlpenFlow.FlowVault>()
+        }
+
+        access(all) fun minimumCapacity(): UFix64 {
+            // For now, return 0 as there's no minimum
+            return 0.0
+        }
+
+        access(all) fun depositCapacity(from: auth(FungibleToken.Withdraw) &{FungibleToken.Vault}) {
+            let amount = from.balance
+            if amount > 0.0 {
+                let vault <- from.withdraw(amount: amount)
+                self.pool.deposit(pid: self.positionID, funds: <-vault)
+            }
+        }
+        
+        init(pool: auth(EPosition) &Pool, positionID: UInt64) {
+            self.uniqueID = nil
+            self.pool = pool
+            self.positionID = positionID
+        }
+    }
+
+    // DFB.Source implementation for AlpenFlow
+    access(all) struct AlpenFlowSource: DFB.Source {
+        access(contract) let uniqueID: {DFB.UniqueIdentifier}?
+        access(contract) let pool: auth(EPosition) &Pool
+        access(contract) let positionID: UInt64
+        access(contract) let tokenType: Type
+        
+        access(all) view fun getSourceType(): Type {
+            return self.tokenType
+        }
+
+        access(all) fun minimumAvailable(): UFix64 {
+            // Return the available balance for withdrawal
+            let position = self.pool.getPositionDetails(pid: self.positionID)
+            for balance in position.balances {
+                if balance.type == self.tokenType && balance.direction == BalanceDirection.Credit {
+                    return balance.balance
+                }
+            }
+            return 0.0
+        }
+
+        access(FungibleToken.Withdraw) fun withdrawAvailable(maxAmount: UFix64): @{FungibleToken.Vault} {
+            let available = self.minimumAvailable()
+            let withdrawAmount = available < maxAmount ? available : maxAmount
+            if withdrawAmount > 0.0 {
+                return <- self.pool.withdraw(pid: self.positionID, amount: withdrawAmount, type: self.tokenType)
+            } else {
+                return <- AlpenFlow.createEmptyVault(vaultType: self.tokenType)
+            }
+        }
+        
+        init(pool: auth(EPosition) &Pool, positionID: UInt64, tokenType: Type) {
+            self.uniqueID = nil
+            self.pool = pool
+            self.positionID = positionID
+            self.tokenType = tokenType
+        }
+    }
+
+    // AlpenFlow starts here!
+
+    access(all) enum BalanceDirection: UInt8 {
+        access(all) case Credit
+        access(all) case Debit
+    }
+
+    // A structure returned externally to report a position's balance for a particular token.
+    // This structure is NOT used internally.
+    access(all) struct PositionBalance {
+        access(all) let type: Type
+        access(all) let direction: BalanceDirection
+        access(all) let balance: UFix64
+
+        init(type: Type, direction: BalanceDirection, balance: UFix64) {
+            self.type = type
+            self.direction = direction
+            self.balance = balance
+        }
+    }
+
+    // A structure returned externally to report all of the details associated with a position.
+    // This structure is NOT used internally.
+    access(all) struct PositionDetails {
+        access(all) let balances: [PositionBalance]
+        access(all) let poolDefaultToken: Type
+        access(all) let defaultTokenAvailableBalance: UFix64
+        access(all) let health: UFix64
+
+        init(balances: [PositionBalance], poolDefaultToken: Type, defaultTokenAvailableBalance: UFix64, health: UFix64) {
+            self.balances = balances
+            self.poolDefaultToken = poolDefaultToken
+            self.defaultTokenAvailableBalance = defaultTokenAvailableBalance
+            self.health = health
+        }
+    }
+
+    init() {
+        // Initialize total supply
+        self.totalSupply = 0.0
+        
+        // Set up storage paths
+        self.VaultStoragePath = /storage/alpenFlowVault
+        self.VaultPublicPath = /public/alpenFlowVault
+        self.ReceiverPublicPath = /public/alpenFlowReceiver
+        self.AdminStoragePath = /storage/alpenFlowAdmin
     }
 }

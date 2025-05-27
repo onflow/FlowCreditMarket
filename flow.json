@@ -1,9 +1,60 @@
 {
 	"contracts": {
 		"AlpenFlow": {
-			"source": "cadence/contracts/AlpenFlow.cdc",
+			"source": "./cadence/contracts/AlpenFlow.cdc",
 			"aliases": {
-				"testing": "0000000000000007"
+				"testing": "0x0000000000000007"
+			}
+		},
+		"DFB": {
+			"source": "./DeFiBlocks/cadence/contracts/interfaces/DFB.cdc",
+			"aliases": {
+				"testing": "0x0000000000000008"
+			}
+		},
+		"FungibleToken": {
+			"source": "mainnet://f233dcee88fe0abe.FungibleToken",
+			"aliases": {
+				"emulator": "0xee82856bf20e2aa6",
+				"testnet": "0x9a0766d93b6608b7",
+				"mainnet": "0xf233dcee88fe0abe",
+				"testing": "0x0000000000000002"
+			}
+		},
+		"FungibleTokenMetadataViews": {
+			"source": "mainnet://f233dcee88fe0abe.FungibleTokenMetadataViews",
+			"aliases": {
+				"emulator": "0xee82856bf20e2aa6",
+				"testnet": "0x9a0766d93b6608b7",
+				"mainnet": "0xf233dcee88fe0abe",
+				"testing": "0x0000000000000002"
+			}
+		},
+		"ViewResolver": {
+			"source": "mainnet://1d7e57aa55817448.ViewResolver",
+			"aliases": {
+				"emulator": "0xf8d6e0586b0a20c7",
+				"testnet": "0x631e88ae7f1d7c20",
+				"mainnet": "0x1d7e57aa55817448",
+				"testing": "0x0000000000000001"
+			}
+		},
+		"MetadataViews": {
+			"source": "mainnet://1d7e57aa55817448.MetadataViews",
+			"aliases": {
+				"emulator": "0xf8d6e0586b0a20c7",
+				"testnet": "0x631e88ae7f1d7c20",
+				"mainnet": "0x1d7e57aa55817448",
+				"testing": "0x0000000000000001"
+			}
+		},
+		"Burner": {
+			"source": "mainnet://f233dcee88fe0abe.Burner",
+			"aliases": {
+				"emulator": "0xf8d6e0586b0a20c7",
+				"testnet": "0x9a0766d93b6608b7",
+				"mainnet": "0xf233dcee88fe0abe",
+				"testing": "0x0000000000000001"
 			}
 		}
 	},
@@ -24,7 +75,7 @@
 	},
 	"deployments": {
 		"emulator": {
-		"emulator-account": ["AlpenFlow"]
+			"emulator-account": ["AlpenFlow"]
 		}
-  	}
+	}
 }
