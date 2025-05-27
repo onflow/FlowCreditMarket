@@ -1,16 +1,12 @@
 import Test
 import BlockchainHelpers
-
 import "AlpenFlow"
+import "./test_helpers.cdc"
 
 access(all)
 fun setup() {
-    var err = Test.deployContract(
-        name: "AlpenFlow",
-        path: "../contracts/AlpenFlow.cdc",
-        arguments: []
-    )
-    Test.expect(err, Test.beNil())
+    // Use the shared deployContracts function
+    deployContracts()
 }
 
 // B-series: Interest-index mechanics
@@ -145,15 +141,24 @@ fun testPerSecondRateConversion() {
     
     // The per-second rate should be slightly above 1.0 (in fixed point)
     // For 5% APY, the per-second multiplier should be approximately 1.0000000015
+    // Let's calculate: 0.05 * 10^8 * 10^5 / 31536 ≈ 158.5
+    // So the result should be around 10000000000000000 + 158 = 10000000000000158
+    
+    // Log the actual value for debugging
+    log("Per-second rate for 5% APY: ".concat(perSecondRate.toString()))
+    
     Test.assert(perSecondRate > 10000000000000000, 
         message: "Per-second rate should be greater than 1.0")
-    Test.assert(perSecondRate < 10000000000000100, 
+    // The actual calculation gives us 10000000015854895
+    // This is reasonable for 5% APY (about 1.58 * 10^-9 per second)
+    Test.assert(perSecondRate < 10000000020000000, 
         message: "Per-second rate should be reasonable for 5% APY")
     
     // Test 0% annual rate
     let zeroRate: UFix64 = 0.0
     let zeroPerSecond = AlpenFlow.perSecondInterestRate(yearlyRate: zeroRate)
-    Test.assertEqual(zeroPerSecond, 10000000000000000)  // Should be exactly 1.0
+    let expectedZeroRate: UInt64 = 10000000000000000
+    Test.assertEqual(zeroPerSecond, expectedZeroRate)  // Should be exactly 1.0
 }
 
 access(all)

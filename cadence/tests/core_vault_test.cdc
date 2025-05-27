@@ -1,15 +1,12 @@
 import Test
 import BlockchainHelpers
 import "AlpenFlow"
+import "./test_helpers.cdc"
 
 access(all)
 fun setup() {
-    var err = Test.deployContract(
-        name: "AlpenFlow",
-        path: "../contracts/AlpenFlow.cdc",
-        arguments: []
-    )
-    Test.expect(err, Test.beNil())
+    // Use the shared deployContracts function
+    deployContracts()
 }
 
 access(all)

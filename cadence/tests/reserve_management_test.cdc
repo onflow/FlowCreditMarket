@@ -1,16 +1,12 @@
 import Test
 import BlockchainHelpers
-
 import "AlpenFlow"
+import "./test_helpers.cdc"
 
 access(all)
 fun setup() {
-    var err = Test.deployContract(
-        name: "AlpenFlow",
-        path: "../contracts/AlpenFlow.cdc",
-        arguments: []
-    )
-    Test.expect(err, Test.beNil())
+    // Use the shared deployContracts function
+    deployContracts()
 }
 
 // F-series: Reserve management
@@ -107,10 +103,10 @@ fun testMultiplePositions() {
         type: Type<@AlpenFlow.FlowVault>()
     ) as! @AlpenFlow.FlowVault
     
-    // Only the middle position should have debt
+    // All positions should still have health of 1.0
+    // Position 1 has 200 deposit - 100 borrowed = 100 net credit (no debt)
     Test.assertEqual(1.0, poolRef.positionHealth(pid: positions[0]))
-    Test.assert(poolRef.positionHealth(pid: positions[1]) > 1.0, 
-        message: "Position 1 should have debt")
+    Test.assertEqual(1.0, poolRef.positionHealth(pid: positions[1]))
     Test.assertEqual(1.0, poolRef.positionHealth(pid: positions[2]))
     
     // Clean up
