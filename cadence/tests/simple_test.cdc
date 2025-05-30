@@ -1,22 +1,9 @@
 import Test
+import "test_helpers.cdc"
 
 access(all)
 fun setup() {
-    // Deploy DFB first since TidalProtocol imports it
-    var err = Test.deployContract(
-        name: "DFB",
-        path: "../../DeFiBlocks/cadence/contracts/interfaces/DFB.cdc",
-        arguments: []
-    )
-    Test.expect(err, Test.beNil())
-    
-    // Deploy TidalProtocol
-    err = Test.deployContract(
-        name: "TidalProtocol",
-        path: "../contracts/TidalProtocol.cdc",
-        arguments: []
-    )
-    Test.expect(err, Test.beNil())
+    deployContracts()
 }
 
 access(all)

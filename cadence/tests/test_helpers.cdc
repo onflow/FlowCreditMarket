@@ -5,7 +5,6 @@ import "ViewResolver"
 
 // Common test setup function that deploys all required contracts
 access(all) fun deployContracts() {
-    // Deploy DFB first since TidalProtocol imports it
     var err = Test.deployContract(
         name: "DFB",
         path: "../../DeFiBlocks/cadence/contracts/interfaces/DFB.cdc",
@@ -13,7 +12,14 @@ access(all) fun deployContracts() {
     )
     Test.expect(err, Test.beNil())
     
-    // Deploy TidalProtocol
+    let initialSupply = 0.0
+    err = Test.deployContract(
+        name: "MOET",
+        path: "../contracts/MOET.cdc",
+        arguments: [initialSupply]
+    )
+    Test.expect(err, Test.beNil())
+
     err = Test.deployContract(
         name: "TidalProtocol",
         path: "../contracts/TidalProtocol.cdc",

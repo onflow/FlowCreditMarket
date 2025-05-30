@@ -4,13 +4,11 @@ import "Burner"
 import "MetadataViews"
 import "FungibleTokenMetadataViews"
 import "DFB"
-// CHANGE: Import FlowToken to use the real FLOW token implementation
-// This replaces our test FlowVault with the actual Flow token
-import "FlowToken"
+import "MOET"
 
-access(all) contract TidalProtocol: FungibleToken {
+access(all) contract TidalProtocol {
 
-    access(all) entitlement Withdraw
+    access(all) let PoolStoragePath: StoragePath
 
     // REMOVED: FlowVault resource implementation (previously lines 12-56)
     // The FlowVault resource has been removed to prevent type conflicts
@@ -527,7 +525,7 @@ access(all) contract TidalProtocol: FungibleToken {
         // times will create multiple sources, each of which will continue to work regardless of how many
         // other sources have been created.
         access(all) fun createSource(type: Type): {DFB.Source} {
-            let pool = self.pool.borrow()!
+            let pool: auth(TidalProtocol.EPosition) &TidalProtocol.Pool = self.pool.borrow()!
             return TidalProtocolSource(pool: pool, positionID: self.id, tokenType: type)
         }
 
@@ -582,76 +580,6 @@ access(all) contract TidalProtocol: FungibleToken {
     access(all) fun createTestPoolWithBalance(defaultTokenThreshold: UFix64, initialBalance: UFix64): @Pool {
         // CHANGE: This function is deprecated - tests should create pools with explicit token types
         panic("Use createPool with explicit token type and deposit tokens separately")
-    }
-
-    // Events are now handled by FungibleToken standard
-    // Total supply tracking
-    access(all) var totalSupply: UFix64
-
-    // Storage paths
-    access(all) let VaultStoragePath: StoragePath
-    access(all) let VaultPublicPath: PublicPath
-    access(all) let ReceiverPublicPath: PublicPath
-    access(all) let AdminStoragePath: StoragePath
-
-    // FungibleToken contract interface requirement
-    access(all) fun createEmptyVault(vaultType: Type): @{FungibleToken.Vault} {
-        // CHANGE: This contract doesn't create vaults - it's a lending protocol
-        panic("TidalProtocol doesn't create vaults - use the token's contract")
-    }
-
-    // ViewResolver conformance for metadata
-    access(all) view fun getContractViews(resourceType: Type?): [Type] {
-        return [
-            Type<FungibleTokenMetadataViews.FTView>(),
-            Type<FungibleTokenMetadataViews.FTDisplay>(),
-            Type<FungibleTokenMetadataViews.FTVaultData>(),
-            Type<FungibleTokenMetadataViews.TotalSupply>()
-        ]
-    }
-
-    access(all) fun resolveContractView(resourceType: Type?, viewType: Type): AnyStruct? {
-        switch viewType {
-            case Type<FungibleTokenMetadataViews.FTView>():
-                return FungibleTokenMetadataViews.FTView(
-                    ftDisplay: self.resolveContractView(resourceType: nil, viewType: Type<FungibleTokenMetadataViews.FTDisplay>()) as! FungibleTokenMetadataViews.FTDisplay?,
-                    ftVaultData: self.resolveContractView(resourceType: nil, viewType: Type<FungibleTokenMetadataViews.FTVaultData>()) as! FungibleTokenMetadataViews.FTVaultData?
-                )
-            case Type<FungibleTokenMetadataViews.FTDisplay>():
-                let media = MetadataViews.Media(
-                    file: MetadataViews.HTTPFile(
-                        url: "https://example.com/TidalProtocol-logo.svg"
-                    ),
-                    mediaType: "image/svg+xml"
-                )
-                return FungibleTokenMetadataViews.FTDisplay(
-                    name: "TidalProtocol Token",
-                    symbol: "ALPF",
-                    description: "TidalProtocol is a decentralized lending protocol on Flow blockchain",
-                    externalURL: MetadataViews.ExternalURL("https://TidalProtocol.com"),
-                    logos: MetadataViews.Medias([media]),
-                    socials: {
-                        "twitter": MetadataViews.ExternalURL("https://twitter.com/TidalProtocol")
-                    }
-                )
-            case Type<FungibleTokenMetadataViews.FTVaultData>():
-                return FungibleTokenMetadataViews.FTVaultData(
-                    storagePath: self.VaultStoragePath,
-                    receiverPath: self.ReceiverPublicPath,
-                    metadataPath: self.VaultPublicPath,
-                    receiverLinkedType: Type<&{FungibleToken.Receiver}>(),
-                    metadataLinkedType: Type<&{FungibleToken.Balance, ViewResolver.Resolver}>(),
-                    createEmptyVaultFunction: (fun(): @{FungibleToken.Vault} {
-                        // CHANGE: TidalProtocol doesn't create vaults
-                        panic("TidalProtocol doesn't create vaults")
-                    })
-                )
-            case Type<FungibleTokenMetadataViews.TotalSupply>():
-                return FungibleTokenMetadataViews.TotalSupply(
-                    totalSupply: TidalProtocol.totalSupply
-                )
-        }
-        return nil
     }
 
     // DFB.Sink implementation for TidalProtocol
@@ -714,7 +642,7 @@ access(all) contract TidalProtocol: FungibleToken {
             if withdrawAmount > 0.0 {
                 return <- self.pool.withdraw(pid: self.positionID, amount: withdrawAmount, type: self.tokenType)
             } else {
-                return <- TidalProtocol.createEmptyVault(vaultType: self.tokenType)
+                return <- MOET.createEmptyVault(vaultType: self.tokenType)
             }
         }
         
@@ -764,13 +692,12 @@ access(all) contract TidalProtocol: FungibleToken {
     }
 
     init() {
-        // Initialize total supply
-        self.totalSupply = 0.0
-        
-        // Set up storage paths
-        self.VaultStoragePath = /storage/TidalProtocolVault
-        self.VaultPublicPath = /public/TidalProtocolVault
-        self.ReceiverPublicPath = /public/TidalProtocolReceiver
-        self.AdminStoragePath = /storage/TidalProtocolAdmin
+        self.PoolStoragePath = StoragePath(identifier: "tidalProtocolPool_\(self.account.address)")!
+
+        let defaultTokenThreshold = 0.8
+        self.account.storage.save(
+            <-create Pool(defaultToken: Type<@MOET.Vault>(), defaultTokenThreshold: defaultTokenThreshold),
+            to: self.PoolStoragePath
+        )
     }
 }
