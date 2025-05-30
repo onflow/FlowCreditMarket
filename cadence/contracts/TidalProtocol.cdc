@@ -30,10 +30,10 @@ access(all) contract TidalProtocol {
     ///
     access(all) fun openPosition(
         collateral: @{FungibleToken.Vault},
-        issuanceSink: {DFB.Sink}, // TODO: pass downstream
-        repaymentSource: {DFB.Source}? // TODO: pass downstream
+        issuanceSink: {DFB.Sink},
+        repaymentSource: {DFB.Source}?
     ): Position {
-        let pid = self.borrowPool().createPosition(funds: <-collateral)
+        let pid = self.borrowPool().createPosition(funds: <-collateral, issuanceSink: issuanceSink, repaymentSource: repaymentSource)
         let cap = self.account.capabilities.storage.issue<auth(EPosition) &Pool>(self.PoolStoragePath)
         return Position(id: pid, pool: cap)
     }
@@ -166,9 +166,13 @@ access(all) contract TidalProtocol {
 
     access(all) struct InternalPosition {
         access(mapping ImplementationUpdates) var balances: {Type: InternalBalance}
+        access(mapping ImplementationUpdates) var issuanceSinks: {Type: {DFB.Sink}}
+        access(mapping ImplementationUpdates) var repaymentSources: {Type: {DFB.Source}}
 
         init() {
             self.balances = {}
+            self.issuanceSinks = {}
+            self.repaymentSources = {}
         }
     }
 
@@ -361,9 +365,9 @@ access(all) contract TidalProtocol {
 
         access(EPosition) fun deposit(pid: UInt64, funds: @{FungibleToken.Vault}) {
             pre {
-                self.positions[pid] != nil: "Invalid position ID"
-                self.globalLedger[funds.getType()] != nil: "Invalid token type"
-                funds.balance > 0.0: "Deposit amount must be positive"
+                self.positions[pid] != nil: "Invalid position ID \(pid)"
+                self.globalLedger[funds.getType()] != nil: "Invalid token type \(funds.getType().identifier)"
+                funds.balance > 0.0: "Deposit amount must be positive" // TODO: Consider no-op here instead
             }
 
             // Get a reference to the user's position and global token state for the affected token.
@@ -399,7 +403,7 @@ access(all) contract TidalProtocol {
             pre {
                 self.positions[pid] != nil: "Invalid position ID"
                 self.globalLedger[type] != nil: "Invalid token type"
-                amount > 0.0: "Withdrawal amount must be positive"
+                amount > 0.0: "Withdrawal amount must be positive" // TODO: consider empty vault early return
             }
 
             // Get a reference to the user's position and global token state for the affected token.
@@ -461,13 +465,28 @@ access(all) contract TidalProtocol {
             return effectiveCollateral / totalDebt
         }
 
-        access(all) fun createPosition(funds: @{FungibleToken.Vault}): UInt64 {
+        access(all) fun createPosition(
+            funds: @{FungibleToken.Vault},
+            issuanceSink: {DFB.Sink},
+            repaymentSource: {DFB.Source}?
+        ): UInt64 {
+            pre {
+                self.globalLedger[funds.getType()] != nil: "Invalid token type \(funds.getType().identifier)"
+            }
+            // construct a new InternalPosition, assigning it the current position ID
             let id = self.nextPositionID
             self.nextPositionID = self.nextPositionID + 1
             self.positions[id] = InternalPosition()
 
-            self.deposit(pid: id, funds: <-funds)
+            // assign issuance & repayment connectors within the InternalPosition
+            let iPos = &self.positions[id]! as auth(EImplementation) &InternalPosition
+            iPos.issuanceSinks[funds.getType()] = issuanceSink
+            if repaymentSource != nil {
+                iPos.repaymentSources[funds.getType()] = repaymentSource
+            }
 
+            // deposit the initial funds & return the position ID
+            self.deposit(pid: id, funds: <-funds)
             return id
         }
 
