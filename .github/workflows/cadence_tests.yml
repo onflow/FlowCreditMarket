@@ -7,8 +7,9 @@ jobs:
     name: Flow CLI Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
+          token: ${{ secrets.GH_PAT }}
           submodules: "true"
       - name: Set up Go
         uses: actions/setup-go@v3
