@@ -7,6 +7,7 @@ import "DFB"
 // CHANGE: Import FlowToken to use the real FLOW token implementation
 // This replaces our test FlowVault with the actual Flow token
 import "FlowToken"
+import "MOET"
 
 access(all) contract TidalProtocol: FungibleToken {
 
@@ -328,6 +329,40 @@ access(all) contract TidalProtocol: FungibleToken {
             // CHANGE: Don't create vault here - let the caller provide initial reserves
             // The pool starts with empty reserves map
             // Vaults will be added when tokens are first deposited
+        }
+
+        // Add a new token type to the pool
+        // This function should only be called by governance in the future
+        access(all) fun addSupportedToken(
+            tokenType: Type, 
+            exchangeRate: UFix64, 
+            liquidationThreshold: UFix64,
+            interestCurve: {InterestCurve}
+        ) {
+            pre {
+                self.globalLedger[tokenType] == nil: "Token type already supported"
+                exchangeRate > 0.0: "Exchange rate must be positive"
+                liquidationThreshold > 0.0 && liquidationThreshold <= 1.0: "Liquidation threshold must be between 0 and 1"
+            }
+
+            // Add token to global ledger with its interest curve
+            self.globalLedger[tokenType] = TokenState(interestCurve: interestCurve)
+            
+            // Set exchange rate (how many units of this token equal 1 default token)
+            self.exchangeRates[tokenType] = exchangeRate
+            
+            // Set liquidation threshold (what percentage can be borrowed against)
+            self.liquidationThresholds[tokenType] = liquidationThreshold
+        }
+
+        // Get supported token types
+        access(all) fun getSupportedTokens(): [Type] {
+            return self.globalLedger.keys
+        }
+
+        // Check if a token type is supported
+        access(all) fun isTokenSupported(tokenType: Type): Bool {
+            return self.globalLedger[tokenType] != nil
         }
 
         access(EPosition) fun deposit(pid: UInt64, funds: @{FungibleToken.Vault}) {
@@ -714,7 +749,14 @@ access(all) contract TidalProtocol: FungibleToken {
             if withdrawAmount > 0.0 {
                 return <- self.pool.withdraw(pid: self.positionID, amount: withdrawAmount, type: self.tokenType)
             } else {
-                return <- TidalProtocol.createEmptyVault(vaultType: self.tokenType)
+                // Create an empty vault by getting one from the pool's reserves
+                // This ensures we get the correct vault type
+                let reserveVault = (&self.pool.reserves[self.tokenType] as auth(FungibleToken.Withdraw) &{FungibleToken.Vault}?)
+                if reserveVault != nil {
+                    return <- reserveVault!.withdraw(amount: 0.0)
+                } else {
+                    panic("Token type not supported in pool reserves")
+                }
             }
         }
         
