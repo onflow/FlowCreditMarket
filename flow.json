@@ -3,7 +3,7 @@
 		"DFB": {
 			"source": "./DeFiBlocks/cadence/contracts/interfaces/DFB.cdc",
 			"aliases": {
-				"testing": "0000000000000008"
+				"testing": "0x0000000000000006"
 			}
 		},
 		"MOET": {
@@ -15,7 +15,13 @@
 		"TidalProtocol": {
 			"source": "./cadence/contracts/TidalProtocol.cdc",
 			"aliases": {
-				"testing": "0000000000000007"
+				"testing": "0x0000000000000007"
+			}
+		},
+		"TidalPoolGovernance": {
+			"source": "./cadence/contracts/TidalPoolGovernance.cdc",
+			"aliases": {
+				"testing": "0x0000000000000009"
 			}
 		}
 	},
@@ -62,7 +68,8 @@
 			"aliases": {
 				"emulator": "f8d6e0586b0a20c7",
 				"mainnet": "1d7e57aa55817448",
-				"testnet": "631e88ae7f1d7c20"
+				"testnet": "631e88ae7f1d7c20",
+				"testing": "0x0000000000000001"
 			}
 		},
 		"NonFungibleToken": {
@@ -71,7 +78,8 @@
 			"aliases": {
 				"emulator": "f8d6e0586b0a20c7",
 				"mainnet": "1d7e57aa55817448",
-				"testnet": "631e88ae7f1d7c20"
+				"testnet": "631e88ae7f1d7c20",
+				"testing": "0x0000000000000001"
 			}
 		},
 		"ViewResolver": {
@@ -80,7 +88,8 @@
 			"aliases": {
 				"emulator": "f8d6e0586b0a20c7",
 				"mainnet": "1d7e57aa55817448",
-				"testnet": "631e88ae7f1d7c20"
+				"testnet": "631e88ae7f1d7c20",
+				"testing": "0x0000000000000001"
 			}
 		}
 	},
@@ -112,7 +121,8 @@
 						}
 					]
 				},
-				"TidalProtocol"
+				"TidalProtocol",
+				"TidalPoolGovernance"
 			]
 		}
 	}
