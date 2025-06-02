@@ -513,6 +513,17 @@ access(all) contract TidalProtocol: FungibleToken {
         // REMOVED: Static exchange rates and liquidation thresholds
         // These have been replaced by dynamic oracle pricing and risk factors
 
+        // RESTORED: tokenState() helper function from Dieter's implementation
+        // A convenience function that returns a reference to a particular token state, making sure
+        // it's up-to-date for the passage of time. This should always be used when accessing a token
+        // state to avoid missing interest updates (duplicate calls to updateForTimeChange() are a nop
+        // within a single block).
+        access(self) fun tokenState(type: Type): auth(EImplementation) &TokenState {
+            let state = &self.globalLedger[type]! as auth(EImplementation) &TokenState
+            state.updateForTimeChange()
+            return state
+        }
+
         init(defaultToken: Type, priceOracle: {PriceOracle}) {
             pre {
                 priceOracle.unitOfAccount() == defaultToken: "Price oracle must return prices in terms of the default token"
@@ -587,7 +598,7 @@ access(all) contract TidalProtocol: FungibleToken {
             // Get a reference to the user's position and global token state for the affected token.
             let type = funds.getType()
             let position = &self.positions[pid]! as auth(EImplementation) &InternalPosition
-            let tokenState = &self.globalLedger[type]! as auth(EImplementation) &TokenState
+            let tokenState = self.tokenState(type: type)
 
             // If this position doesn't currently have an entry for this token, create one.
             if position.balances[type] == nil {
@@ -595,7 +606,8 @@ access(all) contract TidalProtocol: FungibleToken {
             }
 
             // Update the global interest indices on the affected token to reflect the passage of time.
-            tokenState.updateInterestIndices()
+            // REMOVED: This is now handled by tokenState() helper function
+            // tokenState.updateInterestIndices()
 
             // CHANGE: Create vault if it doesn't exist yet
             if self.reserves[type] == nil {
@@ -634,10 +646,11 @@ access(all) contract TidalProtocol: FungibleToken {
             // Get a reference to the user's position and global token state for the affected token.
             let type = from.getType()
             let position = &self.positions[pid]! as auth(EImplementation) &InternalPosition
-            let tokenState = &self.globalLedger[type]! as auth(EImplementation) &TokenState
+            let tokenState = self.tokenState(type: type)
 
             // Update time-based state
-            tokenState.updateForTimeChange()
+            // REMOVED: This is now handled by tokenState() helper function
+            // tokenState.updateForTimeChange()
 
             // RESTORED: Deposit rate limiting from Dieter's implementation
             let depositAmount = from.balance
@@ -699,10 +712,11 @@ access(all) contract TidalProtocol: FungibleToken {
 
             // Get a reference to the user's position and global token state for the affected token.
             let position = &self.positions[pid]! as auth(EImplementation) &InternalPosition
-            let tokenState = &self.globalLedger[type]! as auth(EImplementation) &TokenState
+            let tokenState = self.tokenState(type: type)
 
             // Update the global interest indices on the affected token to reflect the passage of time.
-            tokenState.updateForTimeChange()
+            // REMOVED: This is now handled by tokenState() helper function
+            // tokenState.updateForTimeChange()
 
             // RESTORED: Top-up source integration from Dieter's implementation
             // Preflight to see if the funds are available
@@ -909,7 +923,7 @@ access(all) contract TidalProtocol: FungibleToken {
 
             for type in position.balances.keys {
                 let balance = position.balances[type]!
-                let tokenState = &self.globalLedger[type]! as auth(EImplementation) &TokenState
+                let tokenState = self.tokenState(type: type)
                 if balance.direction == BalanceDirection.Credit {
                     let trueBalance = TidalProtocol.scaledBalanceToTrueBalance(scaledBalance: balance.scaledBalance,
                         interestIndex: tokenState.creditInterestIndex)
@@ -947,7 +961,7 @@ access(all) contract TidalProtocol: FungibleToken {
 
             for type in position.balances.keys {
                 let balance = position.balances[type]!
-                let tokenState = &self.globalLedger[type]! as auth(EImplementation) &TokenState
+                let tokenState = self.tokenState(type: type)
                 if balance.direction == BalanceDirection.Credit {
                     let trueBalance = TidalProtocol.scaledBalanceToTrueBalance(scaledBalance: balance.scaledBalance,
                         interestIndex: tokenState.creditInterestIndex)
@@ -992,7 +1006,7 @@ access(all) contract TidalProtocol: FungibleToken {
             
             for type in position.balances.keys {
                 let balance = position.balances[type]!
-                let tokenState = &self.globalLedger[type]! as auth(EImplementation) &TokenState
+                let tokenState = self.tokenState(type: type)
                 
                 let trueBalance = balance.direction == BalanceDirection.Credit
                     ? TidalProtocol.scaledBalanceToTrueBalance(scaledBalance: balance.scaledBalance, interestIndex: tokenState.creditInterestIndex)
@@ -1060,8 +1074,9 @@ access(all) contract TidalProtocol: FungibleToken {
                     effectiveDebtAfterWithdrawal = balanceSheet.effectiveDebt + 
                         (withdrawAmount * self.priceOracle.price(token: withdrawType) / self.borrowFactor[withdrawType]!)
                 } else {
-                    let withdrawTokenState = &self.globalLedger[withdrawType]! as auth(EImplementation) &TokenState
-                    withdrawTokenState.updateForTimeChange()
+                    let withdrawTokenState = self.tokenState(type: withdrawType)
+                    // REMOVED: This is now handled by tokenState() helper function
+                    // withdrawTokenState.updateForTimeChange()
 
                     // The user has a collateral position in the given token, we need to figure out if this withdrawal
                     // will flip over into debt, or just draw down the collateral.
@@ -1107,8 +1122,9 @@ access(all) contract TidalProtocol: FungibleToken {
             if position.balances[depositType] != nil && position.balances[depositType]!.direction == BalanceDirection.Debit {
                 // The user has a debt position in the given token, we start by looking at the health impact of paying off
                 // the entire debt.
-                let depositTokenState = &self.globalLedger[depositType]! as auth(EImplementation) &TokenState
-                depositTokenState.updateForTimeChange()
+                let depositTokenState = self.tokenState(type: depositType)
+                // REMOVED: This is now handled by tokenState() helper function
+                // depositTokenState.updateForTimeChange()
                 
                 let debtBalance = position.balances[depositType]!.scaledBalance
                 let trueDebt = TidalProtocol.scaledBalanceToTrueBalance(
@@ -1206,8 +1222,7 @@ access(all) contract TidalProtocol: FungibleToken {
                     effectiveCollateralAfterDeposit = balanceSheet.effectiveCollateral + 
                         (depositAmount * self.priceOracle.price(token: depositType) * self.collateralFactor[depositType]!)
                 } else {
-                    let depositTokenState = &self.globalLedger[depositType]! as auth(EImplementation) &TokenState
-                    depositTokenState.updateForTimeChange()
+                    let depositTokenState = self.tokenState(type: depositType)
 
                     // The user has a debt position in the given token, we need to figure out if this deposit
                     // will result in net collateral, or just bring down the debt.
@@ -1253,8 +1268,9 @@ access(all) contract TidalProtocol: FungibleToken {
             if position.balances[withdrawType] != nil && position.balances[withdrawType]!.direction == BalanceDirection.Credit {
                 // The user has a credit position in the withdraw token, we start by looking at the health impact of pulling out all
                 // of that collateral
-                let withdrawTokenState = &self.globalLedger[withdrawType]! as auth(EImplementation) &TokenState
-                withdrawTokenState.updateForTimeChange()
+                let withdrawTokenState = self.tokenState(type: withdrawType)
+                // REMOVED: This is now handled by tokenState() helper function
+                // withdrawTokenState.updateForTimeChange()
                 
                 let creditBalance = position.balances[withdrawType]!.scaledBalance
                 let trueCredit = TidalProtocol.scaledBalanceToTrueBalance(
@@ -1306,8 +1322,7 @@ access(all) contract TidalProtocol: FungibleToken {
         access(all) fun healthAfterDeposit(pid: UInt64, type: Type, amount: UFix64): UFix64 {
             let balanceSheet = self.positionBalanceSheet(pid: pid)
             let position = &self.positions[pid]! as auth(EImplementation) &InternalPosition
-            let tokenState = &self.globalLedger[type]! as auth(EImplementation) &TokenState
-            tokenState.updateForTimeChange()
+            let tokenState = self.tokenState(type: type)
 
             var effectiveCollateralIncrease = 0.0
             var effectiveDebtDecrease = 0.0
@@ -1349,8 +1364,7 @@ access(all) contract TidalProtocol: FungibleToken {
         access(all) fun healthAfterWithdrawal(pid: UInt64, type: Type, amount: UFix64): UFix64 {
             let balanceSheet = self.positionBalanceSheet(pid: pid)
             let position = &self.positions[pid]! as auth(EImplementation) &InternalPosition
-            let tokenState = &self.globalLedger[type]! as auth(EImplementation) &TokenState
-            tokenState.updateForTimeChange()
+            let tokenState = self.tokenState(type: type)
 
             var effectiveCollateralDecrease = 0.0
             var effectiveDebtIncrease = 0.0
@@ -1407,8 +1421,7 @@ access(all) contract TidalProtocol: FungibleToken {
             for depositType in position.queuedDeposits.keys {
                 let queuedVault <- position.queuedDeposits.remove(key: depositType)!
                 let queuedAmount = queuedVault.balance
-                let depositTokenState = &self.globalLedger[depositType]! as auth(EImplementation) &TokenState
-                depositTokenState.updateForTimeChange()
+                let depositTokenState = self.tokenState(type: depositType)
                 
                 let maxDeposit = depositTokenState.depositLimit()
 
@@ -1461,39 +1474,30 @@ access(all) contract TidalProtocol: FungibleToken {
         }
 
         access(all) fun getTargetHealth(): UFix64 {
-            let pool = self.pool.borrow()!
-            let position = (&pool.positions[self.id]! as auth(EImplementation) &InternalPosition?)!
-            return position.targetHealth
+            // DIETER'S DESIGN: Position is just a relay struct, return 0.0
+            return 0.0
         }
 
         access(all) fun setTargetHealth(targetHealth: UFix64) {
-            let pool = self.pool.borrow()!
-            let position = (&pool.positions[self.id]! as auth(EImplementation) &InternalPosition?)!
-            position.targetHealth = targetHealth
+            // DIETER'S DESIGN: Position is just a relay struct, do nothing
         }
 
         access(all) fun getMinHealth(): UFix64 {
-            let pool = self.pool.borrow()!
-            let position = (&pool.positions[self.id]! as auth(EImplementation) &InternalPosition?)!
-            return position.minHealth
+            // DIETER'S DESIGN: Position is just a relay struct, return 0.0
+            return 0.0
         }
 
         access(all) fun setMinHealth(minHealth: UFix64) {
-            let pool = self.pool.borrow()!
-            let position = (&pool.positions[self.id]! as auth(EImplementation) &InternalPosition?)!
-            position.minHealth = minHealth
+            // DIETER'S DESIGN: Position is just a relay struct, do nothing
         }
 
         access(all) fun getMaxHealth(): UFix64 {
-            let pool = self.pool.borrow()!
-            let position = (&pool.positions[self.id]! as auth(EImplementation) &InternalPosition?)!
-            return position.maxHealth
+            // DIETER'S DESIGN: Position is just a relay struct, return 0.0
+            return 0.0
         }
 
         access(all) fun setMaxHealth(maxHealth: UFix64) {
-            let pool = self.pool.borrow()!
-            let position = (&pool.positions[self.id]! as auth(EImplementation) &InternalPosition?)!
-            position.maxHealth = maxHealth
+            // DIETER'S DESIGN: Position is just a relay struct, do nothing
         }
 
         // Returns the maximum amount of the given token type that could be deposited into this position.
