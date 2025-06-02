@@ -1,7 +1,4 @@
 import Test
-import "TidalProtocol"
-import "FungibleToken"
-import "ViewResolver"
 
 // Common test setup function that deploys all required contracts
 access(all) fun deployContracts() {
@@ -45,9 +42,25 @@ access(all) fun getTidalProtocolAddress(): Address {
     return 0x0000000000000007
 }
 
+// ADDED: Helper to create a dummy oracle for testing
+// Returns the oracle as AnyStruct since we can't use contract types directly
+access(all) fun createDummyOracle(defaultToken: Type): AnyStruct {
+    // Use a script to create the oracle
+    let code = "import TidalProtocol from ".concat(getTidalProtocolAddress().toString()).concat("\n")
+        .concat("access(all) fun main(defaultToken: Type): TidalProtocol.DummyPriceOracle {\n")
+        .concat("    let oracle = TidalProtocol.DummyPriceOracle(defaultToken: defaultToken)\n")
+        .concat("    oracle.setPrice(token: defaultToken, price: 1.0)\n")
+        .concat("    return oracle\n")
+        .concat("}")
+    
+    let result = Test.executeScript(code, [defaultToken])
+    Test.expect(result, Test.beSucceeded())
+    return result.returnValue!
+}
+
 // ADDED: Function to mint FLOW tokens from the service account
 // This replaces createTestVault() to use real FLOW tokens
-access(all) fun mintFlow(_ amount: UFix64): @MockVault {
+access(all) fun mintFlow(_ amount: UFix64): @AnyResource {
     // Get the service account which has minting capability
     let serviceAccount = Test.serviceAccount()
     
@@ -57,17 +70,17 @@ access(all) fun mintFlow(_ amount: UFix64): @MockVault {
 }
 
 // CHANGE: Create a mock vault for testing since we can't create FlowToken vaults directly
-access(all) resource MockVault: FungibleToken.Vault {
+// Using a simplified structure for test context
+access(all) resource MockVault {
     access(all) var balance: UFix64
     
-    access(all) fun deposit(from: @{FungibleToken.Vault}) {
-        let vault <- from as! @MockVault
-        self.balance = self.balance + vault.balance
-        vault.balance = 0.0
-        destroy vault
+    access(all) fun deposit(from: @MockVault) {
+        self.balance = self.balance + from.balance
+        from.balance = 0.0
+        destroy from
     }
     
-    access(FungibleToken.Withdraw) fun withdraw(amount: UFix64): @{FungibleToken.Vault} {
+    access(all) fun withdraw(amount: UFix64): @MockVault {
         self.balance = self.balance - amount
         return <- create MockVault(balance: amount)
     }
@@ -76,17 +89,8 @@ access(all) resource MockVault: FungibleToken.Vault {
         return self.balance >= amount
     }
     
-    access(all) fun createEmptyVault(): @{FungibleToken.Vault} {
+    access(all) fun createEmptyVault(): @MockVault {
         return <- create MockVault(balance: 0.0)
-    }
-    
-    // ViewResolver conformance
-    access(all) view fun getViews(): [Type] {
-        return []
-    }
-    
-    access(all) fun resolveView(_ view: Type): AnyStruct? {
-        return nil
     }
     
     init(balance: UFix64) {
@@ -99,20 +103,25 @@ access(all) fun createTestVault(balance: UFix64): @MockVault {
     return <- create MockVault(balance: balance)
 }
 
-// CHANGE: Helper to create test pools with MockVault as default token
-access(all) fun createTestPool(defaultTokenThreshold: UFix64): @TidalProtocol.Pool {
-    return <- TidalProtocol.createPool(
-        defaultToken: Type<@MockVault>(),
-        defaultTokenThreshold: defaultTokenThreshold
-    )
+// NOTE: The following functions need to be updated in each test file that uses them
+// Since we cannot directly access contract types in test files, tests must:
+// 1. Use Test.executeScript() to create oracles
+// 2. Use Test.Transaction() to create pools with oracles
+// 3. Handle the oracle parameter when calling TidalProtocol.createPool()
+
+// DEPRECATED: These functions are placeholders - update your tests to use the new patterns
+access(all) fun createTestPool(): @AnyResource {
+    panic("Update test to use TidalProtocol.createTestPoolWithOracle() or create pool with oracle parameter")
 }
 
-// CHANGE: Helper to create test pools with initial balance
-access(all) fun createTestPoolWithBalance(defaultTokenThreshold: UFix64, initialBalance: UFix64): @TidalProtocol.Pool {
-    var pool <- createTestPool(defaultTokenThreshold: defaultTokenThreshold)
-    let poolRef = &pool as auth(TidalProtocol.EPosition) &TidalProtocol.Pool
-    let pid = poolRef.createPosition()
-    let vault <- createTestVault(balance: initialBalance)
-    poolRef.deposit(pid: pid, funds: <- vault)
-    return <- pool
+access(all) fun createTestPoolWithOracle(): @AnyResource {
+    panic("Update test to create pool with oracle using Test.Transaction")
+}
+
+access(all) fun createTestPoolWithBalance(initialBalance: UFix64): @AnyResource {
+    panic("Update test to create pool with oracle and then add balance")
+}
+
+access(all) fun createMultiTokenTestPool(): @AnyResource {
+    panic("Update test to create pool with oracle and add multiple tokens with risk parameters")
 } 
