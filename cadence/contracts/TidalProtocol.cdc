@@ -55,7 +55,7 @@ access(all) contract TidalProtocol {
     /* --- TEST METHODS | REMOVE BEFORE PRODUCTION & REFACTOR TESTS --- */
 
     // CHANGE: Add a proper pool creation function for tests
-    access(all) fun createPool(defaultToken: Type, priceOracle: {PriceOracle}): @Pool {
+    access(all) fun createPool(defaultToken: Type, priceOracle: {DFB.PriceOracle}): @Pool {
         return <- create Pool(defaultToken: defaultToken, priceOracle: priceOracle)
     }
 
@@ -71,42 +71,16 @@ access(all) contract TidalProtocol {
     access(all) entitlement EGovernance
     access(all) entitlement EImplementation
 
-    // RESTORED: Oracle and DeFi interfaces from Dieter's implementation
-    // These are critical for dynamic price-based position management
-    
-    access(all) struct interface PriceOracle {
-        access(all) view fun unitOfAccount(): Type
-        access(all) fun price(token: Type): UFix64
-    }
-
-    access(all) struct interface Flasher {
-        access(all) view fun borrowType(): Type
-        access(all) fun flashLoan(amount: UFix64, sink: {DFB.Sink}, source: {DFB.Source}): UFix64
-    }
-
-    access(all) struct interface SwapQuote {
-        access(all) let amountIn: UFix64
-        access(all) let amountOut: UFix64
-    }
-
-    access(all) struct interface Swapper {
-        access(all) view fun inType(): Type
-        access(all) view fun outType(): Type
-        access(all) fun quoteIn(outAmount: UFix64): {SwapQuote}
-        access(all) fun quoteOut(inAmount: UFix64): {SwapQuote}
-        access(all) fun swap(inVault: @{FungibleToken.Vault}, quote:{SwapQuote}?): @{FungibleToken.Vault}
-        access(all) fun swapBack(residual: @{FungibleToken.Vault}, quote:{SwapQuote}): @{FungibleToken.Vault}
-    }
-
     // RESTORED: SwapSink implementation for automated rebalancing
+    // TODO: Remove in favor of SwapStack.SwapSink implementation
     access(all) struct SwapSink: DFB.Sink {
         access(contract) let uniqueID: {DFB.UniqueIdentifier}?
-        access(self) let swapper: {Swapper}
+        access(self) let swapper: {DFB.Swapper}
         access(self) let sink: {DFB.Sink}
 
-        init(swapper: {Swapper}, sink: {DFB.Sink}) {
+        init(swapper: {DFB.Swapper}, sink: {DFB.Sink}) {
             pre {
-                swapper.outType() == sink.getSinkType()
+                swapper.outVaultType() == sink.getSinkType()
             }
 
             self.uniqueID = nil
@@ -115,19 +89,19 @@ access(all) contract TidalProtocol {
         }
 
         access(all) view fun getSinkType(): Type {
-            return self.swapper.inType()
+            return self.swapper.inVaultType()
         }
 
         access(all) fun minimumCapacity(): UFix64 {
             let sinkCapacity = self.sink.minimumCapacity()
-            return self.swapper.quoteIn(outAmount: sinkCapacity).amountIn
+            return self.swapper.amountIn(forDesired: sinkCapacity, reverse: false).inAmount
         }
 
         access(all) fun depositCapacity(from: auth(FungibleToken.Withdraw) &{FungibleToken.Vault}) {
             let limit = self.sink.minimumCapacity()
 
-            let swapQuote = self.swapper.quoteIn(outAmount: limit)
-            let sinkLimit = swapQuote.amountIn
+            let swapQuote = self.swapper.amountIn(forDesired: limit, reverse: false)
+            let sinkLimit = swapQuote.inAmount
             let swapVault <- from.withdraw(amount: 0.0)
 
             if sinkLimit < from.balance {
@@ -140,11 +114,11 @@ access(all) contract TidalProtocol {
                 swapVault.deposit(from: <-from.withdraw(amount: from.balance))
             }
 
-            let swappedTokens <- self.swapper.swap(inVault: <-swapVault, quote: swapQuote)
+            let swappedTokens <- self.swapper.swap(quote: swapQuote, inVault: <-swapVault)
             self.sink.depositCapacity(from: &swappedTokens as auth(FungibleToken.Withdraw) &{FungibleToken.Vault})
 
             if swappedTokens.balance > 0.0 {
-                from.deposit(from: <-self.swapper.swapBack(residual: <-swappedTokens, quote: swapQuote))
+                from.deposit(from: <-self.swapper.swapBack(quote: swapQuote, residual: <-swappedTokens))
             } else {
                 destroy swappedTokens
             }
@@ -529,7 +503,7 @@ access(all) contract TidalProtocol {
 
         // RESTORED: Price oracle from Dieter's implementation
         // A price oracle that will return the price of each token in terms of the default token.
-        access(self) var priceOracle: {PriceOracle}
+        access(self) var priceOracle: {DFB.PriceOracle}
 
         // RESTORED: Position update queue from Dieter's implementation
         access(EImplementation) var positionsNeedingUpdates: [UInt64]
@@ -564,7 +538,7 @@ access(all) contract TidalProtocol {
             return state
         }
 
-        init(defaultToken: Type, priceOracle: {PriceOracle}) {
+        init(defaultToken: Type, priceOracle: {DFB.PriceOracle}) {
             pre {
                 priceOracle.unitOfAccount() == defaultToken: "Price oracle must return prices in terms of the default token"
             }
@@ -976,7 +950,7 @@ access(all) contract TidalProtocol {
                         interestIndex: tokenState.creditInterestIndex)
 
                     // RESTORED: Oracle-based pricing from Dieter's implementation
-                    let tokenPrice = self.priceOracle.price(token: type)
+                    let tokenPrice = self.priceOracle.price(ofToken: type)!
                     let value = tokenPrice * trueBalance
                     effectiveCollateral = effectiveCollateral + (value * self.collateralFactor[type]!)
                 } else {
@@ -984,7 +958,7 @@ access(all) contract TidalProtocol {
                         interestIndex: tokenState.debitInterestIndex)
 
                     // RESTORED: Oracle-based pricing for debt calculation
-                    let tokenPrice = self.priceOracle.price(token: type)
+                    let tokenPrice = self.priceOracle.price(ofToken: type)!
                     let value = tokenPrice * trueBalance
                     effectiveDebt = effectiveDebt + (value / self.borrowFactor[type]!)
                 }
@@ -1000,7 +974,7 @@ access(all) contract TidalProtocol {
         // RESTORED: Position balance sheet calculation from Dieter's implementation
         access(self) fun positionBalanceSheet(pid: UInt64): BalanceSheet {
             let position = (&self.positions[pid] as auth(EImplementation) &InternalPosition?)!
-            let priceOracle = &self.priceOracle as &{PriceOracle}
+            let priceOracle = &self.priceOracle as &{DFB.PriceOracle}
 
             // Get the position's collateral and debt values in terms of the default token.
             var effectiveCollateral = 0.0
@@ -1013,14 +987,14 @@ access(all) contract TidalProtocol {
                     let trueBalance = TidalProtocol.scaledBalanceToTrueBalance(scaledBalance: balance.scaledBalance,
                         interestIndex: tokenState.creditInterestIndex)
                     
-                    let value = priceOracle.price(token: type) * trueBalance
+                    let value = priceOracle.price(ofToken: type)! * trueBalance
 
                     effectiveCollateral = effectiveCollateral + (value * self.collateralFactor[type]!)
                 } else {
                     let trueBalance = TidalProtocol.scaledBalanceToTrueBalance(scaledBalance: balance.scaledBalance,
                         interestIndex: tokenState.debitInterestIndex)
 
-                    let value = priceOracle.price(token: type) * trueBalance
+                    let value = priceOracle.price(ofToken: type)! * trueBalance
 
                     effectiveDebt = effectiveDebt + (value / self.borrowFactor[type]!)
                 }
@@ -1141,7 +1115,7 @@ access(all) contract TidalProtocol {
                     // If the position doesn't have any collateral for the withdrawn token, we can just compute how much
                     // additional effective debt the withdrawal will create.
                     effectiveDebtAfterWithdrawal = balanceSheet.effectiveDebt + 
-                        (withdrawAmount * self.priceOracle.price(token: withdrawType) / self.borrowFactor[withdrawType]!)
+                        (withdrawAmount * self.priceOracle.price(ofToken: withdrawType)! / self.borrowFactor[withdrawType]!)
                 } else {
                     let withdrawTokenState = self.tokenState(type: withdrawType)
                     // REMOVED: This is now handled by tokenState() helper function
@@ -1159,14 +1133,14 @@ access(all) contract TidalProtocol {
                         // This withdrawal will draw down collateral, but won't create debt, we just need to account
                         // for the collateral decrease.
                         effectiveCollateralAfterWithdrawal = balanceSheet.effectiveCollateral - 
-                            (withdrawAmount * self.priceOracle.price(token: withdrawType) * self.collateralFactor[withdrawType]!)
+                            (withdrawAmount * self.priceOracle.price(ofToken: withdrawType)! * self.collateralFactor[withdrawType]!)
                     } else {
                         // The withdrawal will wipe out all of the collateral, and create some debt.
                         effectiveDebtAfterWithdrawal = balanceSheet.effectiveDebt +
-                            ((withdrawAmount - trueCollateral) * self.priceOracle.price(token: withdrawType) / self.borrowFactor[withdrawType]!)
+                            ((withdrawAmount - trueCollateral) * self.priceOracle.price(ofToken: withdrawType)! / self.borrowFactor[withdrawType]!)
 
                         effectiveCollateralAfterWithdrawal = balanceSheet.effectiveCollateral -
-                            (trueCollateral * self.priceOracle.price(token: withdrawType) * self.collateralFactor[withdrawType]!)
+                            (trueCollateral * self.priceOracle.price(ofToken: withdrawType)! * self.collateralFactor[withdrawType]!)
                     }
                 }
             }
@@ -1200,7 +1174,7 @@ access(all) contract TidalProtocol {
                     scaledBalance: debtBalance,
                     interestIndex: depositTokenState.debitInterestIndex
                 )
-                let debtEffectiveValue = self.priceOracle.price(token: depositType) * trueDebt / self.borrowFactor[depositType]!
+                let debtEffectiveValue = self.priceOracle.price(ofToken: depositType)! * trueDebt / self.borrowFactor[depositType]!
 
                 // Check what the new health would be if we paid off all of this debt
                 let potentialHealth = TidalProtocol.healthComputation(
@@ -1216,7 +1190,7 @@ access(all) contract TidalProtocol {
                     let requiredEffectiveDebt = healthChange * effectiveCollateralAfterWithdrawal / (targetHealth * targetHealth)
 
                     // The amount of the token to pay back, in units of the token.
-                    let paybackAmount = requiredEffectiveDebt * self.borrowFactor[depositType]! / self.priceOracle.price(token: depositType)
+                    let paybackAmount = requiredEffectiveDebt * self.borrowFactor[depositType]! / self.priceOracle.price(ofToken: depositType)!
 
                     return paybackAmount
                 } else {
@@ -1246,7 +1220,7 @@ access(all) contract TidalProtocol {
             let requiredEffectiveCollateral = healthChange * effectiveDebtAfterWithdrawal
 
             // The amount of the token to deposit, in units of the token.
-            let collateralTokenCount = requiredEffectiveCollateral / self.priceOracle.price(token: depositType) / self.collateralFactor[depositType]!
+            let collateralTokenCount = requiredEffectiveCollateral / self.priceOracle.price(ofToken: depositType)! / self.collateralFactor[depositType]!
 
             // debtTokenCount is the number of tokens that went towards debt, zero if there was no debt.
             return collateralTokenCount + debtTokenCount
@@ -1289,7 +1263,7 @@ access(all) contract TidalProtocol {
                 if position.balances[depositType] == nil || position.balances[depositType]!.direction == BalanceDirection.Credit {
                     // If there's no debt for the deposit token, we can just compute how much additional effective collateral the deposit will create.
                     effectiveCollateralAfterDeposit = balanceSheet.effectiveCollateral + 
-                        (depositAmount * self.priceOracle.price(token: depositType) * self.collateralFactor[depositType]!)
+                        (depositAmount * self.priceOracle.price(ofToken: depositType)! * self.collateralFactor[depositType]!)
                 } else {
                     let depositTokenState = self.tokenState(type: depositType)
 
@@ -1305,14 +1279,14 @@ access(all) contract TidalProtocol {
                         // This deposit will pay down some debt, but won't result in net collateral, we
                         // just need to account for the debt decrease.
                         effectiveDebtAfterDeposit = balanceSheet.effectiveDebt - 
-                            (depositAmount * self.priceOracle.price(token: depositType) / self.borrowFactor[depositType]!)
+                            (depositAmount * self.priceOracle.price(ofToken: depositType)! / self.borrowFactor[depositType]!)
                     } else {
                         // The deposit will wipe out all of the debt, and create some collateral.
                         effectiveDebtAfterDeposit = balanceSheet.effectiveDebt -
-                            (trueDebt * self.priceOracle.price(token: depositType) / self.borrowFactor[depositType]!)
+                            (trueDebt * self.priceOracle.price(ofToken: depositType)! / self.borrowFactor[depositType]!)
 
                         effectiveCollateralAfterDeposit = balanceSheet.effectiveCollateral +
-                            ((depositAmount - trueDebt) * self.priceOracle.price(token: depositType) * self.collateralFactor[depositType]!)
+                            ((depositAmount - trueDebt) * self.priceOracle.price(ofToken: depositType)! * self.collateralFactor[depositType]!)
                     }
                 }
             }
@@ -1346,7 +1320,7 @@ access(all) contract TidalProtocol {
                     scaledBalance: creditBalance,
                     interestIndex: withdrawTokenState.creditInterestIndex
                 )
-                let collateralEffectiveValue = self.priceOracle.price(token: withdrawType) * trueCredit * self.collateralFactor[withdrawType]!
+                let collateralEffectiveValue = self.priceOracle.price(ofToken: withdrawType)! * trueCredit * self.collateralFactor[withdrawType]!
 
                 // Check what the new health would be if we took out all of this collateral
                 let potentialHealth = TidalProtocol.healthComputation(
@@ -1362,7 +1336,7 @@ access(all) contract TidalProtocol {
                     let availableEffectiveValue = availableHealth * effectiveDebtAfterDeposit
 
                     // The amount of the token we can take using that amount of health
-                    let availableTokenCount = availableEffectiveValue / self.collateralFactor[withdrawType]! / self.priceOracle.price(token: withdrawType)
+                    let availableTokenCount = availableEffectiveValue / self.collateralFactor[withdrawType]! / self.priceOracle.price(ofToken: withdrawType)!
 
                     return availableTokenCount
                 } else {
@@ -1382,7 +1356,7 @@ access(all) contract TidalProtocol {
             // We can calculate the available debt increase that would bring us to the target health
             var availableDebtIncrease = (effectiveCollateralAfterDeposit / targetHealth) - effectiveDebtAfterDeposit
 
-            let availableTokens = availableDebtIncrease * self.borrowFactor[withdrawType]! / self.priceOracle.price(token: withdrawType)
+            let availableTokens = availableDebtIncrease * self.borrowFactor[withdrawType]! / self.priceOracle.price(ofToken: withdrawType)!
 
             return availableTokens + collateralTokenCount
         }
@@ -1399,7 +1373,7 @@ access(all) contract TidalProtocol {
             if position.balances[type] == nil || position.balances[type]!.direction == BalanceDirection.Credit {
                 // Since the user has no debt in the given token, we can just compute how much
                 // additional collateral this deposit will create.
-                effectiveCollateralIncrease = amount * self.priceOracle.price(token: type) * self.collateralFactor[type]!
+                effectiveCollateralIncrease = amount * self.priceOracle.price(ofToken: type)! * self.collateralFactor[type]!
             } else {
                 // The user has a debit position in the given token, we need to figure out if this deposit
                 // will only pay off some of the debt, or if it will also create new collateral.
@@ -1412,11 +1386,11 @@ access(all) contract TidalProtocol {
                 if trueDebt >= amount {
                     // This deposit will wipe out some or all of the debt, but won't create new collateral, we
                     // just need to account for the debt decrease.
-                    effectiveDebtDecrease = amount * self.priceOracle.price(token: type) / self.borrowFactor[type]!
+                    effectiveDebtDecrease = amount * self.priceOracle.price(ofToken: type)! / self.borrowFactor[type]!
                 } else {
                     // This deposit will wipe out all of the debt, and create new collateral.
-                    effectiveDebtDecrease = trueDebt * self.priceOracle.price(token: type) / self.borrowFactor[type]!
-                    effectiveCollateralIncrease = (amount - trueDebt) * self.priceOracle.price(token: type) * self.collateralFactor[type]!
+                    effectiveDebtDecrease = trueDebt * self.priceOracle.price(ofToken: type)! / self.borrowFactor[type]!
+                    effectiveCollateralIncrease = (amount - trueDebt) * self.priceOracle.price(ofToken: type)! * self.collateralFactor[type]!
                 }
             }
 
@@ -1441,7 +1415,7 @@ access(all) contract TidalProtocol {
             if position.balances[type] == nil || position.balances[type]!.direction == BalanceDirection.Debit {
                 // The user has no credit position in the given token, we can just compute how much
                 // additional effective debt this withdrawal will create.
-                effectiveDebtIncrease = amount * self.priceOracle.price(token: type) / self.borrowFactor[type]!
+                effectiveDebtIncrease = amount * self.priceOracle.price(ofToken: type)! / self.borrowFactor[type]!
             } else {
                 // The user has a credit position in the given token, we need to figure out if this withdrawal
                 // will only draw down some of the collateral, or if it will also create new debt.
@@ -1454,11 +1428,11 @@ access(all) contract TidalProtocol {
                 if trueCredit >= amount {
                     // This withdrawal will draw down some collateral, but won't create new debt, we
                     // just need to account for the collateral decrease.
-                    effectiveCollateralDecrease = amount * self.priceOracle.price(token: type) * self.collateralFactor[type]!
+                    effectiveCollateralDecrease = amount * self.priceOracle.price(ofToken: type)! * self.collateralFactor[type]!
                 } else {
                     // The withdrawal will wipe out all of the collateral, and create new debt.
-                    effectiveDebtIncrease = (amount - trueCredit) * self.priceOracle.price(token: type) / self.borrowFactor[type]!
-                    effectiveCollateralDecrease = trueCredit * self.priceOracle.price(token: type) * self.collateralFactor[type]!
+                    effectiveDebtIncrease = (amount - trueCredit) * self.priceOracle.price(ofToken: type)! / self.borrowFactor[type]!
+                    effectiveCollateralDecrease = trueCredit * self.priceOracle.price(ofToken: type)! * self.collateralFactor[type]!
                 }
             }
 
@@ -1831,7 +1805,7 @@ access(all) contract TidalProtocol {
     }
 
     // RESTORED: DummyPriceOracle for testing from Dieter's design pattern
-    access(all) struct DummyPriceOracle: PriceOracle {
+    access(all) struct DummyPriceOracle: DFB.PriceOracle {
         access(self) var prices: {Type: UFix64}
         access(self) let defaultToken: Type
         
@@ -1839,8 +1813,8 @@ access(all) contract TidalProtocol {
             return self.defaultToken
         }
         
-        access(all) fun price(token: Type): UFix64 {
-            return self.prices[token] ?? 1.0
+        access(all) fun price(ofToken: Type): UFix64? {
+            return self.prices[ofToken] ?? 1.0
         }
         
         access(all) fun setPrice(token: Type, price: UFix64) {
