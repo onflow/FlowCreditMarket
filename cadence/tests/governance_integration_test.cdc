@@ -37,10 +37,13 @@ access(all) fun setup() {
 access(all) fun testGovernanceWorkflow() {
     // This test demonstrates the complete governance workflow
     
-    // 1. Create a pool with MOET as default token
+    // 1. Create a pool with String as default token
+    let oracle = TidalProtocol.DummyPriceOracle(defaultToken: Type<String>())
+    oracle.setPrice(token: Type<String>(), price: 1.0)
+    
     let pool <- TidalProtocol.createPool(
-        defaultToken: Type<@MOET.Vault>(),
-        defaultTokenThreshold: 0.8
+        defaultToken: Type<String>(),
+        priceOracle: oracle
     )
     
     // Verify pool was created with default token
@@ -71,16 +74,22 @@ access(all) fun testTokenAdditionRequiresGovernance() {
     // This test verifies that adding tokens requires proper governance
     
     // Create a pool
+    let oracle = TidalProtocol.DummyPriceOracle(defaultToken: Type<String>())
+    oracle.setPrice(token: Type<String>(), price: 1.0)
+    
     let pool <- TidalProtocol.createPool(
-        defaultToken: Type<@MOET.Vault>(),
-        defaultTokenThreshold: 0.8
+        defaultToken: Type<String>(),
+        priceOracle: oracle
     )
     
     // The pool should start with only the default token
     Test.assertEqual(pool.getSupportedTokens().length, 1)
     
-    // Another token type should not be supported initially
-    Test.assert(pool.isTokenSupported(tokenType: Type<@MOET.Vault>()))
+    // String should be supported as default
+    Test.assert(pool.isTokenSupported(tokenType: Type<String>()))
+    
+    // MOET should not be supported initially
+    Test.assert(!pool.isTokenSupported(tokenType: Type<@MOET.Vault>()))
     
     // In a real implementation, only governance can add tokens
     // The addSupportedToken function requires EGovernance entitlement
@@ -91,17 +100,21 @@ access(all) fun testTokenAdditionRequiresGovernance() {
 access(all) fun testGovernanceStructures() {
     // Test the governance structures are properly defined
     
-    // Test TokenAdditionParams creation
+    // Test TokenAdditionParams creation with updated structure
     let tokenParams = TidalPoolGovernance.TokenAdditionParams(
         tokenType: Type<@MOET.Vault>(),
-        exchangeRate: 1.0,
-        liquidationThreshold: 0.75,
+        collateralFactor: 0.75,
+        borrowFactor: 0.8,
+        depositRate: 1000000.0,
+        depositCapacityCap: 10000000.0,
         interestCurveType: "simple"
     )
     
     Test.assertEqual(tokenParams.tokenType, Type<@MOET.Vault>())
-    Test.assertEqual(tokenParams.exchangeRate, 1.0)
-    Test.assertEqual(tokenParams.liquidationThreshold, 0.75)
+    Test.assertEqual(tokenParams.collateralFactor, 0.75)
+    Test.assertEqual(tokenParams.borrowFactor, 0.8)
+    Test.assertEqual(tokenParams.depositRate, 1000000.0)
+    Test.assertEqual(tokenParams.depositCapacityCap, 10000000.0)
     Test.assertEqual(tokenParams.interestCurveType, "simple")
 }
 
@@ -124,10 +137,13 @@ access(all) fun testProposalEnums() {
 access(all) fun testPoolCreationWithGovernance() {
     // Test creating a pool that will be governed
     
-    // Create pool with a specific default token
+    // Create pool with String as default token
+    let oracle = TidalProtocol.DummyPriceOracle(defaultToken: Type<String>())
+    oracle.setPrice(token: Type<String>(), price: 1.0)
+    
     let pool <- TidalProtocol.createPool(
-        defaultToken: Type<@MOET.Vault>(),
-        defaultTokenThreshold: 0.8
+        defaultToken: Type<String>(),
+        priceOracle: oracle
     )
     
     // Verify pool properties
@@ -149,11 +165,13 @@ access(all) fun testMOETAsGovernanceToken() {
     let moetType = Type<@MOET.Vault>()
     Test.assert(moetType != nil)
     
-    // Test that we can reference MOET.Vault in parameters
+    // Test that we can reference MOET.Vault in parameters with updated structure
     let params = TidalPoolGovernance.TokenAdditionParams(
         tokenType: moetType,
-        exchangeRate: 1.0,
-        liquidationThreshold: 0.75,
+        collateralFactor: 0.75,
+        borrowFactor: 0.8,
+        depositRate: 1000000.0,
+        depositCapacityCap: 10000000.0,
         interestCurveType: "stable"
     )
     

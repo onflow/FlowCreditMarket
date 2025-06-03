@@ -45,19 +45,25 @@ access(all) contract TidalPoolGovernance {
     // Token addition parameters
     access(all) struct TokenAdditionParams {
         access(all) let tokenType: Type
-        access(all) let exchangeRate: UFix64
-        access(all) let liquidationThreshold: UFix64
+        access(all) let collateralFactor: UFix64
+        access(all) let borrowFactor: UFix64
+        access(all) let depositRate: UFix64
+        access(all) let depositCapacityCap: UFix64
         access(all) let interestCurveType: String  // We'll use string identifier for now
 
         init(
             tokenType: Type,
-            exchangeRate: UFix64,
-            liquidationThreshold: UFix64,
+            collateralFactor: UFix64,
+            borrowFactor: UFix64,
+            depositRate: UFix64,
+            depositCapacityCap: UFix64,
             interestCurveType: String
         ) {
             self.tokenType = tokenType
-            self.exchangeRate = exchangeRate
-            self.liquidationThreshold = liquidationThreshold
+            self.collateralFactor = collateralFactor
+            self.borrowFactor = borrowFactor
+            self.depositRate = depositRate
+            self.depositCapacityCap = depositCapacityCap
             self.interestCurveType = interestCurveType
         }
     }
@@ -371,9 +377,11 @@ access(all) contract TidalPoolGovernance {
 
             pool.addSupportedToken(
                 tokenType: tokenParams.tokenType,
-                exchangeRate: tokenParams.exchangeRate,
-                liquidationThreshold: tokenParams.liquidationThreshold,
-                interestCurve: interestCurve
+                collateralFactor: tokenParams.collateralFactor,
+                borrowFactor: tokenParams.borrowFactor,
+                interestCurve: interestCurve,
+                depositRate: tokenParams.depositRate,
+                depositCapacityCap: tokenParams.depositCapacityCap
             )
 
             emit TokenAdded(
