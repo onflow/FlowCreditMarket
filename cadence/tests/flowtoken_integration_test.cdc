@@ -29,24 +29,30 @@ access(all) fun setup() {
 }
 
 // Helper function to create a pool with FlowToken as default token
-access(all) fun createFlowTokenPool(defaultTokenThreshold: UFix64): @TidalProtocol.Pool {
+access(all) fun createFlowTokenPool(): @TidalProtocol.Pool {
+    let oracle = TidalProtocol.DummyPriceOracle(defaultToken: Type<@FlowToken.Vault>())
+    oracle.setPrice(token: Type<@FlowToken.Vault>(), price: 1.0)
+    oracle.setPrice(token: Type<@MOET.Vault>(), price: 0.5)  // 1 MOET = 0.5 FLOW
+    
     return <- TidalProtocol.createPool(
         defaultToken: Type<@FlowToken.Vault>(),
-        defaultTokenThreshold: defaultTokenThreshold
+        priceOracle: oracle
     )
 }
 
 access(all) fun testFlowTokenIntegration() {
     // Create a pool with FlowToken as the default token
-    let pool <- createFlowTokenPool(defaultTokenThreshold: 0.8)
+    let pool <- createFlowTokenPool()
     let poolRef = &pool as auth(TidalProtocol.EPosition, TidalProtocol.EGovernance) &TidalProtocol.Pool
 
     // Add MOET as a supported token
     poolRef.addSupportedToken(
         tokenType: Type<@MOET.Vault>(),
-        exchangeRate: 1.0,
-        liquidationThreshold: 0.75,
-        interestCurve: TidalProtocol.SimpleInterestCurve()
+        collateralFactor: 0.75,
+        borrowFactor: 0.9,
+        interestCurve: TidalProtocol.SimpleInterestCurve(),
+        depositRate: 10000.0,
+        depositCapacityCap: 1000000.0
     )
 
     // Verify both tokens are supported
@@ -77,10 +83,13 @@ access(all) fun testFlowTokenType() {
     // Verify types are different
     Test.assert(flowTokenType != moetType)
     
-    // Create a pool with FlowToken
+    // Create a pool with FlowToken and oracle
+    let oracle = TidalProtocol.DummyPriceOracle(defaultToken: flowTokenType)
+    oracle.setPrice(token: flowTokenType, price: 1.0)
+    
     let pool <- TidalProtocol.createPool(
         defaultToken: flowTokenType,
-        defaultTokenThreshold: 0.8
+        priceOracle: oracle
     )
     
     // Verify the pool was created with FlowToken
@@ -93,18 +102,24 @@ access(all) fun testFlowTokenType() {
 
 access(all) fun testPoolWithFlowTokenAndMOET() {
     // Create a pool that uses FlowToken as base and can accept MOET
+    let oracle = TidalProtocol.DummyPriceOracle(defaultToken: Type<@FlowToken.Vault>())
+    oracle.setPrice(token: Type<@FlowToken.Vault>(), price: 1.0)
+    oracle.setPrice(token: Type<@MOET.Vault>(), price: 0.5)  // 1 MOET = 0.5 FLOW
+    
     let pool <- TidalProtocol.createPool(
         defaultToken: Type<@FlowToken.Vault>(),
-        defaultTokenThreshold: 0.8
+        priceOracle: oracle
     )
     let poolRef = &pool as auth(TidalProtocol.EPosition, TidalProtocol.EGovernance) &TidalProtocol.Pool
 
-    // Add MOET with a specific exchange rate
+    // Add MOET with specific parameters
     poolRef.addSupportedToken(
         tokenType: Type<@MOET.Vault>(),
-        exchangeRate: 0.5,  // 1 MOET = 0.5 FLOW
-        liquidationThreshold: 0.7,
-        interestCurve: TidalProtocol.SimpleInterestCurve()
+        collateralFactor: 0.7,
+        borrowFactor: 0.8,
+        interestCurve: TidalProtocol.SimpleInterestCurve(),
+        depositRate: 10000.0,
+        depositCapacityCap: 1000000.0
     )
 
     // Create a position

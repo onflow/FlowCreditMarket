@@ -269,6 +269,7 @@ access(all) contract TidalProtocol {
 
     access(all) entitlement mapping ImplementationUpdates {
         EImplementation -> Mutate
+        EImplementation -> FungibleToken.Withdraw
     }
 
     // RESTORED: InternalPosition as resource per Dieter's design
@@ -545,7 +546,11 @@ access(all) contract TidalProtocol {
             }
 
             self.version = 0
-            self.globalLedger = {}
+            self.globalLedger = {defaultToken: TokenState(
+                interestCurve: SimpleInterestCurve(),
+                depositRate: 1000000.0,        // Default: no rate limiting for default token
+                depositCapacityCap: 1000000.0  // Default: high capacity cap
+            )}
             self.positions <- {}
             self.reserves <- {}
             self.defaultToken = defaultToken
@@ -742,7 +747,7 @@ access(all) contract TidalProtocol {
 
             // RESTORED: Top-up source integration from Dieter's implementation
             // Preflight to see if the funds are available
-            let topUpSource = position.topUpSource
+            let topUpSource = position.topUpSource as! auth(FungibleToken.Withdraw) &{DFB.Source}?
             let topUpType = topUpSource?.getSourceType() ?? self.defaultToken
 
             let requiredDeposit = self.fundsRequiredForTargetHealthAfterWithdrawing(
@@ -851,7 +856,7 @@ access(all) contract TidalProtocol {
             if balanceSheet.health < position.targetHealth {
                 // The position is undercollateralized, see if the source can get more collateral to bring it up to the target health.
                 if position.topUpSource != nil {
-                    let topUpSource = position.topUpSource!
+                    let topUpSource = position.topUpSource! as! auth(FungibleToken.Withdraw) &{DFB.Source}
                     let idealDeposit = self.fundsRequiredForTargetHealth(
                         pid: pid, 
                         type: topUpSource.getSourceType(), 
@@ -1897,7 +1902,7 @@ access(all) contract TidalProtocol {
         // save Pool in storage & configure public Capability
         self.account.storage.save(
             <-create PoolFactory(),
-            to: self.PoolStoragePath
+            to: self.PoolFactoryPath
         )
         let factory = self.account.storage.borrow<&PoolFactory>(from: self.PoolFactoryPath)!
     }

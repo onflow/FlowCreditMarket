@@ -45,10 +45,13 @@ access(all) fun testAddSupportedTokenRequiresGovernance() {
     // This test verifies that addSupportedToken requires governance entitlement
     // The function should only be callable with EGovernance entitlement
     
-    // Create a pool using MOET as default token
+    // Create a pool using String as default token (simpler for testing)
+    let oracle = TidalProtocol.DummyPriceOracle(defaultToken: Type<String>())
+    oracle.setPrice(token: Type<String>(), price: 1.0)
+    
     let pool <- TidalProtocol.createPool(
-        defaultToken: Type<@MOET.Vault>(),
-        defaultTokenThreshold: 0.8
+        defaultToken: Type<String>(),
+        priceOracle: oracle
     )
     
     // Verify pool was created
@@ -57,24 +60,28 @@ access(all) fun testAddSupportedTokenRequiresGovernance() {
     // Get supported tokens
     let supportedTokens = pool.getSupportedTokens()
     Test.assertEqual(supportedTokens.length, 1)
-    Test.assertEqual(supportedTokens[0], Type<@MOET.Vault>())
+    Test.assertEqual(supportedTokens[0], Type<String>())
     
     // Clean up
     destroy pool
 }
 
 access(all) fun testTokenAdditionParams() {
-    // Test the TokenAdditionParams struct
+    // Test the TokenAdditionParams struct with updated parameters
     let params = TidalPoolGovernance.TokenAdditionParams(
         tokenType: Type<@MOET.Vault>(),
-        exchangeRate: 1.0,
-        liquidationThreshold: 0.75,
+        collateralFactor: 0.75,
+        borrowFactor: 0.8,
+        depositRate: 1000000.0,
+        depositCapacityCap: 10000000.0,
         interestCurveType: "simple"
     )
     
     Test.assertEqual(params.tokenType, Type<@MOET.Vault>())
-    Test.assertEqual(params.exchangeRate, 1.0)
-    Test.assertEqual(params.liquidationThreshold, 0.75)
+    Test.assertEqual(params.collateralFactor, 0.75)
+    Test.assertEqual(params.borrowFactor, 0.8)
+    Test.assertEqual(params.depositRate, 1000000.0)
+    Test.assertEqual(params.depositCapacityCap, 10000000.0)
     Test.assertEqual(params.interestCurveType, "simple")
 }
 
