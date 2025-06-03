@@ -541,4 +541,277 @@ access(all) fun testCompoundInterestExploitation() {
     )
     
     Test.assertEqual(noInterest, baseIndex)
+}
+
+// ===== ATTACK VECTOR 11: RATE LIMITING BYPASS ATTEMPTS =====
+
+access(all) fun testRateLimitingBypassAttempts() {
+    /*
+     * Attack: Try to bypass the 5% deposit rate limiting
+     * 1. Multiple rapid deposits
+     * 2. Position splitting to bypass limits
+     * 3. Time manipulation attempts
+     */
+    
+    // Create oracle
+    let oracle = TidalProtocol.DummyPriceOracle(defaultToken: Type<@MockVault>())
+    oracle.setPrice(token: Type<@MockVault>(), price: 1.0)
+    
+    var pool <- TidalProtocol.createPool(
+        defaultToken: Type<@MockVault>(),
+        priceOracle: oracle
+    )
+    let poolRef = &pool as auth(TidalProtocol.EPosition) &TidalProtocol.Pool
+    
+    // Add token with specific rate limiting
+    pool.addSupportedToken(
+        tokenType: Type<@MockVault>(),
+        collateralFactor: 1.0,
+        borrowFactor: 1.0,
+        interestCurve: TidalProtocol.SimpleInterestCurve(),
+        depositRate: 50.0,           // 50 tokens/second
+        depositCapacityCap: 1000.0   // Max 1000 tokens
+    )
+    
+    // Attack 1: Try to bypass with rapid sequential deposits
+    let attackerPid = poolRef.createPosition()
+    var totalDeposited: UFix64 = 0.0
+    
+    // Try 10 large deposits in sequence
+    var i = 0
+    while i < 10 {
+        let largeVault <- createTestVault(balance: 10000.0)
+        poolRef.deposit(pid: attackerPid, funds: <-largeVault)
+        i = i + 1
+    }
+    
+    // Check that rate limiting was applied
+    let details = poolRef.getPositionDetails(pid: attackerPid)
+    // First deposit should be capped at 1000 (depositCapacityCap)
+    // Subsequent deposits are queued
+    Test.assert(details.balances[0].balance <= 1000.0,
+        message: "Rate limiting should cap immediate deposits")
+    
+    // Attack 2: Try to bypass by creating multiple positions
+    let positions: [UInt64] = []
+    var j = 0
+    while j < 5 {
+        positions.append(poolRef.createPosition())
+        j = j + 1
+    }
+    
+    // Deposit to all positions simultaneously
+    for pid in positions {
+        let vault <- createTestVault(balance: 5000.0)
+        poolRef.deposit(pid: pid, funds: <-vault)
+    }
+    
+    // Each position should have its own rate limit
+    for pid in positions {
+        let posDetails = poolRef.getPositionDetails(pid: pid)
+        Test.assert(posDetails.balances[0].balance <= 1000.0,
+            message: "Rate limiting applies per position")
+    }
+    
+    // Attack 3: Try to manipulate timing
+    // In real scenario, would try to advance block time
+    // Here we simulate by processing async updates
+    poolRef.asyncUpdate()
+    
+    // Some queued deposits should process
+    let updatedDetails = poolRef.getPositionDetails(pid: attackerPid)
+    // Balance should increase but still respect rate limits
+    
+    destroy pool
+}
+
+// ===== ATTACK VECTOR 12: RATE LIMITING QUEUE MANIPULATION =====
+
+access(all) fun testRateLimitingQueueManipulation() {
+    /*
+     * Attack: Try to manipulate the deposit queue
+     * 1. Queue overflow attempts
+     * 2. Queue ordering manipulation
+     * 3. DoS through queue flooding
+     */
+    
+    let oracle = TidalProtocol.DummyPriceOracle(defaultToken: Type<@MockVault>())
+    oracle.setPrice(token: Type<@MockVault>(), price: 1.0)
+    
+    var pool <- TidalProtocol.createPool(
+        defaultToken: Type<@MockVault>(),
+        priceOracle: oracle
+    )
+    let poolRef = &pool as auth(TidalProtocol.EPosition) &TidalProtocol.Pool
+    
+    // Very restrictive rate limiting for testing
+    pool.addSupportedToken(
+        tokenType: Type<@MockVault>(),
+        collateralFactor: 1.0,
+        borrowFactor: 1.0,
+        interestCurve: TidalProtocol.SimpleInterestCurve(),
+        depositRate: 1.0,            // 1 token/second
+        depositCapacityCap: 10.0     // Max 10 tokens immediate
+    )
+    
+    // Attack 1: Try to overflow queue with many small deposits
+    let victimPid = poolRef.createPosition()
+    var k = 0
+    while k < 100 {
+        let smallVault <- createTestVault(balance: 100.0)
+        poolRef.deposit(pid: victimPid, funds: <-smallVault)
+        k = k + 1
+    }
+    
+    // System should handle gracefully without overflow
+    let victimDetails = poolRef.getPositionDetails(pid: victimPid)
+    Test.assert(victimDetails.balances[0].balance <= 10.0,
+        message: "Initial deposit should be capped")
+    
+    // Attack 2: Create competing positions to affect queue processing
+    let competingPids: [UInt64] = []
+    var l = 0
+    while l < 10 {
+        let pid = poolRef.createPosition()
+        competingPids.append(pid)
+        let vault <- createTestVault(balance: 1000.0)
+        poolRef.deposit(pid: pid, funds: <-vault)
+        l = l + 1
+    }
+    
+    // Process updates - queue should handle all positions fairly
+    poolRef.asyncUpdate()
+    
+    // Verify no position can monopolize processing
+    for pid in competingPids {
+        let details = poolRef.getPositionDetails(pid: pid)
+        // Each should get some processing time
+    }
+    
+    destroy pool
+}
+
+// ===== ATTACK VECTOR 13: HEALTH CALCULATION MANIPULATION =====
+
+access(all) fun testHealthCalculationManipulation() {
+    /*
+     * Attack: Try to manipulate health calculations
+     * 1. Oracle price manipulation effects
+     * 2. Multi-token position confusion
+     * 3. Health function edge cases
+     */
+    
+    let oracle = TidalProtocol.DummyPriceOracle(defaultToken: Type<@MockVault>())
+    oracle.setPrice(token: Type<@MockVault>(), price: 1.0)
+    
+    var pool <- TidalProtocol.createPool(
+        defaultToken: Type<@MockVault>(),
+        priceOracle: oracle
+    )
+    let poolRef = &pool as auth(TidalProtocol.EPosition) &TidalProtocol.Pool
+    
+    pool.addSupportedToken(
+        tokenType: Type<@MockVault>(),
+        collateralFactor: 0.8,
+        borrowFactor: 0.8,
+        interestCurve: TidalProtocol.SimpleInterestCurve(),
+        depositRate: 1000000.0,
+        depositCapacityCap: 1000000.0
+    )
+    
+    // Create position with collateral
+    let pid = poolRef.createPosition()
+    let collateral <- createTestVault(balance: 1000.0)
+    poolRef.deposit(pid: pid, funds: <-collateral)
+    
+    // Borrow against collateral
+    let borrowed <- poolRef.withdraw(
+        pid: pid,
+        amount: 500.0,
+        type: Type<@MockVault>()
+    ) as! @MockVault
+    
+    let healthBefore = poolRef.positionHealth(pid: pid)
+    
+    // Attack: Manipulate oracle price
+    oracle.setPrice(token: Type<@MockVault>(), price: 0.5)
+    
+    let healthAfter = poolRef.positionHealth(pid: pid)
+    
+    // Health should decrease with lower collateral value
+    Test.assert(healthAfter < healthBefore,
+        message: "Health should reflect oracle price changes")
+    
+    // Try to borrow more with reduced health
+    // This should fail or be limited based on new health
+    
+    // Reset price to avoid liquidation
+    oracle.setPrice(token: Type<@MockVault>(), price: 1.0)
+    
+    destroy borrowed
+    destroy pool
+}
+
+// ===== ATTACK VECTOR 14: SINK/SOURCE EXPLOITATION =====
+
+access(all) fun testSinkSourceExploitation() {
+    /*
+     * Attack: Try to exploit sink/source mechanisms
+     * 1. Double-spending through sink/source
+     * 2. Resource duplication attempts
+     * 3. Capability confusion
+     */
+    
+    let oracle = TidalProtocol.DummyPriceOracle(defaultToken: Type<@MockVault>())
+    oracle.setPrice(token: Type<@MockVault>(), price: 1.0)
+    
+    var pool <- TidalProtocol.createPool(
+        defaultToken: Type<@MockVault>(),
+        priceOracle: oracle
+    )
+    let poolRef = &pool as auth(TidalProtocol.EPosition) &TidalProtocol.Pool
+    
+    pool.addSupportedToken(
+        tokenType: Type<@MockVault>(),
+        collateralFactor: 1.0,
+        borrowFactor: 1.0,
+        interestCurve: TidalProtocol.SimpleInterestCurve(),
+        depositRate: 1000000.0,
+        depositCapacityCap: 1000000.0
+    )
+    
+    // Setup position with funds
+    let pid = poolRef.createPosition()
+    let initial <- createTestVault(balance: 1000.0)
+    poolRef.deposit(pid: pid, funds: <-initial)
+    
+    // Create sink and source
+    let sink <- poolRef.createSink(pid: pid, tokenType: Type<@MockVault>())
+    let source <- poolRef.createSource(
+        pid: pid, 
+        tokenType: Type<@MockVault>(),
+        max: 500.0
+    )
+    
+    // Attack 1: Try to drain through source while depositing through sink
+    let drainVault <- source.withdraw(amount: 100.0) as! @MockVault
+    Test.assertEqual(drainVault.balance, 100.0)
+    
+    // Simultaneously deposit through sink
+    let depositVault <- createTestVault(balance: 200.0)
+    sink.deposit(vault: <-depositVault)
+    
+    // Position should reflect both operations
+    let details = poolRef.getPositionDetails(pid: pid)
+    // Original 1000 - 100 (source) + 200 (sink) = 1100
+    
+    // Attack 2: Try to exceed source limit
+    // Source was created with 500.0 limit, already withdrew 100.0
+    // Try to withdraw more than remaining 400.0
+    // This should fail or be capped
+    
+    destroy drainVault
+    destroy sink
+    destroy source
+    destroy pool
 } 

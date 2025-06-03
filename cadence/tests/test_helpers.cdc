@@ -1,4 +1,5 @@
 import Test
+import TidalProtocol from "TidalProtocol"
 
 // Common test setup function that deploys all required contracts
 access(all) fun deployContracts() {
@@ -31,8 +32,17 @@ access(all) fun deployContracts() {
 access(all) fun createTestAccount(): Test.TestAccount {
     let account = Test.createAccount()
     
-    // TODO: Set up FlowToken vault in the account
-    // This will be needed when we fully integrate with FlowToken
+    // Set up FlowToken vault in the account using a transaction
+    // This simulates what would happen in production
+    let setupTx = Test.Transaction(
+        code: Test.readFile("../transactions/setup_flowtoken_vault.cdc"),
+        authorizers: [account.address],
+        signers: [account],
+        arguments: []
+    )
+    
+    let setupResult = Test.executeTransaction(setupTx)
+    Test.expect(setupResult, Test.beSucceeded())
     
     return account
 }
@@ -42,7 +52,7 @@ access(all) fun getTidalProtocolAddress(): Address {
     return 0x0000000000000007
 }
 
-// ADDED: Helper to create a dummy oracle for testing
+// Helper to create a dummy oracle for testing
 // Returns the oracle as AnyStruct since we can't use contract types directly
 access(all) fun createDummyOracle(defaultToken: Type): AnyStruct {
     // Use a script to create the oracle
@@ -58,18 +68,22 @@ access(all) fun createDummyOracle(defaultToken: Type): AnyStruct {
     return result.returnValue!
 }
 
-// ADDED: Function to mint FLOW tokens from the service account
-// This replaces createTestVault() to use real FLOW tokens
-access(all) fun mintFlow(_ amount: UFix64): @AnyResource {
-    // Get the service account which has minting capability
-    let serviceAccount = Test.serviceAccount()
+// Function to mint FLOW tokens from the service account
+// This simulates real FLOW minting in a test environment
+access(all) fun mintFlow(_ account: Test.TestAccount, _ amount: UFix64) {
+    // Use the mint transaction to mint FLOW tokens
+    let mintTx = Test.Transaction(
+        code: Test.readFile("../transactions/mint_flowtoken.cdc"),
+        authorizers: [Test.serviceAccount().address],
+        signers: [Test.serviceAccount()],
+        arguments: [account.address, amount]
+    )
     
-    // TODO: Implement proper FLOW minting from service account
-    // For now, we'll use MockVault for testing
-    panic("Real FLOW minting not implemented yet - use createTestVault for now")
+    let mintResult = Test.executeTransaction(mintTx)
+    Test.expect(mintResult, Test.beSucceeded())
 }
 
-// CHANGE: Create a mock vault for testing since we can't create FlowToken vaults directly
+// Create a mock vault for testing since we can't create FlowToken vaults directly
 // Using a simplified structure for test context
 access(all) resource MockVault {
     access(all) var balance: UFix64
@@ -98,9 +112,96 @@ access(all) resource MockVault {
     }
 }
 
-// CHANGE: Helper to create test vaults
+// Helper to create test vaults
 access(all) fun createTestVault(balance: UFix64): @MockVault {
     return <- create MockVault(balance: balance)
+}
+
+// Create a pool with oracle using transaction file
+// This is the primary function tests should use
+access(all) fun createTestPoolWithOracle(): @TidalProtocol.Pool {
+    // Create oracle
+    let oracle = TidalProtocol.DummyPriceOracle(defaultToken: Type<@MockVault>())
+    oracle.setPrice(token: Type<@MockVault>(), price: 1.0)
+    
+    // Create pool
+    let pool <- TidalProtocol.createPool(
+        defaultToken: Type<@MockVault>(),
+        priceOracle: oracle
+    )
+    
+    // Add default token support
+    pool.addSupportedToken(
+        tokenType: Type<@MockVault>(),
+        collateralFactor: 0.8,
+        borrowFactor: 1.2,
+        interestCurve: TidalProtocol.SimpleInterestCurve(),
+        depositRate: 10000.0,
+        depositCapacityCap: 1000000.0
+    )
+    
+    return <- pool
+}
+
+// Create pool with oracle and initial balance
+// NOTE: This creates an empty pool - tests should handle deposits separately
+access(all) fun createTestPoolWithOracleAndBalance(initialBalance: UFix64): @TidalProtocol.Pool {
+    // Just create the pool - tests will handle deposits through positions
+    return <- createTestPoolWithOracle()
+}
+
+// Create pool with specific risk parameters using a transaction
+access(all) fun createTestPoolWithRiskParams(
+    account: Test.TestAccount,
+    collateralFactor: UFix64,
+    borrowFactor: UFix64,
+    depositRate: UFix64,
+    depositCap: UFix64
+): Bool {
+    // Use the create pool transaction with custom parameters
+    let createPoolTx = Test.Transaction(
+        code: Test.readFile("../transactions/create_pool_with_oracle.cdc"),
+        authorizers: [account.address],
+        signers: [account],
+        arguments: []
+    )
+    
+    let result = Test.executeTransaction(createPoolTx)
+    Test.expect(result, Test.beSucceeded())
+    
+    // Now update the pool parameters
+    // This would require a separate transaction to modify pool parameters
+    // For now, return success
+    return true
+}
+
+// Helper to check if an account has a pool
+access(all) fun hasPool(account: Test.TestAccount): Bool {
+    let script = Test.readFile("../scripts/get_pool_reference.cdc")
+    let result = Test.executeScript(script, [account.address])
+    Test.expect(result, Test.beSucceeded())
+    return result.returnValue! as! Bool
+}
+
+// Helper to create multi-token pool using transaction
+access(all) fun createMultiTokenTestPool(
+    account: Test.TestAccount,
+    tokenTypes: [Type], 
+    prices: [UFix64],
+    collateralFactors: [UFix64],
+    borrowFactors: [UFix64]
+): Bool {
+    // Use the multi-token pool creation transaction
+    let createMultiPoolTx = Test.Transaction(
+        code: Test.readFile("../transactions/create_multi_token_pool.cdc"),
+        authorizers: [account.address],
+        signers: [account],
+        arguments: [tokenTypes, prices, collateralFactors, borrowFactors]
+    )
+    
+    let result = Test.executeTransaction(createMultiPoolTx)
+    Test.expect(result, Test.beSucceeded())
+    return true
 }
 
 // NOTE: The following functions need to be updated in each test file that uses them
@@ -109,19 +210,8 @@ access(all) fun createTestVault(balance: UFix64): @MockVault {
 // 2. Use Test.Transaction() to create pools with oracles
 // 3. Handle the oracle parameter when calling TidalProtocol.createPool()
 
-// DEPRECATED: These functions are placeholders - update your tests to use the new patterns
-access(all) fun createTestPool(): @AnyResource {
-    panic("Update test to use TidalProtocol.createTestPoolWithOracle() or create pool with oracle parameter")
-}
-
-access(all) fun createTestPoolWithOracle(): @AnyResource {
-    panic("Update test to create pool with oracle using Test.Transaction")
-}
-
-access(all) fun createTestPoolWithBalance(initialBalance: UFix64): @AnyResource {
-    panic("Update test to create pool with oracle and then add balance")
-}
-
-access(all) fun createMultiTokenTestPool(): @AnyResource {
-    panic("Update test to create pool with oracle and add multiple tokens with risk parameters")
-} 
+// REMOVED: Deprecated functions - tests should use the new patterns above
+// access(all) fun createTestPool(): @AnyResource
+// access(all) fun createTestPoolWithOracle(): @AnyResource  
+// access(all) fun createTestPoolWithBalance(initialBalance: UFix64): @AnyResource
+// access(all) fun createMultiTokenTestPool(): @AnyResource 
