@@ -22,6 +22,7 @@ access(all) contract TidalProtocol {
 
     /// The canonical StoragePath where the primary TidalProtocol Pool is stored
     access(all) let PoolStoragePath: StoragePath
+    access(all) let PoolFactoryPath: StoragePath
     /// The canonical PublicPath where the primary TidalProtocol Pool can be accessed publicly
     access(all) let PoolPublicPath: PublicPath
 
@@ -1488,6 +1489,27 @@ access(all) contract TidalProtocol {
         }
     }
 
+    /// Resource enabling the contract account to create a Pool. This pattern is used in place of contract methods to
+    /// ensure limited access to pool creation. While this could be done in contract's init, doing so here will allow
+    /// for the setting of the Pool's PriceOracle without the introduction of a concrete PriceOracle defining contract
+    /// which would include an external contract dependency.
+    ///
+    // TODO: consider if we will ever want to enable governance to create another pool - if so, update storage pattern to allow
+    access(all) resource PoolFactory {
+        /// Creates a Pool and saves it to the canonical path, reverting if one is already stored
+        access(all) fun createPool(defaultToken: Type, priceOracle: {DFB.PriceOracle}) {
+            pre {
+                TidalProtocol.account.storage.type(at: TidalProtocol.PoolStoragePath) == nil:
+                "Storage collision - Pool has already been created & saved to \(TidalProtocol.PoolStoragePath)"
+            }
+            let pool <- create Pool(defaultToken: defaultToken, priceOracle: priceOracle)
+            TidalProtocol.account.storage.save(<-pool, to: TidalProtocol.PoolStoragePath)
+            let cap = TidalProtocol.account.capabilities.storage.issue<&Pool>(TidalProtocol.PoolStoragePath)
+            TidalProtocol.account.capabilities.unpublish(TidalProtocol.PoolPublicPath)
+            TidalProtocol.account.capabilities.publish(cap, at: TidalProtocol.PoolPublicPath)
+        }
+    }
+
     // TODO: Consider making this a resource given how critical it is to accessing a loan
     access(all) struct Position {
         access(self) let id: UInt64
@@ -1869,15 +1891,14 @@ access(all) contract TidalProtocol {
 
     init() {
         self.PoolStoragePath = StoragePath(identifier: "tidalProtocolPool_\(self.account.address)")!
+        self.PoolFactoryPath = StoragePath(identifier: "tidalProtocolPoolFactory_\(self.account.address)")!
         self.PoolPublicPath = PublicPath(identifier: "tidalProtocolPool_\(self.account.address)")!
 
         // save Pool in storage & configure public Capability
         self.account.storage.save(
-            <-create Pool(defaultToken: Type<@MOET.Vault>(), defaultTokenThreshold: 0.8),
+            <-create PoolFactory(),
             to: self.PoolStoragePath
         )
-        let cap = self.account.capabilities.storage.issue<&Pool>(self.PoolStoragePath)
-        self.account.capabilities.unpublish(self.PoolPublicPath)
-        self.account.capabilities.publish(cap, at: self.PoolPublicPath)
+        let factory = self.account.storage.borrow<&PoolFactory>(from: self.PoolFactoryPath)!
     }
 }

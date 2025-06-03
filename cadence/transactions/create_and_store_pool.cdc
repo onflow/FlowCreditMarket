@@ -1,15 +1,30 @@
-import TidalProtocol from "TidalProtocol"
-import FlowToken from "FlowToken"
+import "FungibleToken"
 
-transaction(defaultTokenThreshold: UFix64) {
-    prepare(signer: auth(SaveValue) &Account) {
-        // Create a new pool with FlowToken as the default token
-        let pool <- TidalProtocol.createPool(
-            defaultToken: Type<@FlowToken.Vault>(),
-            defaultTokenThreshold: defaultTokenThreshold
-        )
-        
-        // Save the pool to the signer's storage
-        signer.storage.save(<-pool, to: /storage/tidalPool)
+import "DFB"
+import "TidalProtocol"
+import "MockOracle"
+
+/// THIS TRANSACTION IS NOT INTENDED FOR PRODUCTION
+/// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+///
+/// Creates the protocol pool in the TidalProtocol account via the stored PoolFactory resource
+///
+/// @param defaultTokenIdentifier: The Type identifier (e.g. resource.getType().identifier) of the Pool's default token
+///
+transaction(defaultTokenIdentifier: String) {
+
+    let factory: &TidalProtocol.PoolFactory
+    let defaultToken: Type
+    let oracle: {DFB.PriceOracle}
+
+    prepare(signer: auth(BorrowValue) &Account) {
+        self.factory = signer.storage.borrow<&TidalProtocol.PoolFactory>(from: TidalProtocol.PoolFactoryPath)
+            ?? panic("Could not find PoolFactory in signer's account")
+        self.defaultToken = CompositeType(defaultTokenIdentifier) ?? panic("Invalid defaultTokenIdentifier \(defaultTokenIdentifier)")
+        self.oracle = MockOracle.PriceOracle()
     }
-} 
+
+    execute {
+        self.factory.createPool(defaultToken: self.defaultToken, priceOracle: self.oracle)
+    }
+}

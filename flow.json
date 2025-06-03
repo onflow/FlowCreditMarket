@@ -6,6 +6,12 @@
 				"testing": "0x0000000000000006"
 			}
 		},
+		"MockOracle": {
+			"source": "./cadence/contracts/mocks/MockOracle.cdc",
+			"aliases": {
+				"testing": "0000000000000007"
+			}
+		},
 		"MOET": {
 			"source": "./cadence/contracts/MOET.cdc",
 			"aliases": {
@@ -118,6 +124,15 @@
 						{
 							"value": "1000000.0",
 							"type": "UFix64"
+						}
+					]
+				},
+				{
+					"name": "MockOracle",
+					"args": [
+						{
+							"value": "A.f8d6e0586b0a20c7.MOET.Vault",
+							"type": "String"
 						}
 					]
 				},
