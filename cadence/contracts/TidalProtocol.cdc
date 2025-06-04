@@ -50,6 +50,7 @@ access(all) contract TidalProtocol {
         repaymentSource: {DFB.Source}?,
         pushToDrawDownSink: Bool
     ): Position {
+        log("opening position...")
         let pid = self.borrowPool().createPosition(
                 funds: <-collateral,
                 issuanceSink: issuanceSink,
@@ -57,6 +58,7 @@ access(all) contract TidalProtocol {
                 pushToDrawDownSink: pushToDrawDownSink
             )
         let cap = self.account.capabilities.storage.issue<auth(EPosition) &Pool>(self.PoolStoragePath)
+        log("returning position.")
         return Position(id: pid, pool: cap)
     }
 
@@ -626,7 +628,9 @@ access(all) contract TidalProtocol {
             // Get a reference to the user's position and global token state for the affected token.
             let type = from.getType()
             let position = (&self.positions[pid] as auth(EImplementation) &InternalPosition?)!
+            log("...updating token state...")
             let tokenState = self.tokenState(type: type)
+            log("...updated token state...")
 
             // Update time-based state
             // REMOVED: This is now handled by tokenState() helper function
@@ -634,9 +638,12 @@ access(all) contract TidalProtocol {
 
             // RESTORED: Deposit rate limiting from Dieter's implementation
             let depositAmount = from.balance
+            log("...calculating deposit limit...")
             let depositLimit = tokenState.depositLimit()
+            log("...calculated deposit limit: \(depositLimit)...")
 
             if depositAmount > depositLimit {
+                log("...queuing deposit \(depositAmount - depositLimit)...")
                 // The deposit is too big, so we need to queue the excess
                 let queuedDeposit <- from.withdraw(amount: depositAmount - depositLimit)
 
@@ -649,26 +656,32 @@ access(all) contract TidalProtocol {
 
             // If this position doesn't currently have an entry for this token, create one.
             if position.balances[type] == nil {
+                log("...configuring InternalBalance for deposit vault \(type.identifier)...")
                 position.balances[type] = InternalBalance()
             }
 
             // CHANGE: Create vault if it doesn't exist yet
             if self.reserves[type] == nil {
+                log("...configuring reserve vault \(type.identifier)...")
                 self.reserves[type] <-! from.createEmptyVault()
             }
             let reserveVault = (&self.reserves[type] as auth(FungibleToken.Withdraw) &{FungibleToken.Vault}?)!
 
             // Reflect the deposit in the position's balance
+            log("...recording deposit \(from.balance)...")
             position.balances[type]!.recordDeposit(amount: from.balance, tokenState: tokenState)
 
             // Add the money to the reserves
+            log("...deposit \(from.balance) to reserves...")
             reserveVault.deposit(from: <-from)
 
             // RESTORED: Rebalancing and queue management
             if pushToDrawDownSink {
+                log("...force rebalancing position...")
                 self.rebalancePosition(pid: pid, force: true)
             }
 
+            log("...returning from depositAndpush but not before queuePositionForUpdateIfNecessary...")
             self.queuePositionForUpdateIfNecessary(pid: pid)
         }
 
@@ -689,6 +702,7 @@ access(all) contract TidalProtocol {
                 self.globalLedger[type] != nil: "Invalid token type"
                 amount > 0.0: "Withdrawal amount must be positive" // TODO: consider empty vault early return
             }
+            log("...entered withdrawAndPull scope...")
 
             // Get a reference to the user's position and global token state for the affected token.
             let position = (&self.positions[pid] as auth(EImplementation) &InternalPosition?)!
@@ -703,6 +717,7 @@ access(all) contract TidalProtocol {
             let topUpSource = position.topUpSource as! auth(FungibleToken.Withdraw) &{DFB.Source}?
             let topUpType = topUpSource?.getSourceType() ?? self.defaultToken
 
+            log("...calculating required deposit...")
             let requiredDeposit = self.fundsRequiredForTargetHealthAfterWithdrawing(
                 pid: pid, 
                 depositType: topUpType, 
@@ -710,6 +725,9 @@ access(all) contract TidalProtocol {
                 withdrawType: type, 
                 withdrawAmount: amount
             )
+            log("...required deposit found to be \(requiredDeposit)...")
+            log("position.minHealth: \(position.minHealth)")
+            log("requiredDeposit: \(requiredDeposit)")
 
             var canWithdraw = false
 
@@ -798,15 +816,19 @@ access(all) contract TidalProtocol {
         // rebalanced even if it is currently healthy, otherwise, this function will do nothing if the
         // position is within the min/max health bounds.
         access(EPosition) fun rebalancePosition(pid: UInt64, force: Bool) {
+            log("...reached rebalancePosition scope for pid \(pid) and force == \(force)...")
             let position = (&self.positions[pid] as auth(EImplementation) &InternalPosition?)!
+            log("...getting BalanceSheet for pid \(pid)...")
             let balanceSheet = self.positionBalanceSheet(pid: pid)
 
             if !force && (balanceSheet.health >= position.minHealth && balanceSheet.health <= position.maxHealth) {
                 // We aren't forcing the update, and the position is already between its desired min and max. Nothing to do!
+                log("...not forced and not beyond health bounds - returning from rebalancePosition...")
                 return
             }
 
             if balanceSheet.health < position.targetHealth {
+                log("...balanceSheet.health < position.targetHealth...undercollateralized...")
                 // The position is undercollateralized, see if the source can get more collateral to bring it up to the target health.
                 if position.topUpSource != nil {
                     let topUpSource = position.topUpSource! as! auth(FungibleToken.Withdraw) &{DFB.Source}
@@ -820,21 +842,28 @@ access(all) contract TidalProtocol {
                     self.depositAndPush(pid: pid, from: <-pulledVault, pushToDrawDownSink: false)
                 }
             } else if balanceSheet.health > position.targetHealth {
+                log("...balanceSheet.health > position.targetHealth...overcollateralized...")
                 // The position is overcollateralized, we'll withdraw funds to match the target health and offer it to the sink.
                 if position.drawDownSink != nil {
+                    log("...drawDownSink found...withdrawing & pushing to drawDownSink...")
                     let drawDownSink = position.drawDownSink!
                     let sinkType = drawDownSink.getSinkType()
+                    log("...calculating ideal withdrawal...")
                     let idealWithdrawal = self.fundsAvailableAboveTargetHealth(
                         pid: pid, 
                         type: sinkType, 
                         targetHealth: position.targetHealth
                     )
+                    log("...ideal withdrawal found to be \(idealWithdrawal)...")
 
                     // Compute how many tokens of the sink's type are available to hit our target health.
+                    log("...calculating drawDownSink capacity to receive...")
                     let sinkCapacity = drawDownSink.minimumCapacity()
                     let sinkAmount = (idealWithdrawal > sinkCapacity) ? sinkCapacity : idealWithdrawal
-                    
+                    log("...drawDownSink capacity found to be \(sinkAmount)...")
+
                     if sinkAmount > 0.0 {
+                        log("...calling to withdrawAndPull...")
                         let sinkVault <- self.withdrawAndPull(
                             pid: pid, 
                             type: sinkType, 
@@ -979,22 +1008,30 @@ access(all) contract TidalProtocol {
             self.nextPositionID = self.nextPositionID + 1
             self.positions[id] <-! create InternalPosition()
 
+            log("...created InternalPosition \(id)...")
+
             // assign issuance & repayment connectors within the InternalPosition
             let iPos = (&self.positions[id] as auth(EImplementation) &InternalPosition?)!
             let fundsType = funds.getType()
+            log("...setting drawDownSink...")
             iPos.setDrawDownSink(issuanceSink)
+            log("...set drawDownSink...")
+            log("...setting topUpSource...")
             if repaymentSource != nil {
                 iPos.setTopUpSource(repaymentSource)
             }
+            log("...set topUpSource...")
 
             // deposit the initial funds & return the position ID
             if pushToDrawDownSink {
+                log("...depositing & pushing...")
                 self.depositAndPush(
                     pid: id,
                     from: <-funds,
                     pushToDrawDownSink: pushToDrawDownSink
                 )
             } else {
+                log("...depositing...")
                 self.deposit(pid: id, funds: <-funds)
             }
             return id
