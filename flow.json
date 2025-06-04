@@ -1,5 +1,11 @@
 {
 	"contracts": {
+		"FungibleTokenStack": {
+			"source": "./DeFiBlocks/cadence/contracts/connectors/FungibleTokenStack.cdc",
+			"aliases": {
+				"testing": "0x0000000000000006"
+			}
+		},
 		"DFB": {
 			"source": "./DeFiBlocks/cadence/contracts/interfaces/DFB.cdc",
 			"aliases": {
@@ -8,6 +14,12 @@
 		},
 		"MockOracle": {
 			"source": "./cadence/contracts/mocks/MockOracle.cdc",
+			"aliases": {
+				"testing": "0000000000000007"
+			}
+		},
+		"MockTidalProtocolConsumer": {
+			"source": "./cadence/contracts/mocks/MockTidalProtocolConsumer.cdc",
 			"aliases": {
 				"testing": "0000000000000007"
 			}
@@ -118,6 +130,7 @@
 		"emulator": {
 			"emulator-account": [
 				"DFB",
+				"FungibleTokenStack",
 				{
 					"name": "MOET",
 					"args": [
@@ -137,7 +150,8 @@
 					]
 				},
 				"TidalProtocol",
-				"TidalPoolGovernance"
+				"TidalPoolGovernance",
+				"MockTidalProtocolConsumer"
 			]
 		}
 	}

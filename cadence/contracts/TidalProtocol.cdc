@@ -46,9 +46,15 @@ access(all) contract TidalProtocol {
     access(all) fun openPosition(
         collateral: @{FungibleToken.Vault},
         issuanceSink: {DFB.Sink},
-        repaymentSource: {DFB.Source}?
+        repaymentSource: {DFB.Source}?,
+        pushToDrawDownSink: Bool
     ): Position {
-        let pid = self.borrowPool().createPosition(funds: <-collateral, issuanceSink: issuanceSink, repaymentSource: repaymentSource)
+        let pid = self.borrowPool().createPosition(
+                funds: <-collateral,
+                issuanceSink: issuanceSink,
+                repaymentSource: repaymentSource,
+                pushToDrawDownSink: pushToDrawDownSink
+            )
         let cap = self.account.capabilities.storage.issue<auth(EPosition) &Pool>(self.PoolStoragePath)
         return Position(id: pid, pool: cap)
     }
@@ -1015,7 +1021,8 @@ access(all) contract TidalProtocol {
         access(all) fun createPosition(
             funds: @{FungibleToken.Vault},
             issuanceSink: {DFB.Sink},
-            repaymentSource: {DFB.Source}?
+            repaymentSource: {DFB.Source}?,
+            pushToDrawDownSink: Bool
         ): UInt64 {
             pre {
                 self.globalLedger[funds.getType()] != nil: "Invalid token type \(funds.getType().identifier)"
@@ -1034,7 +1041,15 @@ access(all) contract TidalProtocol {
             }
 
             // deposit the initial funds & return the position ID
-            self.deposit(pid: id, funds: <-funds)
+            if pushToDrawDownSink {
+                self.depositAndPush(
+                    pid: id,
+                    from: <-funds,
+                    pushToDrawDownSink: pushToDrawDownSink
+                )
+            } else {
+                self.deposit(pid: id, funds: <-funds)
+            }
             return id
         }
 

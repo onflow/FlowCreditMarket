@@ -1,10 +1,10 @@
-import MOET from "MOET"
-import FungibleToken from "FungibleToken"
+import "MOET"
+import "FungibleToken"
 
 transaction {
     prepare(signer: auth(SaveValue, BorrowValue, IssueStorageCapabilityController, PublishCapability) &Account) {
         // Check if vault already exists
-        if signer.storage.borrow<&MOET.Vault>(from: /storage/moetVault) != nil {
+        if signer.storage.borrow<&MOET.Vault>(from: MOET.VaultStoragePath) != nil {
             return
         }
         
@@ -12,17 +12,13 @@ transaction {
         let vault <- MOET.createEmptyVault(vaultType: Type<@MOET.Vault>())
         
         // Save it to storage
-        signer.storage.save(<-vault, to: /storage/moetVault)
+        signer.storage.save(<-vault, to: MOET.VaultStoragePath)
         
         // Create capabilities
-        let vaultCap = signer.capabilities.storage.issue<&MOET.Vault>(
-            /storage/moetVault
-        )
+        let vaultCap = signer.capabilities.storage.issue<&MOET.Vault>(MOET.VaultStoragePath)
         
-        // Publish receiver capability
-        signer.capabilities.publish(
-            vaultCap,
-            at: /public/moetReceiver
-        )
+        // Publish receiver capability, unpublishing any that may exist to prevent collision
+        signer.capabilities.unpublish(MOET.VaultPublicPath)
+        signer.capabilities.publish(vaultCap, at: MOET.VaultPublicPath)
     }
 } 

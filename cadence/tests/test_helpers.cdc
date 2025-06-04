@@ -1,6 +1,8 @@
 import Test
 import TidalProtocol from "TidalProtocol"
 
+/* --- Execution helpers --- */
+
 access(all)
 fun _executeScript(_ path: String, _ args: [AnyStruct]): Test.ScriptResult {
     return Test.executeScript(Test.readFile(path), args)
@@ -16,6 +18,8 @@ fun _executeTransaction(_ path: String, _ args: [AnyStruct], _ signer: Test.Test
     )    
     return Test.executeTransaction(txn)
 }
+
+/* --- Setup helpers --- */
 
 // Common test setup function that deploys all required contracts
 access(all) fun deployContracts() {
@@ -182,6 +186,12 @@ access(all) fun hasPool(account: Test.TestAccount): Bool {
     return result.returnValue! as! Bool
 }
 
+access(all) fun getBalance(address: Address, vaultPublicPath: PublicPath): UFix64? {
+    let res = _executeScript("../scripts/tokens/get_balance.cdc", [address, vaultPublicPath])
+    Test.expect(res, Test.beSucceeded())
+    return res.returnValue as! UFix64?
+}
+
 // Helper to create multi-token pool using transaction
 access(all) fun createMultiTokenTestPool(
     account: Test.TestAccount,
@@ -211,6 +221,23 @@ fun createAndStorePool(signer: Test.TestAccount, defaultTokenIdentifier: String,
         signer
     )
     Test.expect(createRes, beFailed ? Test.beFailed() : Test.beSucceeded())
+}
+
+access(all)
+fun addSupportedTokenSimpleInterestCurve(
+    signer: Test.TestAccount,
+    tokenTypeIdentifier: String,
+    collateralFactor: UFix64,
+    borrowFactor: UFix64,
+    depositRate: UFix64,
+    depositCapacityCap: UFix64
+) {
+    let additionRes = _executeTransaction(
+        "../transactions/tidal-protocol/pool-governance/add_supported_token_simple_interest_curve.cdc",
+        [ tokenTypeIdentifier, collateralFactor, borrowFactor, depositRate, depositCapacityCap ],
+        signer
+    )
+    Test.expect(additionRes, Test.beSucceeded())
 }
 
 // NOTE: The following functions need to be updated in each test file that uses them
