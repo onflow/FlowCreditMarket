@@ -468,7 +468,7 @@ access(all) contract TidalProtocol {
 
         // RESTORED: Parameterized init from Dieter's implementation
         init(interestCurve: {InterestCurve}, depositRate: UFix64, depositCapacityCap: UFix64) {
-            self.lastUpdate = 0.0
+            self.lastUpdate = getCurrentBlock().timestamp
             self.totalCreditBalance = 0.0
             self.totalDebitBalance = 0.0
             self.creditInterestIndex = 10000000000000000
@@ -570,7 +570,7 @@ access(all) contract TidalProtocol {
         // This function should only be called by governance in the future
         access(EGovernance) fun addSupportedToken(
             tokenType: Type, 
-            collateralFactor: UFix64, 
+            collateralFactor: UFix64,
             borrowFactor: UFix64,
             interestCurve: {InterestCurve},
             depositRate: UFix64,
