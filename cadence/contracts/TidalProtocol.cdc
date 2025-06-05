@@ -354,7 +354,7 @@ access(all) contract TidalProtocol: FungibleToken {
 
         // RESTORED: Parameterized init from Dieter's implementation
         init(interestCurve: {InterestCurve}, depositRate: UFix64, depositCapacityCap: UFix64) {
-            self.lastUpdate = 0.0
+            self.lastUpdate = getCurrentBlock().timestamp
             self.totalCreditBalance = 0.0
             self.totalDebitBalance = 0.0
             self.creditInterestIndex = 10000000000000000
