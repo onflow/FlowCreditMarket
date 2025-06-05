@@ -835,7 +835,7 @@ access(all) contract TidalProtocol: FungibleToken {
                         interestIndex: tokenState.creditInterestIndex)
 
                     // RESTORED: Oracle-based pricing from Dieter's implementation
-                    let tokenPrice = self.priceOracle.price(token: type)
+                    let tokenPrice = self.priceOracle.price(ofToken: type)!
                     let value = tokenPrice * trueBalance
                     effectiveCollateral = effectiveCollateral + (value * self.collateralFactor[type]!)
                 } else {
@@ -843,7 +843,7 @@ access(all) contract TidalProtocol: FungibleToken {
                         interestIndex: tokenState.debitInterestIndex)
 
                     // RESTORED: Oracle-based pricing for debt calculation
-                    let tokenPrice = self.priceOracle.price(token: type)
+                    let tokenPrice = self.priceOracle.price(ofToken: type)!
                     let value = tokenPrice * trueBalance
                     effectiveDebt = effectiveDebt + (value / self.borrowFactor[type]!)
                 }
@@ -872,14 +872,14 @@ access(all) contract TidalProtocol: FungibleToken {
                     let trueBalance = TidalProtocol.scaledBalanceToTrueBalance(scaledBalance: balance.scaledBalance,
                         interestIndex: tokenState.creditInterestIndex)
                     
-                    let value = priceOracle.price(token: type) * trueBalance
+                    let value = priceOracle.price(ofToken: type)! * trueBalance
 
                     effectiveCollateral = effectiveCollateral + (value * self.collateralFactor[type]!)
                 } else {
                     let trueBalance = TidalProtocol.scaledBalanceToTrueBalance(scaledBalance: balance.scaledBalance,
                         interestIndex: tokenState.debitInterestIndex)
 
-                    let value = priceOracle.price(token: type) * trueBalance
+                    let value = priceOracle.price(ofToken: type)! * trueBalance
 
                     effectiveDebt = effectiveDebt + (value / self.borrowFactor[type]!)
                 }
@@ -978,7 +978,7 @@ access(all) contract TidalProtocol: FungibleToken {
                     // If the position doesn't have any collateral for the withdrawn token, we can just compute how much
                     // additional effective debt the withdrawal will create.
                     effectiveDebtAfterWithdrawal = balanceSheet.effectiveDebt + 
-                        (withdrawAmount * self.priceOracle.price(token: withdrawType) / self.borrowFactor[withdrawType]!)
+                        (withdrawAmount * self.priceOracle.price(ofToken: withdrawType)! / self.borrowFactor[withdrawType]!)
                 } else {
                     let withdrawTokenState = self.tokenState(type: withdrawType)
                     // REMOVED: This is now handled by tokenState() helper function
@@ -996,14 +996,14 @@ access(all) contract TidalProtocol: FungibleToken {
                         // This withdrawal will draw down collateral, but won't create debt, we just need to account
                         // for the collateral decrease.
                         effectiveCollateralAfterWithdrawal = balanceSheet.effectiveCollateral - 
-                            (withdrawAmount * self.priceOracle.price(token: withdrawType) * self.collateralFactor[withdrawType]!)
+                            (withdrawAmount * self.priceOracle.price(ofToken: withdrawType)! * self.collateralFactor[withdrawType]!)
                     } else {
                         // The withdrawal will wipe out all of the collateral, and create some debt.
                         effectiveDebtAfterWithdrawal = balanceSheet.effectiveDebt +
-                            ((withdrawAmount - trueCollateral) * self.priceOracle.price(token: withdrawType) / self.borrowFactor[withdrawType]!)
+                            ((withdrawAmount - trueCollateral) * self.priceOracle.price(ofToken: withdrawType)! / self.borrowFactor[withdrawType]!)
 
                         effectiveCollateralAfterWithdrawal = balanceSheet.effectiveCollateral -
-                            (trueCollateral * self.priceOracle.price(token: withdrawType) * self.collateralFactor[withdrawType]!)
+                            (trueCollateral * self.priceOracle.price(ofToken: withdrawType)! * self.collateralFactor[withdrawType]!)
                     }
                 }
             }
@@ -1037,7 +1037,7 @@ access(all) contract TidalProtocol: FungibleToken {
                     scaledBalance: debtBalance,
                     interestIndex: depositTokenState.debitInterestIndex
                 )
-                let debtEffectiveValue = self.priceOracle.price(token: depositType) * trueDebt / self.borrowFactor[depositType]!
+                let debtEffectiveValue = self.priceOracle.price(ofToken: depositType)! * trueDebt / self.borrowFactor[depositType]!
 
                 // Check what the new health would be if we paid off all of this debt
                 let potentialHealth = TidalProtocol.healthComputation(
@@ -1053,7 +1053,7 @@ access(all) contract TidalProtocol: FungibleToken {
                     let requiredEffectiveDebt = healthChange * effectiveCollateralAfterWithdrawal / (targetHealth * targetHealth)
 
                     // The amount of the token to pay back, in units of the token.
-                    let paybackAmount = requiredEffectiveDebt * self.borrowFactor[depositType]! / self.priceOracle.price(token: depositType)
+                    let paybackAmount = requiredEffectiveDebt * self.borrowFactor[depositType]! / self.priceOracle.price(ofToken: depositType)!
 
                     return paybackAmount
                 } else {
@@ -1083,7 +1083,7 @@ access(all) contract TidalProtocol: FungibleToken {
             let requiredEffectiveCollateral = healthChange * effectiveDebtAfterWithdrawal
 
             // The amount of the token to deposit, in units of the token.
-            let collateralTokenCount = requiredEffectiveCollateral / self.priceOracle.price(token: depositType) / self.collateralFactor[depositType]!
+            let collateralTokenCount = requiredEffectiveCollateral / self.priceOracle.price(ofToken: depositType)! / self.collateralFactor[depositType]!
 
             // debtTokenCount is the number of tokens that went towards debt, zero if there was no debt.
             return collateralTokenCount + debtTokenCount
@@ -1126,7 +1126,7 @@ access(all) contract TidalProtocol: FungibleToken {
                 if position.balances[depositType] == nil || position.balances[depositType]!.direction == BalanceDirection.Credit {
                     // If there's no debt for the deposit token, we can just compute how much additional effective collateral the deposit will create.
                     effectiveCollateralAfterDeposit = balanceSheet.effectiveCollateral + 
-                        (depositAmount * self.priceOracle.price(token: depositType) * self.collateralFactor[depositType]!)
+                        (depositAmount * self.priceOracle.price(ofToken: depositType)! * self.collateralFactor[depositType]!)
                 } else {
                     let depositTokenState = self.tokenState(type: depositType)
 
@@ -1142,14 +1142,14 @@ access(all) contract TidalProtocol: FungibleToken {
                         // This deposit will pay down some debt, but won't result in net collateral, we
                         // just need to account for the debt decrease.
                         effectiveDebtAfterDeposit = balanceSheet.effectiveDebt - 
-                            (depositAmount * self.priceOracle.price(token: depositType) / self.borrowFactor[depositType]!)
+                            (depositAmount * self.priceOracle.price(ofToken: depositType)! / self.borrowFactor[depositType]!)
                     } else {
                         // The deposit will wipe out all of the debt, and create some collateral.
                         effectiveDebtAfterDeposit = balanceSheet.effectiveDebt -
-                            (trueDebt * self.priceOracle.price(token: depositType) / self.borrowFactor[depositType]!)
+                            (trueDebt * self.priceOracle.price(ofToken: depositType)! / self.borrowFactor[depositType]!)
 
                         effectiveCollateralAfterDeposit = balanceSheet.effectiveCollateral +
-                            ((depositAmount - trueDebt) * self.priceOracle.price(token: depositType) * self.collateralFactor[depositType]!)
+                            ((depositAmount - trueDebt) * self.priceOracle.price(ofToken: depositType)! * self.collateralFactor[depositType]!)
                     }
                 }
             }
@@ -1183,7 +1183,7 @@ access(all) contract TidalProtocol: FungibleToken {
                     scaledBalance: creditBalance,
                     interestIndex: withdrawTokenState.creditInterestIndex
                 )
-                let collateralEffectiveValue = self.priceOracle.price(token: withdrawType) * trueCredit * self.collateralFactor[withdrawType]!
+                let collateralEffectiveValue = self.priceOracle.price(ofToken: withdrawType)! * trueCredit * self.collateralFactor[withdrawType]!
 
                 // Check what the new health would be if we took out all of this collateral
                 let potentialHealth = TidalProtocol.healthComputation(
@@ -1199,7 +1199,7 @@ access(all) contract TidalProtocol: FungibleToken {
                     let availableEffectiveValue = availableHealth * effectiveDebtAfterDeposit
 
                     // The amount of the token we can take using that amount of health
-                    let availableTokenCount = availableEffectiveValue / self.collateralFactor[withdrawType]! / self.priceOracle.price(token: withdrawType)
+                    let availableTokenCount = availableEffectiveValue / self.collateralFactor[withdrawType]! / self.priceOracle.price(ofToken: withdrawType)!
 
                     return availableTokenCount
                 } else {
@@ -1219,7 +1219,7 @@ access(all) contract TidalProtocol: FungibleToken {
             // We can calculate the available debt increase that would bring us to the target health
             var availableDebtIncrease = (effectiveCollateralAfterDeposit / targetHealth) - effectiveDebtAfterDeposit
 
-            let availableTokens = availableDebtIncrease * self.borrowFactor[withdrawType]! / self.priceOracle.price(token: withdrawType)
+            let availableTokens = availableDebtIncrease * self.borrowFactor[withdrawType]! / self.priceOracle.price(ofToken: withdrawType)!
 
             return availableTokens + collateralTokenCount
         }
@@ -1236,7 +1236,7 @@ access(all) contract TidalProtocol: FungibleToken {
             if position.balances[type] == nil || position.balances[type]!.direction == BalanceDirection.Credit {
                 // Since the user has no debt in the given token, we can just compute how much
                 // additional collateral this deposit will create.
-                effectiveCollateralIncrease = amount * self.priceOracle.price(token: type) * self.collateralFactor[type]!
+                effectiveCollateralIncrease = amount * self.priceOracle.price(ofToken: type)! * self.collateralFactor[type]!
             } else {
                 // The user has a debit position in the given token, we need to figure out if this deposit
                 // will only pay off some of the debt, or if it will also create new collateral.
@@ -1249,11 +1249,11 @@ access(all) contract TidalProtocol: FungibleToken {
                 if trueDebt >= amount {
                     // This deposit will wipe out some or all of the debt, but won't create new collateral, we
                     // just need to account for the debt decrease.
-                    effectiveDebtDecrease = amount * self.priceOracle.price(token: type) / self.borrowFactor[type]!
+                    effectiveDebtDecrease = amount * self.priceOracle.price(ofToken: type)! / self.borrowFactor[type]!
                 } else {
                     // This deposit will wipe out all of the debt, and create new collateral.
-                    effectiveDebtDecrease = trueDebt * self.priceOracle.price(token: type) / self.borrowFactor[type]!
-                    effectiveCollateralIncrease = (amount - trueDebt) * self.priceOracle.price(token: type) * self.collateralFactor[type]!
+                    effectiveDebtDecrease = trueDebt * self.priceOracle.price(ofToken: type)! / self.borrowFactor[type]!
+                    effectiveCollateralIncrease = (amount - trueDebt) * self.priceOracle.price(ofToken: type)! * self.collateralFactor[type]!
                 }
             }
 
@@ -1278,7 +1278,7 @@ access(all) contract TidalProtocol: FungibleToken {
             if position.balances[type] == nil || position.balances[type]!.direction == BalanceDirection.Debit {
                 // The user has no credit position in the given token, we can just compute how much
                 // additional effective debt this withdrawal will create.
-                effectiveDebtIncrease = amount * self.priceOracle.price(token: type) / self.borrowFactor[type]!
+                effectiveDebtIncrease = amount * self.priceOracle.price(ofToken: type)! / self.borrowFactor[type]!
             } else {
                 // The user has a credit position in the given token, we need to figure out if this withdrawal
                 // will only draw down some of the collateral, or if it will also create new debt.
@@ -1291,11 +1291,11 @@ access(all) contract TidalProtocol: FungibleToken {
                 if trueCredit >= amount {
                     // This withdrawal will draw down some collateral, but won't create new debt, we
                     // just need to account for the collateral decrease.
-                    effectiveCollateralDecrease = amount * self.priceOracle.price(token: type) * self.collateralFactor[type]!
+                    effectiveCollateralDecrease = amount * self.priceOracle.price(ofToken: type)! * self.collateralFactor[type]!
                 } else {
                     // The withdrawal will wipe out all of the collateral, and create new debt.
-                    effectiveDebtIncrease = (amount - trueCredit) * self.priceOracle.price(token: type) / self.borrowFactor[type]!
-                    effectiveCollateralDecrease = trueCredit * self.priceOracle.price(token: type) * self.collateralFactor[type]!
+                    effectiveDebtIncrease = (amount - trueCredit) * self.priceOracle.price(ofToken: type)! / self.borrowFactor[type]!
+                    effectiveCollateralDecrease = trueCredit * self.priceOracle.price(ofToken: type)! * self.collateralFactor[type]!
                 }
             }
 
@@ -1750,7 +1750,7 @@ access(all) contract TidalProtocol: FungibleToken {
     }
 
     // RESTORED: DummyPriceOracle for testing from Dieter's design pattern
-    access(all) struct DummyPriceOracle: PriceOracle {
+    access(all) struct DummyPriceOracle: DFB.PriceOracle {
         access(self) var prices: {Type: UFix64}
         access(self) let defaultToken: Type
         
@@ -1758,12 +1758,12 @@ access(all) contract TidalProtocol: FungibleToken {
             return self.defaultToken
         }
         
-        access(all) fun price(token: Type): UFix64 {
-            return self.prices[token] ?? 1.0
+        access(all) fun price(ofToken: Type): UFix64 {
+            return self.prices[ofToken] ?? 1.0
         }
         
-        access(all) fun setPrice(token: Type, price: UFix64) {
-            self.prices[token] = price
+        access(all) fun setPrice(ofToken: Type, price: UFix64) {
+            self.prices[ofToken] = price
         }
         
         init(defaultToken: Type) {
