@@ -788,7 +788,6 @@ access(all) contract TidalProtocol {
         // rebalanced even if it is currently healthy, otherwise, this function will do nothing if the
         // position is within the min/max health bounds.
         access(EPosition) fun rebalancePosition(pid: UInt64, force: Bool) {
-            log("rebalancePosition(pid: \(pid), force: \(force))")
             let position = (&self.positions[pid] as auth(EImplementation) &InternalPosition?)!
             let balanceSheet = self.positionBalanceSheet(pid: pid)
 
@@ -820,12 +819,10 @@ access(all) contract TidalProtocol {
                         type: sinkType,
                         targetHealth: position.targetHealth
                     )
-                    log("idealWithdrawal \(idealWithdrawal)")
 
                     // Compute how many tokens of the sink's type are available to hit our target health.
                     let sinkCapacity = drawDownSink.minimumCapacity()
                     let sinkAmount = (idealWithdrawal > sinkCapacity) ? sinkCapacity : idealWithdrawal
-                    log("sinkAmount \(sinkAmount)")
 
                     if sinkAmount > 0.0 && sinkType == self.defaultToken { // second conditional included for sake of tracer bullet
                         // BUG: Calling through to withdrawAndPull results in an insufficient funds from the position's
