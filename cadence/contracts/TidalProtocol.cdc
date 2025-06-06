@@ -50,19 +50,6 @@ access(all) contract TidalProtocol {
         return Position(id: pid, pool: cap)
     }
 
-    /* --- TEST METHODS | REMOVE BEFORE PRODUCTION & REFACTOR TESTS --- */
-
-    // CHANGE: Add a proper pool creation function for tests
-    access(all) fun createPool(defaultToken: Type, priceOracle: {DFB.PriceOracle}): @Pool {
-        return <- create Pool(defaultToken: defaultToken, priceOracle: priceOracle)
-    }
-
-    // RESTORED: Helper function to create a test pool with dummy oracle
-    access(all) fun createTestPoolWithOracle(defaultToken: Type): @Pool {
-        let oracle = DummyPriceOracle(defaultToken: defaultToken)
-        return <- create Pool(defaultToken: defaultToken, priceOracle: oracle)
-    }
-
     /* --- CONSTRUCTS & INTERNAL METHODS ---- */
 
     access(all) entitlement EPosition
@@ -551,50 +538,6 @@ access(all) contract TidalProtocol {
             return self.globalLedger[tokenType] != nil
         }
 
-        access(EPosition) fun deposit(pid: UInt64, funds: @{FungibleToken.Vault}) {
-            pre {
-                self.positions[pid] != nil: "Invalid position ID \(pid)"
-                self.globalLedger[funds.getType()] != nil: "Invalid token type \(funds.getType().identifier)"
-                funds.balance > 0.0: "Deposit amount must be positive" // TODO: Consider no-op here instead
-            }
-
-            // Get a reference to the user's position and global token state for the affected token.
-            let type = funds.getType()
-            let position = (&self.positions[pid] as auth(EImplementation) &InternalPosition?)!
-            let tokenState = self.tokenState(type: type)
-
-            // If this position doesn't currently have an entry for this token, create one.
-            if position.balances[type] == nil {
-                position.balances[type] = InternalBalance()
-            }
-
-            // Update the global interest indices on the affected token to reflect the passage of time.
-            // REMOVED: This is now handled by tokenState() helper function
-            // tokenState.updateInterestIndices()
-
-            if self.reserves[type] == nil {
-                self.reserves[type] <-! funds.createEmptyVault()
-            }
-            let reserveVault = (&self.reserves[type] as auth(FungibleToken.Withdraw) &{FungibleToken.Vault}?)!
-
-            // Reflect the deposit in the position's balance
-            position.balances[type]!.recordDeposit(amount: funds.balance, tokenState: tokenState)
-
-            // Update the internal interest rate to reflect the new credit balance
-            tokenState.updateInterestRates()
-
-            // Add the money to the reserves
-            reserveVault.deposit(from: <-funds)
-
-            // TODO: Push the corresponding MOET amount to the InternalPosition Sink if one exists
-            if let issuanceSink = position.drawDownSink {
-                // assess how much can be issued based on the updated collateral balance
-                // adjust balance to reflect the loaned amount about to be pushed out of the protocol
-                // mint MOET
-                // deposit to sink
-            }
-        }
-
         // RESTORED: Public deposit function from Dieter's implementation
         // Allows anyone to deposit funds into any position
         access(all) fun depositToPosition(pid: UInt64, from: @{FungibleToken.Vault}) {
@@ -677,7 +620,9 @@ access(all) contract TidalProtocol {
             pre {
                 self.positions[pid] != nil: "Invalid position ID"
                 self.globalLedger[type] != nil: "Invalid token type"
-                amount > 0.0: "Withdrawal amount must be positive" // TODO: consider empty vault early return
+            }
+            if amount == 0.0 {
+                return <- DFBUtils.getEmptyVault(type)
             }
 
             // Get a reference to the user's position and global token state for the affected token.
@@ -1027,11 +972,12 @@ access(all) contract TidalProtocol {
             }
 
             let health = self.positionHealth(pid: pid)
+            let defaultTokenAvailable = self.availableBalance(pid: pid, type: self.defaultToken, pullFromTopUpSource: false)
 
             return PositionDetails(
                 balances: balances,
                 poolDefaultToken: self.defaultToken,
-                defaultTokenAvailableBalance: 0.0, // TODO: Calculate this properly
+                defaultTokenAvailableBalance: defaultTokenAvailable,
                 health: health
             )
         }
@@ -1458,7 +1404,6 @@ access(all) contract TidalProtocol {
     /// for the setting of the Pool's PriceOracle without the introduction of a concrete PriceOracle defining contract
     /// which would include an external contract dependency.
     ///
-    // TODO: consider if we will ever want to enable governance to create another pool - if so, update storage pattern to allow
     access(all) resource PoolFactory {
         /// Creates a Pool and saves it to the canonical path, reverting if one is already stored
         access(all) fun createPool(defaultToken: Type, priceOracle: {DFB.PriceOracle}) {
@@ -1701,29 +1646,6 @@ access(all) contract TidalProtocol {
     access(all) enum BalanceDirection: UInt8 {
         access(all) case Credit
         access(all) case Debit
-    }
-
-    // RESTORED: DummyPriceOracle for testing from Dieter's design pattern
-    access(all) struct DummyPriceOracle: DFB.PriceOracle {
-        access(self) var prices: {Type: UFix64}
-        access(self) let defaultToken: Type
-
-        access(all) view fun unitOfAccount(): Type {
-            return self.defaultToken
-        }
-
-        access(all) fun price(ofToken: Type): UFix64? {
-            return self.prices[ofToken] ?? 1.0
-        }
-
-        access(all) fun setPrice(ofToken: Type, price: UFix64) {
-            self.prices[ofToken] = price
-        }
-
-        init(defaultToken: Type) {
-            self.defaultToken = defaultToken
-            self.prices = {defaultToken: 1.0}
-        }
     }
 
     // A structure returned externally to report a position's balance for a particular token.
