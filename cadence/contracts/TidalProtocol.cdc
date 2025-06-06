@@ -1790,10 +1790,10 @@ access(all) contract TidalProtocol {
     // RESTORED: Enhanced position source from Dieter's implementation
     access(all) struct PositionSource: DFB.Source { 
         access(contract) let uniqueID: DFB.UniqueIdentifier?
-        access(all) let pool: Capability<auth(EPosition) &Pool>
-        access(all) let positionID: UInt64
-        access(all) let type: Type
-        access(all) let pullFromTopUpSource: Bool
+        access(self) let pool: Capability<auth(EPosition) &Pool>
+        access(self) let positionID: UInt64
+        access(self) let type: Type
+        access(self) let pullFromTopUpSource: Bool
 
         access(all) view fun getSourceType(): Type {
             return self.type
