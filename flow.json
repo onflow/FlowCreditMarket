@@ -39,7 +39,7 @@
 		"MOET": {
 			"source": "./cadence/contracts/MOET.cdc",
 			"aliases": {
-				"testing": "0000000000000009"
+				"testing": "0000000000000007"
 			}
 		}
 	},

@@ -24,6 +24,12 @@ fun _executeTransaction(_ path: String, _ args: [AnyStruct], _ signer: Test.Test
 // Common test setup function that deploys all required contracts
 access(all) fun deployContracts() {
     var err = Test.deployContract(
+        name: "DFBUtils",
+        path: "../../DeFiBlocks/cadence/contracts/utils/DFBUtils.cdc",
+        arguments: []
+    )
+    Test.expect(err, Test.beNil())
+    err = Test.deployContract(
         name: "DFB",
         path: "../../DeFiBlocks/cadence/contracts/interfaces/DFB.cdc",
         arguments: []
@@ -48,10 +54,36 @@ access(all) fun deployContracts() {
 
 /* --- Script Helpers --- */
 
-access(all) fun getBalance(address: Address, vaultPublicPath: PublicPath): UFix64? {
+access(all)
+fun getBalance(address: Address, vaultPublicPath: PublicPath): UFix64? {
     let res = _executeScript("../scripts/tokens/get_balance.cdc", [address, vaultPublicPath])
     Test.expect(res, Test.beSucceeded())
     return res.returnValue as! UFix64?
+}
+
+access(all)
+fun getReserveBalance(vaultIdentifier: String): UFix64 {
+    let res = _executeScript("../scripts/tidal-protocol/get_reserve_balance_for_type.cdc", [vaultIdentifier])
+    Test.expect(res, Test.beSucceeded())
+    return res.returnValue as! UFix64
+}
+
+access(all)
+fun getAvailableBalance(pid: UInt64, vaultIdentifier: String, pullFromTopUpSource: Bool, beFailed: Bool): UFix64 {
+    let res = _executeScript("../scripts/tidal-protocol/get_available_balance.cdc",
+            [pid, vaultIdentifier, pullFromTopUpSource]
+        )
+    Test.expect(res, beFailed ? Test.beFailed() : Test.beSucceeded())
+    return res.status == Test.ResultStatus.failed ? 0.0 : res.returnValue as! UFix64
+}
+
+access(all)
+fun getPositionHealth(pid: UInt64, beFailed: Bool): UFix64 {
+    let res = _executeScript("../scripts/tidal-protocol/position_health.cdc",
+            [pid]
+        )
+    Test.expect(res, beFailed ? Test.beFailed() : Test.beSucceeded())
+    return res.status == Test.ResultStatus.failed ? 0.0 : res.returnValue as! UFix64
 }
 
 /* --- Transaction Helpers --- */
@@ -91,4 +123,26 @@ fun addSupportedTokenSimpleInterestCurve(
         signer
     )
     Test.expect(additionRes, Test.beSucceeded())
+}
+
+access(all)
+fun rebalancePosition(signer: Test.TestAccount, pid: UInt64, force: Bool, beFailed: Bool) {
+    let rebalanceRes = _executeTransaction(
+        "../transactions/tidal-protocol/pool-management/rebalance_position.cdc",
+        [ pid, force ],
+        signer
+    )
+    Test.expect(rebalanceRes, beFailed ? Test.beFailed() : Test.beSucceeded())
+}
+
+access(all)
+fun setupMoetVault(_ signer: Test.TestAccount, beFailed: Bool) {
+    let setupRes = _executeTransaction("../transactions/moet/setup_vault.cdc", [], signer)
+    Test.expect(setupRes, beFailed ? Test.beFailed() : Test.beSucceeded())
+}
+
+access(all)
+fun mintMoet(signer: Test.TestAccount, to: Address, amount: UFix64, beFailed: Bool) {
+    let mintRes = _executeTransaction("../transactions/moet/mint_moet.cdc", [to, amount], signer)
+    Test.expect(mintRes, beFailed ? Test.beFailed() : Test.beSucceeded())
 }

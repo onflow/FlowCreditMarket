@@ -17,6 +17,8 @@ transaction(amount: UFix64, vaultStoragePath: StoragePath, pushToDrawDownSink: B
     let collateral: @{FungibleToken.Vault}
     // this DeFiBlocks Sink that will receive the loaned funds
     let sink: {DFB.Sink}
+    // DEBUG: this DeFiBlocks Source that will allow for the repayment of a loan if the position becomes undercollateralized
+    let source: {DFB.Source}
     // the signer's account in which to store a PositionWrapper
     let account: auth(SaveValue) &Account
 
@@ -32,9 +34,12 @@ transaction(amount: UFix64, vaultStoragePath: StoragePath, pushToDrawDownSink: B
             signer.capabilities.publish(vaultCap, at: MOET.VaultPublicPath)
         }
         // assign a Vault Capability to be used in the VaultSink
-        let depositVault = signer.capabilities.get<&{FungibleToken.Vault}>(MOET.VaultPublicPath)
-        assert(depositVault.check(),
-            message: "Invalid MOET Vault Capability issued - ensure the Vault is properly configured")
+        let depositVaultCap = signer.capabilities.get<&{FungibleToken.Vault}>(MOET.VaultPublicPath)
+        let withdrawVaultCap = signer.capabilities.storage.issue<auth(FungibleToken.Withdraw) &{FungibleToken.Vault}>(MOET.VaultStoragePath)
+        assert(depositVaultCap.check(),
+            message: "Invalid MOET Vault public Capability issued - ensure the Vault is properly configured")
+        assert(withdrawVaultCap.check(),
+            message: "Invalid MOET Vault private Capability issued - ensure the Vault is properly configured")
         
         // withdraw the collateral from the signer's stored Vault
         let collateralSource = signer.storage.borrow<auth(FungibleToken.Withdraw) &{FungibleToken.Vault}>(from: vaultStoragePath)
@@ -43,7 +48,12 @@ transaction(amount: UFix64, vaultStoragePath: StoragePath, pushToDrawDownSink: B
         // construct the DeFiBlocks Sink that will receive the loaned amount
         self.sink = FungibleTokenStack.VaultSink(
             max: nil,
-            depositVault: depositVault,
+            depositVault: depositVaultCap,
+            uniqueID: nil
+        )
+        self.source = FungibleTokenStack.VaultSource(
+            min: nil,
+            withdrawVault: withdrawVaultCap,
             uniqueID: nil
         )
 
@@ -56,7 +66,7 @@ transaction(amount: UFix64, vaultStoragePath: StoragePath, pushToDrawDownSink: B
         let wrapper <- MockTidalProtocolConsumer.createPositionWrapper(
             collateral: <-self.collateral,
             issuanceSink: self.sink,
-            repaymentSource: nil,
+            repaymentSource: self.source,
             pushToDrawDownSink: pushToDrawDownSink
         )
         // save the wrapper into the signer's account - reverts on storage collision

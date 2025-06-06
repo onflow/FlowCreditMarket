@@ -40,7 +40,6 @@ access(all) contract TidalProtocol {
         repaymentSource: {DFB.Source}?,
         pushToDrawDownSink: Bool
     ): Position {
-        log("opening position...")
         let pid = self.borrowPool().createPosition(
                 funds: <-collateral,
                 issuanceSink: issuanceSink,
@@ -48,7 +47,6 @@ access(all) contract TidalProtocol {
                 pushToDrawDownSink: pushToDrawDownSink
             )
         let cap = self.account.capabilities.storage.issue<auth(EPosition) &Pool>(self.PoolStoragePath)
-        log("returning position.")
         return Position(id: pid, pool: cap)
     }
 
@@ -222,11 +220,11 @@ access(all) contract TidalProtocol {
     access(all) resource InternalPosition {
         access(mapping ImplementationUpdates) var balances: {Type: InternalBalance}
         access(mapping ImplementationUpdates) var queuedDeposits: @{Type: {FungibleToken.Vault}}
+        access(mapping ImplementationUpdates) var drawDownSink: {DFB.Sink}?
+        access(mapping ImplementationUpdates) var topUpSource: {DFB.Source}?
         access(EImplementation) var targetHealth: UFix64
         access(EImplementation) var minHealth: UFix64
         access(EImplementation) var maxHealth: UFix64
-        access(EImplementation) var drawDownSink: {DFB.Sink}?
-        access(EImplementation) var topUpSource: {DFB.Source}?
 
         init() {
             self.balances = {}
@@ -510,7 +508,7 @@ access(all) contract TidalProtocol {
         // Add a new token type to the pool
         // This function should only be called by governance in the future
         access(EGovernance) fun addSupportedToken(
-            tokenType: Type, 
+            tokenType: Type,
             collateralFactor: UFix64,
             borrowFactor: UFix64,
             interestCurve: {InterestCurve},
@@ -531,14 +529,14 @@ access(all) contract TidalProtocol {
 
             // Add token to global ledger with its interest curve and deposit parameters
             self.globalLedger[tokenType] = TokenState(
-                interestCurve: interestCurve, 
-                depositRate: depositRate, 
+                interestCurve: interestCurve,
+                depositRate: depositRate,
                 depositCapacityCap: depositCapacityCap
             )
-            
+
             // Set collateral factor (what percentage of value can be used as collateral)
             self.collateralFactor[tokenType] = collateralFactor
-            
+
             // Set borrow factor (risk adjustment for borrowed amounts)
             self.borrowFactor[tokenType] = borrowFactor
         }
@@ -618,9 +616,7 @@ access(all) contract TidalProtocol {
             // Get a reference to the user's position and global token state for the affected token.
             let type = from.getType()
             let position = (&self.positions[pid] as auth(EImplementation) &InternalPosition?)!
-            log("...updating token state...")
             let tokenState = self.tokenState(type: type)
-            log("...updated token state...")
 
             // Update time-based state
             // REMOVED: This is now handled by tokenState() helper function
@@ -628,12 +624,9 @@ access(all) contract TidalProtocol {
 
             // RESTORED: Deposit rate limiting from Dieter's implementation
             let depositAmount = from.balance
-            log("...calculating deposit limit...")
             let depositLimit = tokenState.depositLimit()
-            log("...calculated deposit limit: \(depositLimit)...")
 
             if depositAmount > depositLimit {
-                log("...queuing deposit \(depositAmount - depositLimit)...")
                 // The deposit is too big, so we need to queue the excess
                 let queuedDeposit <- from.withdraw(amount: depositAmount - depositLimit)
 
@@ -646,32 +639,26 @@ access(all) contract TidalProtocol {
 
             // If this position doesn't currently have an entry for this token, create one.
             if position.balances[type] == nil {
-                log("...configuring InternalBalance for deposit vault \(type.identifier)...")
                 position.balances[type] = InternalBalance()
             }
 
             // CHANGE: Create vault if it doesn't exist yet
             if self.reserves[type] == nil {
-                log("...configuring reserve vault \(type.identifier)...")
                 self.reserves[type] <-! from.createEmptyVault()
             }
             let reserveVault = (&self.reserves[type] as auth(FungibleToken.Withdraw) &{FungibleToken.Vault}?)!
 
             // Reflect the deposit in the position's balance
-            log("...recording deposit \(from.balance)...")
             position.balances[type]!.recordDeposit(amount: from.balance, tokenState: tokenState)
 
             // Add the money to the reserves
-            log("...deposit \(from.balance) to reserves...")
             reserveVault.deposit(from: <-from)
 
             // RESTORED: Rebalancing and queue management
             if pushToDrawDownSink {
-                log("...force rebalancing position...")
                 self.rebalancePosition(pid: pid, force: true)
             }
 
-            log("...returning from depositAndpush but not before queuePositionForUpdateIfNecessary...")
             self.queuePositionForUpdateIfNecessary(pid: pid)
         }
 
@@ -682,9 +669,9 @@ access(all) contract TidalProtocol {
 
         // RESTORED: Enhanced withdraw with top-up source integration from Dieter's implementation
         access(EPosition) fun withdrawAndPull(
-            pid: UInt64, 
-            type: Type, 
-            amount: UFix64, 
+            pid: UInt64,
+            type: Type,
+            amount: UFix64,
             pullFromTopUpSource: Bool
         ): @{FungibleToken.Vault} {
             pre {
@@ -692,7 +679,6 @@ access(all) contract TidalProtocol {
                 self.globalLedger[type] != nil: "Invalid token type"
                 amount > 0.0: "Withdrawal amount must be positive" // TODO: consider empty vault early return
             }
-            log("...entered withdrawAndPull scope for pid \(pid) vault \(type.identifier) amount \(amount) pullFromTopUpSource \(pullFromTopUpSource)...")
 
             // Get a reference to the user's position and global token state for the affected token.
             let position = (&self.positions[pid] as auth(EImplementation) &InternalPosition?)!
@@ -704,20 +690,16 @@ access(all) contract TidalProtocol {
 
             // RESTORED: Top-up source integration from Dieter's implementation
             // Preflight to see if the funds are available
-            let topUpSource = position.topUpSource as! auth(FungibleToken.Withdraw) &{DFB.Source}?
+            let topUpSource = position.topUpSource as auth(FungibleToken.Withdraw) &{DFB.Source}?
             let topUpType = topUpSource?.getSourceType() ?? self.defaultToken
 
-            log("...calculating required deposit...")
             let requiredDeposit = self.fundsRequiredForTargetHealthAfterWithdrawing(
-                pid: pid, 
-                depositType: topUpType, 
+                pid: pid,
+                depositType: topUpType,
                 targetHealth: position.minHealth,
-                withdrawType: type, 
+                withdrawType: type,
                 withdrawAmount: amount
             )
-            log("...required deposit found to be \(requiredDeposit)...")
-            log("position.minHealth: \(position.minHealth)")
-            log("requiredDeposit: \(requiredDeposit)")
 
             var canWithdraw = false
 
@@ -729,10 +711,10 @@ access(all) contract TidalProtocol {
                 if pullFromTopUpSource && topUpSource != nil {
                     // If we have to rebalance, let's try to rebalance to the target health, not just the minimum
                     let idealDeposit = self.fundsRequiredForTargetHealthAfterWithdrawing(
-                        pid: pid, 
-                        depositType: topUpType, 
+                        pid: pid,
+                        depositType: topUpType,
                         targetHealth: position.targetHealth,
-                        withdrawType: type, 
+                        withdrawType: type,
                         withdrawAmount: amount
                     )
 
@@ -806,25 +788,22 @@ access(all) contract TidalProtocol {
         // rebalanced even if it is currently healthy, otherwise, this function will do nothing if the
         // position is within the min/max health bounds.
         access(EPosition) fun rebalancePosition(pid: UInt64, force: Bool) {
-            log("...reached rebalancePosition scope for pid \(pid) and force == \(force)...")
+            log("rebalancePosition(pid: \(pid), force: \(force))")
             let position = (&self.positions[pid] as auth(EImplementation) &InternalPosition?)!
-            log("...getting BalanceSheet for pid \(pid)...")
             let balanceSheet = self.positionBalanceSheet(pid: pid)
 
             if !force && (balanceSheet.health >= position.minHealth && balanceSheet.health <= position.maxHealth) {
                 // We aren't forcing the update, and the position is already between its desired min and max. Nothing to do!
-                log("...not forced and not beyond health bounds - returning from rebalancePosition...")
                 return
             }
 
             if balanceSheet.health < position.targetHealth {
-                log("...balanceSheet.health < position.targetHealth...undercollateralized...")
                 // The position is undercollateralized, see if the source can get more collateral to bring it up to the target health.
                 if position.topUpSource != nil {
-                    let topUpSource = position.topUpSource! as! auth(FungibleToken.Withdraw) &{DFB.Source}
+                    let topUpSource = position.topUpSource! as auth(FungibleToken.Withdraw) &{DFB.Source}
                     let idealDeposit = self.fundsRequiredForTargetHealth(
-                        pid: pid, 
-                        type: topUpSource.getSourceType(), 
+                        pid: pid,
+                        type: topUpSource.getSourceType(),
                         targetHealth: position.targetHealth
                     )
 
@@ -832,38 +811,42 @@ access(all) contract TidalProtocol {
                     self.depositAndPush(pid: pid, from: <-pulledVault, pushToDrawDownSink: false)
                 }
             } else if balanceSheet.health > position.targetHealth {
-                log("...balanceSheet.health > position.targetHealth...overcollateralized...")
                 // The position is overcollateralized, we'll withdraw funds to match the target health and offer it to the sink.
                 if position.drawDownSink != nil {
-                    log("...drawDownSink found...withdrawing & pushing to drawDownSink...")
                     let drawDownSink = position.drawDownSink!
                     let sinkType = drawDownSink.getSinkType()
-                    log("...calculating ideal withdrawal...")
                     let idealWithdrawal = self.fundsAvailableAboveTargetHealth(
-                        pid: pid, 
-                        type: sinkType, 
+                        pid: pid,
+                        type: sinkType,
                         targetHealth: position.targetHealth
                     )
-                    log("...ideal withdrawal found to be \(idealWithdrawal)...")
+                    log("idealWithdrawal \(idealWithdrawal)")
 
                     // Compute how many tokens of the sink's type are available to hit our target health.
-                    log("...calculating drawDownSink capacity to receive...")
                     let sinkCapacity = drawDownSink.minimumCapacity()
                     let sinkAmount = (idealWithdrawal > sinkCapacity) ? sinkCapacity : idealWithdrawal
-                    log("...drawDownSink capacity found to be \(sinkAmount)...")
+                    log("sinkAmount \(sinkAmount)")
 
-                    if sinkAmount > 0.0 {
-                        log("...calling to withdrawAndPull...")
-                        let sinkVault <- self.withdrawAndPull(
-                            pid: pid, 
-                            type: sinkType, 
-                            amount: sinkAmount, 
-                            pullFromTopUpSource: false
-                        )
+                    if sinkAmount > 0.0 && sinkType == self.defaultToken { // second conditional included for sake of tracer bullet
+                        // BUG: Calling through to withdrawAndPull results in an insufficient funds from the position's
+                        //      topUpSource. These funds should come from the protocol or reserves, not from the user's
+                        //      funds. To unblock here, we just mint MOET when a position is overcollateralized
+                        // let sinkVault <- self.withdrawAndPull(
+                        //     pid: pid,
+                        //     type: sinkType,
+                        //     amount: sinkAmount,
+                        //     pullFromTopUpSource: false
+                        // )
 
+                        let tokenState = self.tokenState(type: self.defaultToken)
+                        if position.balances[self.defaultToken] == nil {
+                            position.balances[self.defaultToken] = InternalBalance()
+                        }
+                        position.balances[self.defaultToken]!.recordWithdrawal(amount: sinkAmount, tokenState: tokenState)
+                        let sinkVault <- TidalProtocol.borrowMOETMinter().mintTokens(amount: sinkAmount)
                         // Push what we can into the sink, and redeposit the rest
                         drawDownSink.depositCapacity(from: &sinkVault as auth(FungibleToken.Withdraw) &{FungibleToken.Vault})
-                        
+
                         if sinkVault.balance > 0.0 {
                             self.depositAndPush(pid: pid, from: <-sinkVault, pushToDrawDownSink: false)
                         } else {
@@ -879,7 +862,7 @@ access(all) contract TidalProtocol {
             let position = (&self.positions[pid] as auth(EImplementation) &InternalPosition?)!
             position.setDrawDownSink(sink)
         }
-            
+
         access(EPosition) fun provideTopUpSource(pid: UInt64, source: {DFB.Source}?) {
             let position = (&self.positions[pid] as auth(EImplementation) &InternalPosition?)!
             position.setTopUpSource(source)
@@ -895,16 +878,16 @@ access(all) contract TidalProtocol {
                 let sourceAmount = topUpSource.minimumAvailable()
 
                 return self.fundsAvailableAboveTargetHealthAfterDepositing(
-                    pid: pid, 
-                    withdrawType: type, 
+                    pid: pid,
+                    withdrawType: type,
                     targetHealth: position.minHealth,
-                    depositType: sourceType, 
+                    depositType: sourceType,
                     depositAmount: sourceAmount
                 )
             } else {
                 return self.fundsAvailableAboveTargetHealth(
-                    pid: pid, 
-                    type: type, 
+                    pid: pid,
+                    type: type,
                     targetHealth: position.minHealth
                 )
             }
@@ -964,7 +947,7 @@ access(all) contract TidalProtocol {
                 if balance.direction == BalanceDirection.Credit {
                     let trueBalance = TidalProtocol.scaledBalanceToTrueBalance(scaledBalance: balance.scaledBalance,
                         interestIndex: tokenState.creditInterestIndex)
-                    
+
                     let value = priceOracle.price(ofToken: type)! * trueBalance
 
                     effectiveCollateral = effectiveCollateral + (value * self.collateralFactor[type]!)
@@ -998,32 +981,21 @@ access(all) contract TidalProtocol {
             self.nextPositionID = self.nextPositionID + 1
             self.positions[id] <-! create InternalPosition()
 
-            log("...created InternalPosition \(id)...")
 
             // assign issuance & repayment connectors within the InternalPosition
             let iPos = (&self.positions[id] as auth(EImplementation) &InternalPosition?)!
             let fundsType = funds.getType()
-            log("...setting drawDownSink...")
             iPos.setDrawDownSink(issuanceSink)
-            log("...set drawDownSink...")
-            log("...setting topUpSource...")
             if repaymentSource != nil {
                 iPos.setTopUpSource(repaymentSource)
             }
-            log("...set topUpSource...")
 
             // deposit the initial funds & return the position ID
-            if pushToDrawDownSink {
-                log("...depositing & pushing...")
-                self.depositAndPush(
-                    pid: id,
-                    from: <-funds,
-                    pushToDrawDownSink: pushToDrawDownSink
-                )
-            } else {
-                log("...depositing...")
-                self.deposit(pid: id, funds: <-funds)
-            }
+            self.depositAndPush(
+                pid: id,
+                from: <-funds,
+                pushToDrawDownSink: pushToDrawDownSink
+            )
             return id
         }
 
@@ -1045,7 +1017,7 @@ access(all) contract TidalProtocol {
             for type in position.balances.keys {
                 let balance = position.balances[type]!
                 let tokenState = self.tokenState(type: type)
-                
+
                 let trueBalance = balance.direction == BalanceDirection.Credit
                     ? TidalProtocol.scaledBalanceToTrueBalance(scaledBalance: balance.scaledBalance, interestIndex: tokenState.creditInterestIndex)
                     : TidalProtocol.scaledBalanceToTrueBalance(scaledBalance: balance.scaledBalance, interestIndex: tokenState.debitInterestIndex)
@@ -1068,16 +1040,16 @@ access(all) contract TidalProtocol {
         }
 
         // RESTORED: Advanced position health management functions from Dieter's implementation
-        
+
         // The quantity of funds of a specified token which would need to be deposited to bring the
         // position to the target health. This function will return 0.0 if the position is already at or over
         // that health value.
         access(all) fun fundsRequiredForTargetHealth(pid: UInt64, type: Type, targetHealth: UFix64): UFix64 {
             return self.fundsRequiredForTargetHealthAfterWithdrawing(
-                pid: pid, 
-                depositType: type, 
-                targetHealth: targetHealth, 
-                withdrawType: self.defaultToken, 
+                pid: pid,
+                depositType: type,
+                targetHealth: targetHealth,
+                withdrawType: self.defaultToken,
                 withdrawAmount: 0.0
             )
         }
@@ -1087,14 +1059,14 @@ access(all) contract TidalProtocol {
         // token. This function will return 0.0 if the position would already be at or over the target
         // health value after the proposed withdrawal.
         access(all) fun fundsRequiredForTargetHealthAfterWithdrawing(
-            pid: UInt64, 
-            depositType: Type, 
+            pid: UInt64,
+            depositType: Type,
             targetHealth: UFix64,
-            withdrawType: Type, 
+            withdrawType: Type,
             withdrawAmount: UFix64
         ): UFix64 {
             if depositType == withdrawType && withdrawAmount > 0.0 {
-                // If the deposit and withdrawal types are the same, we compute the required deposit assuming 
+                // If the deposit and withdrawal types are the same, we compute the required deposit assuming
                 // no withdrawal (which is less work) and increase that by the withdraw amount at the end
                 return self.fundsRequiredForTargetHealth(pid: pid, type: depositType, targetHealth: targetHealth) + withdrawAmount
             }
@@ -1105,11 +1077,12 @@ access(all) contract TidalProtocol {
             var effectiveCollateralAfterWithdrawal = balanceSheet.effectiveCollateral
             var effectiveDebtAfterWithdrawal = balanceSheet.effectiveDebt
 
+
             if withdrawAmount != 0.0 {
                 if position.balances[withdrawType] == nil || position.balances[withdrawType]!.direction == BalanceDirection.Debit {
                     // If the position doesn't have any collateral for the withdrawn token, we can just compute how much
                     // additional effective debt the withdrawal will create.
-                    effectiveDebtAfterWithdrawal = balanceSheet.effectiveDebt + 
+                    effectiveDebtAfterWithdrawal = balanceSheet.effectiveDebt +
                         (withdrawAmount * self.priceOracle.price(ofToken: withdrawType)! / self.borrowFactor[withdrawType]!)
                 } else {
                     let withdrawTokenState = self.tokenState(type: withdrawType)
@@ -1127,7 +1100,7 @@ access(all) contract TidalProtocol {
                     if trueCollateral >= withdrawAmount {
                         // This withdrawal will draw down collateral, but won't create debt, we just need to account
                         // for the collateral decrease.
-                        effectiveCollateralAfterWithdrawal = balanceSheet.effectiveCollateral - 
+                        effectiveCollateralAfterWithdrawal = balanceSheet.effectiveCollateral -
                             (withdrawAmount * self.priceOracle.price(ofToken: withdrawType)! * self.collateralFactor[withdrawType]!)
                     } else {
                         // The withdrawal will wipe out all of the collateral, and create some debt.
@@ -1144,7 +1117,7 @@ access(all) contract TidalProtocol {
             // Now we can figure out how many of the given token would need to be deposited to bring the position
             // to the target health value.
             var healthAfterWithdrawal = TidalProtocol.healthComputation(
-                effectiveCollateral: effectiveCollateralAfterWithdrawal, 
+                effectiveCollateral: effectiveCollateralAfterWithdrawal,
                 effectiveDebt: effectiveDebtAfterWithdrawal
             )
 
@@ -1163,7 +1136,7 @@ access(all) contract TidalProtocol {
                 let depositTokenState = self.tokenState(type: depositType)
                 // REMOVED: This is now handled by tokenState() helper function
                 // depositTokenState.updateForTimeChange()
-                
+
                 let debtBalance = position.balances[depositType]!.scaledBalance
                 let trueDebt = TidalProtocol.scaledBalanceToTrueBalance(
                     scaledBalance: debtBalance,
@@ -1225,10 +1198,10 @@ access(all) contract TidalProtocol {
         // at or above the provided target.
         access(all) fun fundsAvailableAboveTargetHealth(pid: UInt64, type: Type, targetHealth: UFix64): UFix64 {
             return self.fundsAvailableAboveTargetHealthAfterDepositing(
-                pid: pid, 
-                withdrawType: type, 
+                pid: pid,
+                withdrawType: type,
                 targetHealth: targetHealth,
-                depositType: self.defaultToken, 
+                depositType: self.defaultToken,
                 depositAmount: 0.0
             )
         }
@@ -1236,14 +1209,14 @@ access(all) contract TidalProtocol {
         // Returns the quantity of the specified token that could be withdrawn while still keeping the position's health
         // at or above the provided target, assuming we also deposit a specified amount of another token.
         access(all) fun fundsAvailableAboveTargetHealthAfterDepositing(
-            pid: UInt64, 
-            withdrawType: Type, 
+            pid: UInt64,
+            withdrawType: Type,
             targetHealth: UFix64,
-            depositType: Type, 
+            depositType: Type,
             depositAmount: UFix64
         ): UFix64 {
             if depositType == withdrawType && depositAmount > 0.0 {
-                // If the deposit and withdrawal types are the same, we compute the available funds assuming 
+                // If the deposit and withdrawal types are the same, we compute the available funds assuming
                 // no deposit (which is less work) and increase that by the deposit amount at the end
                 return self.fundsAvailableAboveTargetHealth(pid: pid, type: withdrawType, targetHealth: targetHealth) + depositAmount
             }
@@ -1257,7 +1230,7 @@ access(all) contract TidalProtocol {
             if depositAmount != 0.0 {
                 if position.balances[depositType] == nil || position.balances[depositType]!.direction == BalanceDirection.Credit {
                     // If there's no debt for the deposit token, we can just compute how much additional effective collateral the deposit will create.
-                    effectiveCollateralAfterDeposit = balanceSheet.effectiveCollateral + 
+                    effectiveCollateralAfterDeposit = balanceSheet.effectiveCollateral +
                         (depositAmount * self.priceOracle.price(ofToken: depositType)! * self.collateralFactor[depositType]!)
                 } else {
                     let depositTokenState = self.tokenState(type: depositType)
@@ -1273,7 +1246,7 @@ access(all) contract TidalProtocol {
                     if trueDebt >= depositAmount {
                         // This deposit will pay down some debt, but won't result in net collateral, we
                         // just need to account for the debt decrease.
-                        effectiveDebtAfterDeposit = balanceSheet.effectiveDebt - 
+                        effectiveDebtAfterDeposit = balanceSheet.effectiveDebt -
                             (depositAmount * self.priceOracle.price(ofToken: depositType)! / self.borrowFactor[depositType]!)
                     } else {
                         // The deposit will wipe out all of the debt, and create some collateral.
@@ -1290,7 +1263,7 @@ access(all) contract TidalProtocol {
             // Now we can figure out how many of the withdrawal token are available while keeping the position
             // at or above the target health value.
             var healthAfterDeposit = TidalProtocol.healthComputation(
-                effectiveCollateral: effectiveCollateralAfterDeposit, 
+                effectiveCollateral: effectiveCollateralAfterDeposit,
                 effectiveDebt: effectiveDebtAfterDeposit
             )
 
@@ -1309,7 +1282,7 @@ access(all) contract TidalProtocol {
                 let withdrawTokenState = self.tokenState(type: withdrawType)
                 // REMOVED: This is now handled by tokenState() helper function
                 // withdrawTokenState.updateForTimeChange()
-                
+
                 let creditBalance = position.balances[withdrawType]!.scaledBalance
                 let trueCredit = TidalProtocol.scaledBalanceToTrueBalance(
                     scaledBalance: creditBalance,
@@ -1460,7 +1433,7 @@ access(all) contract TidalProtocol {
                 let queuedVault <- position.queuedDeposits.remove(key: depositType)!
                 let queuedAmount = queuedVault.balance
                 let depositTokenState = self.tokenState(type: depositType)
-                
+
                 let maxDeposit = depositTokenState.depositLimit()
 
                 if maxDeposit >= queuedAmount {
@@ -1521,12 +1494,6 @@ access(all) contract TidalProtocol {
         access(all) fun getBalances(): [PositionBalance] {
             let pool = self.pool.borrow()!
             return pool.getPositionDetails(pid: self.id).balances
-        }
-
-        // Returns the maximum amount of the given token type that could be withdrawn from this position.
-        access(all) fun getAvailableBalance(type: Type): UFix64 {
-            let pool = self.pool.borrow()!
-            return pool.availableBalance(pid: self.id, type: type, pullFromTopUpSource: false)
         }
 
         // RESTORED: Enhanced available balance from Dieter's implementation
@@ -1678,7 +1645,7 @@ access(all) contract TidalProtocol {
             // A position object has no limit to deposits unless the Capability has been revoked
             return self.pool.check() ? UFix64.max : 0.0
         }
-        
+
         access(all) fun depositCapacity(from: auth(FungibleToken.Withdraw) &{FungibleToken.Vault}) {
             if let pool = self.pool.borrow() {
                 pool.depositAndPush(
@@ -1691,7 +1658,7 @@ access(all) contract TidalProtocol {
     }
 
     // RESTORED: Enhanced position source from Dieter's implementation
-    access(all) struct PositionSource: DFB.Source { 
+    access(all) struct PositionSource: DFB.Source {
         access(contract) let uniqueID: DFB.UniqueIdentifier?
         access(self) let pool: Capability<auth(EPosition) &Pool>
         access(self) let positionID: UInt64
@@ -1743,19 +1710,19 @@ access(all) contract TidalProtocol {
     access(all) struct DummyPriceOracle: DFB.PriceOracle {
         access(self) var prices: {Type: UFix64}
         access(self) let defaultToken: Type
-        
+
         access(all) view fun unitOfAccount(): Type {
             return self.defaultToken
         }
-        
+
         access(all) fun price(ofToken: Type): UFix64? {
             return self.prices[ofToken] ?? 1.0
         }
-        
+
         access(all) fun setPrice(ofToken: Type, price: UFix64) {
             self.prices[ofToken] = price
         }
-        
+
         init(defaultToken: Type) {
             self.defaultToken = defaultToken
             self.prices = {defaultToken: 1.0}
