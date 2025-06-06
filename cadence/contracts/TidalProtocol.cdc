@@ -1496,12 +1496,12 @@ access(all) contract TidalProtocol {
         }
 
         // RESTORED: Simple withdraw that calls withdrawAndPull with pullFromTopUpSource = false
-        access(all) fun withdraw(type: Type, amount: UFix64): @{FungibleToken.Vault} {
+        access(FungibleToken.Withdraw) fun withdraw(type: Type, amount: UFix64): @{FungibleToken.Vault} {
             return <- self.withdrawAndPull(type: type, amount: amount, pullFromTopUpSource: false)
         }
 
         // RESTORED: Enhanced withdraw from Dieter's implementation
-        access(all) fun withdrawAndPull(type: Type, amount: UFix64, pullFromTopUpSource: Bool): @{FungibleToken.Vault} {
+        access(FungibleToken.Withdraw) fun withdrawAndPull(type: Type, amount: UFix64, pullFromTopUpSource: Bool): @{FungibleToken.Vault} {
             let pool = self.pool.borrow()!
             return <- pool.withdrawAndPull(pid: self.id, type: type, amount: amount, pullFromTopUpSource: pullFromTopUpSource)
         }
@@ -1525,13 +1525,13 @@ access(all) contract TidalProtocol {
         // update the position's collateral and/or debt accordingly. Note that calling this method multiple
         // times will create multiple sources, each of which will continue to work regardless of how many
         // other sources have been created.
-        access(all) fun createSource(type: Type): {DFB.Source} {
+        access(FungibleToken.Withdraw) fun createSource(type: Type): {DFB.Source} {
             // RESTORED: Create enhanced source with pullFromTopUpSource option
             return self.createSourceWithOptions(type: type, pullFromTopUpSource: false)
         }
 
         // RESTORED: Enhanced source creation from Dieter's implementation
-        access(all) fun createSourceWithOptions(type: Type, pullFromTopUpSource: Bool): {DFB.Source} {
+        access(FungibleToken.Withdraw) fun createSourceWithOptions(type: Type, pullFromTopUpSource: Bool): {DFB.Source} {
             let pool = self.pool.borrow()!
             return PositionSource(id: self.id, pool: self.pool, type: type, pullFromTopUpSource: pullFromTopUpSource)
         }
@@ -1545,7 +1545,7 @@ access(all) contract TidalProtocol {
         // Each position can have only one sink, and the sink must accept the default token type
         // configured for the pool. Providing a new sink will replace the existing sink. Pass nil
         // to configure the position to not push tokens.
-        access(all) fun provideSink(sink: {DFB.Sink}?) {
+        access(FungibleToken.Withdraw) fun provideSink(sink: {DFB.Sink}?) {
             let pool = self.pool.borrow()!
             pool.provideDrawDownSink(pid: self.id, sink: sink)
         }
