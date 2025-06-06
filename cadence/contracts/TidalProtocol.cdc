@@ -8,19 +8,6 @@ import "DFBUtils"
 import "DFB"
 import "MOET"
 
-/*
-    MISSING FUNCTIONALITY:
-    - Pulling MOET from a position with available balance as the user - needed if a Sink is not required by the protocol
-        -> implies a new protocol-defined Source, logic ingrained in existing Source, or route on the Position enabling this withdrawal
-    - Pushing MOET to a position as the protocol on deposits - needed for AutoBalancer recollateralization cycle
-        -> integrate into Pool.deposit so that MOET can be routed to downstream connectors
-    - Balance tracking for MOET that has been withdrawn against a position's collateral balance
-    - Active lending protocol functionality on per-position basis
-
-    ??? How does:
-    - The pool determine the MOET balance available to push?
-    - Maintain and update the issued loan balance?
- */
 access(all) contract TidalProtocol {
 
     /// The canonical StoragePath where the primary TidalProtocol Pool is stored
