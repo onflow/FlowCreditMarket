@@ -4,6 +4,7 @@ import "ViewResolver"
 import "MetadataViews"
 import "FungibleTokenMetadataViews"
 
+import "DFBUtils"
 import "DFB"
 import "MOET"
 
@@ -537,6 +538,8 @@ access(all) contract TidalProtocol {
                 borrowFactor > 0.0 && borrowFactor <= 1.0: "Borrow factor must be between 0 and 1"
                 depositRate > 0.0: "Deposit rate must be positive"
                 depositCapacityCap > 0.0: "Deposit capacity cap must be positive"
+                DFBUtils.definingContractIsFungibleToken(tokenType):
+                "Invalid token contract definition for tokenType \(tokenType.identifier) - defining contract is not FungibleToken conformant"
             }
 
             // Add token to global ledger with its interest curve and deposit parameters
@@ -1747,11 +1750,7 @@ access(all) contract TidalProtocol {
             if withdrawAmount > 0.0 {
                 return <- self.pool.borrow()!.withdraw(pid: self.positionID, amount: withdrawAmount, type: self.tokenType)
             } else {
-                // TODO: Update to use DFBUtils.getEmptyVault method when submodule can be updated against main
-                //  |- implies collateral Vaults are checked for FT contract-level implementation before being added to global state
-                return <- getAccount(self.tokenType.address!).contracts.borrow<&{FungibleToken}>(
-                        name: self.tokenType.contractName!
-                    )!.createEmptyVault(vaultType: self.tokenType)
+                return <- DFBUtils.getEmptyVault(self.tokenType)
             }
         }
     }
