@@ -1,4 +1,4 @@
-import MockOracle from 0x0000000000000007
+import "MockOracle"
 
 /// Upserts the provided Token & price pairing in the MockOracle contract
 ///

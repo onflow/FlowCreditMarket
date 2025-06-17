@@ -6,6 +6,8 @@ import "test_helpers.cdc"
 access(all) let protocolAccount = Test.getAccount(0x0000000000000007)
 access(all) let treasury = Test.createAccount()
 
+access(all) var snapshot: UInt64 = 0
+
 access(all) let defaultTokenIdentifier = "A.0000000000000007.MOET.Vault"
 
 access(all)
@@ -19,6 +21,9 @@ fun setup() {
         arguments: [defaultTokenIdentifier]
     )
     Test.expect(err, Test.beNil())
+    
+    // Take snapshot after setup
+    snapshot = getCurrentBlockHeight()
 }
 
 access(all)

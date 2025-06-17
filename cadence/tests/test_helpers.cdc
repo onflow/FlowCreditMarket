@@ -55,6 +55,22 @@ access(all) fun deployContracts() {
         arguments: []
     )
     Test.expect(err, Test.beNil())
+    
+    // Deploy MockTidalProtocolConsumer
+    err = Test.deployContract(
+        name: "MockTidalProtocolConsumer",
+        path: "../contracts/mocks/MockTidalProtocolConsumer.cdc",
+        arguments: []
+    )
+    Test.expect(err, Test.beNil())
+    
+    // Deploy FungibleTokenStack
+    err = Test.deployContract(
+        name: "FungibleTokenStack",
+        path: "../../DeFiBlocks/cadence/contracts/connectors/FungibleTokenStack.cdc",
+        arguments: []
+    )
+    Test.expect(err, Test.beNil())
 }
 
 /* --- Script Helpers --- */
@@ -205,3 +221,22 @@ fun withdrawReserve(
     )
     Test.expect(txRes, beFailed ? Test.beFailed() : Test.beSucceeded())
 }
+
+/* --- Snapshot Management Helpers --- */
+
+// Example usage pattern for managing blockchain state between tests:
+//
+// In your test file:
+// ```
+// access(all) var snapshot: UInt64 = 0
+// 
+// access(all) fun setup() {
+//     deployContracts()
+//     snapshot = getCurrentBlockHeight()
+// }
+// 
+// access(all) fun testExample() {
+//     Test.reset(to: snapshot) // Reset to clean state
+//     // ... your test logic ...
+// }
+// ```

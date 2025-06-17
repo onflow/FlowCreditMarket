@@ -21,23 +21,12 @@ access(all) let flowVaultStoragePath = /storage/flowTokenVault
 access(all)
 fun setup() {
     deployContracts()
-
-    var err = Test.deployContract(
+    
+    // Deploy MockOracle for this test suite
+    let err = Test.deployContract(
         name: "MockOracle",
         path: "../contracts/mocks/MockOracle.cdc",
         arguments: [defaultTokenIdentifier]
-    )
-    Test.expect(err, Test.beNil())
-    err = Test.deployContract(
-        name: "MockTidalProtocolConsumer",
-        path: "../contracts/mocks/MockTidalProtocolConsumer.cdc",
-        arguments: []
-    )
-    Test.expect(err, Test.beNil())
-    err = Test.deployContract(
-        name: "FungibleTokenStack",
-        path: "../../DeFiBlocks/cadence/contracts/connectors/FungibleTokenStack.cdc",
-        arguments: []
     )
     Test.expect(err, Test.beNil())
 }
