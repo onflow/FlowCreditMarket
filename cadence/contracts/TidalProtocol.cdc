@@ -1700,8 +1700,9 @@ access(all) contract TidalProtocol {
         return Position(id: pid, pool: cap)
     }
 
-    // A convenience function for computing a health value from effective collateral and debt values.
-    access(all) fun healthComputation(effectiveCollateral: UFix64, effectiveDebt: UFix64): UFix64 {
+    /// Returns a health value computed from the provided effective collateral and debt values where health is a ratio
+    /// of effective collateral over effective debt
+    access(all) view fun healthComputation(effectiveCollateral: UFix64, effectiveDebt: UFix64): UFix64 {
         var health = 0.0
 
         if effectiveCollateral == 0.0 {
@@ -1719,20 +1720,19 @@ access(all) contract TidalProtocol {
         return health
     }
 
-    // A multiplication function for interest calculations. It assumes that both values are very close to 1
-    // and represent fixed point numbers with 16 decimal places of precision.
-    access(all) fun interestMul(_ a: UInt64, _ b: UInt64): UInt64 {
+    /// A multiplication function for interest calculations. It assumes that both values are very close to 1 and
+    /// represent fixed point numbers with 16 decimal places of precision.
+    access(all) view fun interestMul(_ a: UInt64, _ b: UInt64): UInt64 {
         let aScaled = a / 100000000
         let bScaled = b / 100000000
 
         return aScaled * bScaled
     }
 
-    // Converts a yearly interest rate (as a UFix64) to a per-second multiplication factor
-    // (stored in a UInt64 as a fixed point number with 16 decimal places). The input to this function will be
-    // just the relative interest rate (e.g. 0.05 for 5% interest), but the result will be
-    // the per-second multiplier (e.g. 1.000000000001).
-    access(all) fun perSecondInterestRate(yearlyRate: UFix64): UInt64 {
+    /// Converts a yearly interest rate (as a UFix64) to a per-second multiplication factor (stored in a UInt64 as a
+    /// fixed point number with 16 decimal places). The input to this function will be just the relative interest rate
+    /// (e.g. 0.05 for 5% interest), but the result will be the per-second multiplier (e.g. 1.000000000001).
+    access(all) view fun perSecondInterestRate(yearlyRate: UFix64): UInt64 {
         // Covert the yearly rate to an integer maintaning the 10^8 multiplier of UFix64.
         // We would need to multiply by an additional 10^8 to match the promised multiplier of
         // 10^16. HOWEVER, since we are about to divide by 31536000, we can save multiply a factor
@@ -1743,9 +1743,9 @@ access(all) contract TidalProtocol {
         return perSecondScaledValue
     }
 
-    // Updates an interest index to reflect the passage of time. The result is:
-    //   newIndex = oldIndex * perSecondRate^seconds
-    access(all) fun compoundInterestIndex(oldIndex: UInt64, perSecondRate: UInt64, elapsedSeconds: UFix64): UInt64 {
+    /// Returns the compounded interest index reflecting the passage of time
+    /// The result is: newIndex = oldIndex * perSecondRate ^ seconds
+    access(all) view fun compoundInterestIndex(oldIndex: UInt64, perSecondRate: UInt64, elapsedSeconds: UFix64): UInt64 {
         var result = oldIndex
         var current = perSecondRate
         var secondsCounter = UInt64(elapsedSeconds)
@@ -1761,7 +1761,9 @@ access(all) contract TidalProtocol {
         return result
     }
 
-    access(all) fun scaledBalanceToTrueBalance(scaledBalance: UFix64, interestIndex: UInt64): UFix64 {
+    /// Transforms the provided `scaledBalance` to a true balance
+    // TODO: Clarify what "scaled" and "true" balances signify
+    access(all) view fun scaledBalanceToTrueBalance(scaledBalance: UFix64, interestIndex: UInt64): UFix64 {
         // The interest index is essentially a fixed point number with 16 decimal places, we convert
         // it to a UFix64 by copying the byte representation, and then dividing by 10^8 (leaving and
         // additional 10^8 as required for the UFix64 representation).
@@ -1769,7 +1771,9 @@ access(all) contract TidalProtocol {
         return scaledBalance * indexMultiplier
     }
 
-    access(all) fun trueBalanceToScaledBalance(trueBalance: UFix64, interestIndex: UInt64): UFix64 {
+    /// Transforms the provided `trueBalance` to a scaled balance
+    // TODO: Clarify what "scaled" and "true" balances signify
+    access(all) view fun trueBalanceToScaledBalance(trueBalance: UFix64, interestIndex: UInt64): UFix64 {
         // The interest index is essentially a fixed point number with 16 decimal places, we convert
         // it to a UFix64 by copying the byte representation, and then dividing by 10^8 (leaving and
         // additional 10^8 as required for the UFix64 representation).
@@ -1779,11 +1783,13 @@ access(all) contract TidalProtocol {
 
     /* --- INTERNAL METHODS --- */
 
+    /// Returns an authorized reference to the contract account's Pool resource
     access(self) view fun _borrowPool(): auth(EPosition) &Pool {
         return self.account.storage.borrow<auth(EPosition) &Pool>(from: self.PoolStoragePath)
             ?? panic("Could not borrow reference to internal TidalProtocol Pool resource")
     }
 
+    /// Returns a reference to the contract account's MOET Minter resource
     access(self) view fun _borrowMOETMinter(): &MOET.Minter {
         return self.account.storage.borrow<&MOET.Minter>(from: MOET.AdminStoragePath)
             ?? panic("Could not borrow reference to internal MOET Minter resource")
@@ -1794,7 +1800,7 @@ access(all) contract TidalProtocol {
         self.PoolFactoryPath = StoragePath(identifier: "tidalProtocolPoolFactory_\(self.account.address)")!
         self.PoolPublicPath = PublicPath(identifier: "tidalProtocolPool_\(self.account.address)")!
 
-        // save PoolFactory in storage & configure public Capability
+        // save PoolFactory in storage
         self.account.storage.save(
             <-create PoolFactory(),
             to: self.PoolFactoryPath
