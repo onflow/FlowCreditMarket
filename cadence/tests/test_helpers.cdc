@@ -175,10 +175,6 @@ fun mintMoet(signer: Test.TestAccount, to: Address, amount: UFix64, beFailed: Bo
     Test.expect(mintRes, beFailed ? Test.beFailed() : Test.beSucceeded())
 }
 
-access(all)
-fun getCurrentBlockHeight(): UInt64 {
-    return getCurrentBlock().height
-}
 
 // Transfer Flow tokens from service account to recipient
 access(all)
@@ -193,11 +189,6 @@ fun transferFlowTokens(to: Test.TestAccount, amount: UFix64) {
     Test.expect(res, Test.beSucceeded())
 }
 
-// DEPRECATED – kept for backwards-compatibility; will be removed
-access(all)
-fun mintFlow(to: Test.TestAccount, amount: UFix64) {
-    transferFlowTokens(to: to, amount: amount)
-}
 
 access(all)
 fun expectEvents(eventType: Type, expectedCount: Int) {

@@ -1,7 +1,7 @@
 // Minimal DFBUtils mock used only in tests.
 
 // no external imports needed
-import FungibleToken from "FungibleToken"
+import "FungibleToken"
 
 access(all) contract DFBUtils {
 

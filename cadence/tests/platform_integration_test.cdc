@@ -1,4 +1,5 @@
 import Test
+import BlockchainHelpers
 
 import "MOET"
 import "test_helpers.cdc"
