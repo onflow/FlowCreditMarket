@@ -8,6 +8,7 @@ access(all) let protocolAccount = Test.getAccount(0x0000000000000007)
 access(all) var snapshot: UInt64 = 0
 
 access(all) let flowTokenIdentifier = "A.0000000000000003.FlowToken.Vault"
+access(all) let moetTokenIdentifier = "A.0000000000000007.MOET.Vault"
 access(all) let flowVaultStoragePath = /storage/flowTokenVault
 
 access(all)
@@ -23,8 +24,9 @@ fun testRebalanceOvercollateralised() {
     let initialPrice = 1.0
     let priceIncreasePct: UFix64 = 1.2
     setMockOraclePrice(signer: protocolAccount, forTokenIdentifier: flowTokenIdentifier, price: initialPrice)
+    setMockOraclePrice(signer: protocolAccount, forTokenIdentifier: moetTokenIdentifier, price: initialPrice)
 
-    createAndStorePool(signer: protocolAccount, defaultTokenIdentifier: defaultTokenIdentifier, beFailed: false)
+    createAndStorePool(signer: protocolAccount, defaultTokenIdentifier: moetTokenIdentifier, beFailed: false)
     addSupportedTokenSimpleInterestCurve(
         signer: protocolAccount,
         tokenTypeIdentifier: flowTokenIdentifier,
@@ -46,6 +48,13 @@ fun testRebalanceOvercollateralised() {
     Test.expect(openRes, Test.beSucceeded())
 
     let healthBefore = getPositionHealth(pid: 0, beFailed: false)
+
+    let detailsBefore = getPositionDetails(pid: 0, beFailed: false)
+
+    log(detailsBefore.balances[0].balance)
+
+    // TODO: This current fails 
+    // Test.assert(detailsBefore.balances[0].balance == 1000.0) // check initial position balance
 
     // increase price
     setMockOraclePrice(signer: protocolAccount, forTokenIdentifier: flowTokenIdentifier, price: initialPrice * priceIncreasePct)

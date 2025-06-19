@@ -1,5 +1,6 @@
 import Test
-// import "TidalProtocol"
+
+import "TidalProtocol"
 
 access(all) let defaultTokenIdentifier = "A.0000000000000007.MOET.Vault"
 
@@ -68,6 +69,14 @@ fun deployContracts() {
         arguments: [defaultTokenIdentifier]
     )
     Test.expect(err, Test.beNil())
+
+    let initialYieldTokenSupply = 0.0
+    err = Test.deployContract(
+        name: "MockYieldToken",
+        path: "../contracts/mocks/MockYieldToken.cdc",
+        arguments: [initialYieldTokenSupply]
+    )
+    Test.expect(err, Test.beNil())
     
     // Deploy FungibleTokenStack
     err = Test.deployContract(
@@ -110,6 +119,15 @@ fun getPositionHealth(pid: UInt64, beFailed: Bool): UFix64 {
         )
     Test.expect(res, beFailed ? Test.beFailed() : Test.beSucceeded())
     return res.status == Test.ResultStatus.failed ? 0.0 : res.returnValue as! UFix64
+}
+
+access(all)
+fun getPositionDetails(pid: UInt64, beFailed: Bool): TidalProtocol.PositionDetails {
+    let res = _executeScript("../scripts/tidal-protocol/position_details.cdc",
+            [pid]
+        )
+    Test.expect(res, beFailed ? Test.beFailed() : Test.beSucceeded())
+    return res.returnValue as! TidalProtocol.PositionDetails
 }
 
 access(all)
