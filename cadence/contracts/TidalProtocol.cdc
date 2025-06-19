@@ -50,6 +50,32 @@ access(all) contract TidalProtocol {
         return Position(id: pid, pool: cap)
     }
 
+    // PROPOSED FEATURE: Convenience function for opening positions without auto-borrowing
+    // /// Opens a Position without automatic borrowing. This is a convenience function that always
+    // /// sets pushToDrawDownSink to false, preventing automatic rebalancing on position creation.
+    // /// Use this when you want to maintain full control over when borrowing occurs.
+    // ///
+    // /// @param collateral: The Vault resource containing fungible tokens to be used as collateral
+    // /// @param issuanceSink: A DeFiBlocks Sink connector that will receive any borrowed funds when the user
+    // ///     explicitly triggers borrowing later
+    // /// @param repaymentSource: An optional DeFiBlocks Source connector for automatic repayment
+    // ///
+    // /// @return the Position via which the caller can manage their position
+    // ///
+    // access(all) fun openPositionWithoutAutoBorrow(
+    //     collateral: @{FungibleToken.Vault},
+    //     issuanceSink: {DFB.Sink},
+    //     repaymentSource: {DFB.Source}?
+    // ): Position {
+    //     // Always use pushToDrawDownSink=false to prevent auto-borrowing
+    //     return self.openPosition(
+    //         collateral: <-collateral,
+    //         issuanceSink: issuanceSink,
+    //         repaymentSource: repaymentSource,
+    //         pushToDrawDownSink: false
+    //     )
+    // }
+
     /* --- CONSTRUCTS & INTERNAL METHODS ---- */
 
     access(all) entitlement EPosition
@@ -592,6 +618,8 @@ access(all) contract TidalProtocol {
             reserveVault.deposit(from: <-from)
 
             // RESTORED: Rebalancing and queue management
+            // When pushToDrawDownSink is true, force a rebalance which may automatically borrow
+            // funds to bring the position to its target health ratio
             if pushToDrawDownSink {
                 self.rebalancePosition(pid: pid, force: true)
             }
@@ -732,6 +760,14 @@ access(all) contract TidalProtocol {
         // Rebalances the position to the target health value. If force is true, the position will be
         // rebalanced even if it is currently healthy, otherwise, this function will do nothing if the
         // position is within the min/max health bounds.
+        //
+        // AUTO-BORROWING BEHAVIOR:
+        // When a position is overcollateralized (health > targetHealth), the system will automatically
+        // borrow from the protocol to bring the position to the target health ratio. This maximizes
+        // capital efficiency by ensuring positions are neither too risky nor too conservative.
+        // Example: With 1000 Flow collateral at 0.8 collateral factor = 800 effective collateral
+        //          To achieve targetHealth of 1.3, effective debt = 800/1.3 ≈ 615.38
+        //          The system automatically borrows 615.38 MOET to achieve this ratio
         access(EPosition) fun rebalancePosition(pid: UInt64, force: Bool) {
             let position = (&self.positions[pid] as auth(EImplementation) &InternalPosition?)!
             let balanceSheet = self.positionBalanceSheet(pid: pid)
@@ -932,6 +968,8 @@ access(all) contract TidalProtocol {
             }
 
             // deposit the initial funds & return the position ID
+            // NOTE: If pushToDrawDownSink is true, this will trigger rebalancePosition() which may
+            // automatically borrow funds to achieve the target health ratio
             self.depositAndPush(
                 pid: id,
                 from: <-funds,
