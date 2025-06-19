@@ -39,24 +39,13 @@ transaction(positionWrapperPath: StoragePath) {
         log("Health: ".concat(positionRef.getHealth().toString()))
         log("=========================================")
         
-        // Get MOET vault to repay
-        // let moetVault = borrower.storage.borrow<auth(FungibleToken.Withdraw) &MOET.Vault>(
-        //     from: MOET.VaultStoragePath
-        // ) ?? panic("Could not borrow MOET vault")
-        
-        // // Withdraw all MOET to repay
-        // let repaymentAmount = moetVault.balance
-        // log("Repaying MOET amount: ".concat(repaymentAmount.toString()))
-        // let repaymentVault <- moetVault.withdraw(amount: repaymentAmount)
-        
-        // // Deposit to repay the debt
-        // positionRef.deposit(from: <-repaymentVault)
+        // Withdraw all collateral, using pullFromTopUpSource: true, so that all debt is automatically repaid
         let receiverRef =  borrower.capabilities.borrow<&{FungibleToken.Receiver}>(/public/flowTokenReceiver)
 			?? panic("Could not borrow receiver reference to the recipient's Vault")
 
         let withdrawnVault <- positionRef.withdrawAndPull(
             type: Type<@FlowToken.Vault>(),
-            amount: 1000.0,
+            amount: 1000.0, // should be using `positionRef.availableBalance(type: Type<@FlowToken.Vault>(), pullFromTopUpSource: true), but this for some reason returns 0
             pullFromTopUpSource: true,
         )
         
