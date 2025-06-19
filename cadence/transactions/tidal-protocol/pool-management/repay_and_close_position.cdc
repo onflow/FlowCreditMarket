@@ -45,7 +45,7 @@ transaction(positionWrapperPath: StoragePath) {
 
         let withdrawnVault <- positionRef.withdrawAndPull(
             type: Type<@FlowToken.Vault>(),
-            amount: 1000.0, // should be using `positionRef.availableBalance(type: Type<@FlowToken.Vault>(), pullFromTopUpSource: true), but this for some reason returns 0
+            amount: positionRef.availableBalance(type: Type<@FlowToken.Vault>(), pullFromTopUpSource: true),
             pullFromTopUpSource: true,
         )
         
