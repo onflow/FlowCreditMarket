@@ -1,5 +1,6 @@
 import Test
 import BlockchainHelpers
+import "TidalProtocol"
 
 import "MOET"
 import "test_helpers.cdc"
@@ -68,4 +69,21 @@ fun testRebalanceOvercollateralised() {
 
     Test.assert(healthAfterPriceChange > healthBefore) // got healthier due to price increase
     Test.assert(healthAfterRebalance < healthAfterPriceChange) // health decreased after drawing down excess collateral
+
+    let detailsAfterRebalance = getPositionDetails(pid: 0, beFailed: false)
+
+    // Expected debt after rebalance: effective collateral (post-price) / targetHealth
+    // 1000 Flow at price 1.2 = 1200, collateralFactor 0.8 -> 960 effective collateral
+    // targetHealth = 1.3 → effective debt = 960 / 1.3 ≈ 738.4615
+    let expectedDebt: UFix64 = 960.0 / 1.3
+
+    var actualDebt: UFix64 = 0.0
+    for bal in detailsAfterRebalance.balances {
+        if bal.type.identifier == moetTokenIdentifier {
+            actualDebt = bal.balance
+        }
+    }
+
+    let tolerance: UFix64 = 0.01
+    Test.assert((actualDebt >= expectedDebt - tolerance) && (actualDebt <= expectedDebt + tolerance))
 } 

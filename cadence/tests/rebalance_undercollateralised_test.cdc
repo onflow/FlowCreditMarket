@@ -62,4 +62,30 @@ fun testRebalanceUndercollateralised() {
 
     Test.assert(healthBefore > healthAfterPriceChange) // health decreased after drop
     Test.assert(healthAfterRebalance > healthAfterPriceChange) // health improved after rebalance
+
+    let detailsAfterRebalance = getPositionDetails(pid: 0, beFailed: false)
+
+    // Expected debt after rebalance calculation based on contract's pay-down math
+    let effectiveCollateralAfterDrop: UFix64 = 1_000.0 * 0.8 * (1.0 - priceDropPct) // 640
+    let debtBefore: UFix64 = 615.38461538
+    let healthAfterPriceChangeVal: UFix64 = healthAfterPriceChange
+    let target: UFix64 = 1.3
+
+    let requiredPaydown: UFix64 = (target - healthAfterPriceChangeVal) * effectiveCollateralAfterDrop / (target * target)
+    let expectedDebt: UFix64 = debtBefore - requiredPaydown
+
+    var actualDebt: UFix64 = 0.0
+    for bal in detailsAfterRebalance.balances {
+        if bal.type.identifier == defaultTokenIdentifier && bal.balance > 0.0 {
+            actualDebt = bal.balance
+        }
+    }
+
+    let tolerance: UFix64 = 0.5
+    Test.assert((actualDebt >= expectedDebt - tolerance) && (actualDebt <= expectedDebt + tolerance))
+
+    log("Health after price change: ".concat(healthAfterPriceChange.toString()))
+    log("Required paydown: ".concat(requiredPaydown.toString()))
+    log("Expected debt: ".concat(expectedDebt.toString()))
+    log("Actual debt: ".concat(actualDebt.toString()))
 } 
