@@ -252,7 +252,7 @@ access(all) contract TidalProtocol {
         access(all) var debitInterestIndex: UInt64
         /// The interest rate for credit of the associated token
         access(all) var currentCreditRate: UInt64
-        /// The interest rate for credit of the associated token
+        /// The interest rate for debit of the associated token
         access(all) var currentDebitRate: UInt64
         /// The interest curve implementation used to calculate interest rate
         access(all) var interestCurve: {InterestCurve}
