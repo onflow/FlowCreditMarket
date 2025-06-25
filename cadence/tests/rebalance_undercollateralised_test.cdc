@@ -107,4 +107,8 @@ fun testRebalanceUndercollateralised() {
     log("Required paydown: ".concat(requiredPaydown.toString()))
     log("Expected debt: ".concat(expectedDebt.toString()))
     log("Actual debt: ".concat(actualDebt.toString()))
+
+    // Ensure health is at least the minimum threshold (1.1)
+    Test.assert(healthAfterRebalance >= 1.1,
+        message: "Health after rebalance should be at least the minimum (1.1) but was ".concat(healthAfterRebalance.toString()))
 } 
