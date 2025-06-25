@@ -84,7 +84,7 @@ fun testAutoBorrowBehaviorWithTargetHealth() {
     Test.assert(health >= 1.29 && health <= 1.31,
         message: "Expected health to be at target (1.3), but got \(health)")
 
-    // NEW: Verify the user actually received the borrowed MOET in their Vault (draw-down sink)
+    // Verify the user actually received the borrowed MOET in their Vault (draw-down sink)
     let userMoetBalance = getBalance(address: user.address, vaultPublicPath: MOET.VaultPublicPath)!
     Test.assert(userMoetBalance >= expectedDebt - 0.01 && userMoetBalance <= expectedDebt + 0.01,
         message: "Expected user MOET Vault balance to be approximately \(expectedDebt), but got \(userMoetBalance)")
@@ -130,7 +130,7 @@ fun testNoAutoBorrowWhenPushToDrawDownSinkFalse() {
     Test.assert(!hasMoetBalance, 
         message: "Should not have MOET balance when no auto-borrowing occurs")
 
-    // NEW: Ensure user's MOET balance remains unchanged (i.e. no tokens minted)
+    // Ensure user's MOET balance remains unchanged (i.e. no tokens minted)
     let moetVaultBalanceAfter = getBalance(address: user.address, vaultPublicPath: MOET.VaultPublicPath) ?? 0.0
     Test.assert(moetVaultBalanceAfter == moetVaultBalanceBefore,
         message: "User's MOET Vault balance should remain unchanged when no borrow occurs")
