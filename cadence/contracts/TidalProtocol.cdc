@@ -444,12 +444,14 @@ access(all) contract TidalProtocol {
         /// below its min health. If pullFromTopUpSource is true, the calculation will return the balance currently
         /// available without topping up the position.
         access(all) fun availableBalance(pid: UInt64, type: Type, pullFromTopUpSource: Bool): UFix64 {
+            log("[CONTRACT] availableBalance(pid: \(pid), type: \(type.contractName!), pullFromTopUpSource: \(pullFromTopUpSource))")
             let position = self._borrowPosition(pid: pid)
 
             if pullFromTopUpSource && position.topUpSource != nil {
                 let topUpSource = position.topUpSource!
                 let sourceType = topUpSource.getSourceType()
                 let sourceAmount = topUpSource.minimumAvailable()
+                log("    [CONTRACT] Calling to fundsAvailableAboveTargetHealthAfterDepositing with sourceAmount \(sourceAmount) and targetHealth \(position.minHealth)")
 
                 return self.fundsAvailableAboveTargetHealthAfterDepositing(
                     pid: pid,
@@ -459,6 +461,7 @@ access(all) contract TidalProtocol {
                     depositAmount: sourceAmount
                 )
             } else {
+                log("    [CONTRACT] Calling to fundsAvailableAboveTargetHealth with targetHealth \(position.minHealth)")
                 return self.fundsAvailableAboveTargetHealth(
                     pid: pid,
                     type: type,
@@ -701,6 +704,7 @@ access(all) contract TidalProtocol {
             depositType: Type,
             depositAmount: UFix64
         ): UFix64 {
+            log("[CONTRACT] fundsAvailableAboveTargetHealthAfterDepositing(pid: \(pid), withdrawType: \(withdrawType.contractName!), targetHealth: \(targetHealth), depositType: \(depositType.contractName!), depositAmount: \(depositAmount))")
             if depositType == withdrawType && depositAmount > 0.0 {
                 // If the deposit and withdrawal types are the same, we compute the available funds assuming
                 // no deposit (which is less work) and increase that by the deposit amount at the end
@@ -712,6 +716,8 @@ access(all) contract TidalProtocol {
 
             var effectiveCollateralAfterDeposit = balanceSheet.effectiveCollateral
             var effectiveDebtAfterDeposit = balanceSheet.effectiveDebt
+            log("    [CONTRACT] effectiveCollateralAfterDeposit: \(effectiveCollateralAfterDeposit)")
+            log("    [CONTRACT] effectiveDebtAfterDeposit: \(effectiveDebtAfterDeposit)")
             if depositAmount != 0.0 {
                 if position.balances[depositType] == nil || position.balances[depositType]!.direction == BalanceDirection.Credit {
                     // If there's no debt for the deposit token, we can just compute how much additional effective collateral the deposit will create.
@@ -727,6 +733,7 @@ access(all) contract TidalProtocol {
                         scaledBalance: debtBalance,
                         interestIndex: depositTokenState.debitInterestIndex
                     )
+                    log("    [CONTRACT] trueDebt: \(trueDebt)")
 
                     if trueDebt >= depositAmount {
                         // This deposit will pay down some debt, but won't result in net collateral, we
@@ -744,6 +751,8 @@ access(all) contract TidalProtocol {
                     }
                 }
             }
+            log("    [CONTRACT] effectiveCollateralAfterDeposit: \(effectiveCollateralAfterDeposit)")
+            log("    [CONTRACT] effectiveDebtAfterDeposit: \(effectiveDebtAfterDeposit)")
 
             // We now have new effective collateral and debt values that reflect the proposed deposit (if any!)
             // Now we can figure out how many of the withdrawal token are available while keeping the position
@@ -752,6 +761,7 @@ access(all) contract TidalProtocol {
                 effectiveCollateral: effectiveCollateralAfterDeposit,
                 effectiveDebt: effectiveDebtAfterDeposit
             )
+            log("    [CONTRACT] healthAfterDeposit: \(healthAfterDeposit)")
 
             if healthAfterDeposit <= targetHealth {
                 // The position is already at or below the provided target health, so we can't withdraw anything.
@@ -779,15 +789,19 @@ access(all) contract TidalProtocol {
                     effectiveDebt: effectiveDebtAfterDeposit
                 )
 
+
                 // Does drawing down all of the collateral go below the target health? Then the max withdrawal comes from collateral only.
                 if potentialHealth <= targetHealth {
                     // We will hit the health target before using up all of the withdraw token credit. We can easily
                     // compute how many units of the token would bring the position down to the target health.
                     let availableHealth = healthAfterDeposit - targetHealth
                     let availableEffectiveValue = effectiveDebtAfterDeposit == 0.0 ? effectiveCollateralAfterDeposit : availableHealth * effectiveDebtAfterDeposit
+                    log("    [CONTRACT] availableHealth: \(availableHealth)")
+                    log("    [CONTRACT] availableEffectiveValue: \(availableEffectiveValue)")
 
                     // The amount of the token we can take using that amount of health
                     let availableTokenCount = availableEffectiveValue / self.collateralFactor[withdrawType]! / self.priceOracle.price(ofToken: withdrawType)!
+                    log("    [CONTRACT] availableTokenCount: \(availableTokenCount)")
 
                     return availableTokenCount
                 } else {
@@ -797,6 +811,8 @@ access(all) contract TidalProtocol {
                     // and then adjust the effective collateral to reflect that it has come out
                     collateralTokenCount = trueCredit
                     effectiveCollateralAfterDeposit = effectiveCollateralAfterDeposit - collateralEffectiveValue
+                    log("    [CONTRACT] collateralTokenCount: \(collateralTokenCount)")
+                    log("    [CONTRACT] effectiveCollateralAfterDeposit: \(effectiveCollateralAfterDeposit)")
                     // NOTE: The above invalidates the healthAfterDeposit value, but it's not used below...
                 }
             }
@@ -807,6 +823,9 @@ access(all) contract TidalProtocol {
             // We can calculate the available debt increase that would bring us to the target health
             var availableDebtIncrease = (effectiveCollateralAfterDeposit / targetHealth) - effectiveDebtAfterDeposit
             let availableTokens = (availableDebtIncrease * self.borrowFactor[withdrawType]!) / self.priceOracle.price(ofToken: withdrawType)!
+            log("    [CONTRACT] availableDebtIncrease: \(availableDebtIncrease)")
+            log("    [CONTRACT] availableTokens: \(availableTokens)")
+            log("    [CONTRACT] availableTokens + collateralTokenCount: \(availableTokens + collateralTokenCount)")
             return availableTokens + collateralTokenCount
         }
 
