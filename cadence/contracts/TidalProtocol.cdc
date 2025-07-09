@@ -1345,20 +1345,6 @@ access(all) contract TidalProtocol {
             return BalanceSheet(effectiveCollateral: effectiveCollateral, effectiveDebt: effectiveDebt)
         }
 
-        /// Returns the relative price of a token in the requested denomination, assuming the PriceOracle can serve
-        /// prices for both
-        access(self) fun _getRelativePrice(of: Type, denomination: Type): UFix64 {
-            let forTokenPrice = self.priceOracle.price(ofToken: of)!
-            if denomination == self.priceOracle.unitOfAccount() {
-                return forTokenPrice // already denominated in requested token type
-            }
-            // get denomonation price and guard against division by 0 when returning relative price
-            let denominationPrice = self.priceOracle.price(ofToken: denomination)!
-            assert(0.0 < denominationPrice,
-                message: "Could not get relative price of \(of.identifier) denominated in \(denomination.identifier) - denomination price == 0.0")
-            return forTokenPrice / denominationPrice
-        }
-
         /// A convenience function that returns a reference to a particular token state, making sure it's up-to-date for
         /// the passage of time. This should always be used when accessing a token state to avoid missing interest
         /// updates (duplicate calls to updateForTimeChange() are a nop within a single block).
