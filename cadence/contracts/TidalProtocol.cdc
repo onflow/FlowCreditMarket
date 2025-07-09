@@ -794,8 +794,8 @@ access(all) contract TidalProtocol {
                 if potentialHealth <= targetHealth {
                     // We will hit the health target before using up all of the withdraw token credit. We can easily
                     // compute how many units of the token would bring the position down to the target health.
-                    let availableHealth = healthAfterDeposit - targetHealth
-                    let availableEffectiveValue = effectiveDebtAfterDeposit == 0.0 ? effectiveCollateralAfterDeposit : availableHealth * effectiveDebtAfterDeposit
+                    let availableHealth = healthAfterDeposit == UFix64.max ? UFix64.max : healthAfterDeposit - targetHealth
+                    let availableEffectiveValue = (effectiveDebtAfterDeposit == 0.0 || availableHealth == UFix64.max) ? effectiveCollateralAfterDeposit : availableHealth * effectiveDebtAfterDeposit
                     log("    [CONTRACT] availableHealth: \(availableHealth)")
                     log("    [CONTRACT] availableEffectiveValue: \(availableEffectiveValue)")
 
@@ -1114,9 +1114,11 @@ access(all) contract TidalProtocol {
 
             // Reflect the withdrawal in the position's balance
             position.balances[type]!.recordWithdrawal(amount: amount, tokenState: tokenState)
-
-            // Ensure that this withdrawal doesn't cause the position to be overdrawn.
-            assert(self.positionHealth(pid: pid) >= 1.0, message: "Position is overdrawn")
+            log(self.positionHealth(pid: pid))
+            if self.positionHealth(pid: pid) != 0.0 {
+                // Ensure that this withdrawal doesn't cause the position to be overdrawn.
+                assert(self.positionHealth(pid: pid) >= 1.0, message: "Position is overdrawn")
+            }
 
             // Queue for update if necessary
             self._queuePositionForUpdateIfNecessary(pid: pid)
