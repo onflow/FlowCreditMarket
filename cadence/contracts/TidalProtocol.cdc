@@ -1206,6 +1206,7 @@ access(all) contract TidalProtocol {
                         type: topUpSource.getSourceType(),
                         targetHealth: position.targetHealth
                     )
+					log("    [CONTRACT] idealDeposit: \(idealDeposit)")
 
                     let pulledVault <- topUpSource.withdrawAvailable(maxAmount: idealDeposit)
 
@@ -1223,6 +1224,7 @@ access(all) contract TidalProtocol {
                         type: sinkType,
                         targetHealth: position.targetHealth
                     )
+					log("    [CONTRACT] idealWithdrawal: \(idealWithdrawal)")
 
                     // Compute how many tokens of the sink's type are available to hit our target health.
                     let sinkCapacity = drawDownSink.minimumCapacity()
