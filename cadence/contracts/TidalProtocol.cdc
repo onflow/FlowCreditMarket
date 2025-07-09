@@ -451,6 +451,7 @@ access(all) contract TidalProtocol {
 				let sourceType = topUpSource.getSourceType()
 				let sourceAmount = topUpSource.minimumAvailable()
 				log("sourceAmount")
+				log(sourceType)
 				log(sourceAmount)
 
 				return self.fundsAvailableAboveTargetHealthAfterDepositing(
@@ -735,6 +736,8 @@ access(all) contract TidalProtocol {
 						interestIndex: depositTokenState.debitInterestIndex
 					)
 
+					log("trueDebt, \(trueDebt)")
+
 					if trueDebt >= depositAmount {
 						// This deposit will pay down some debt, but won't result in net collateral, we
 						// just need to account for the debt decrease.
@@ -758,6 +761,8 @@ access(all) contract TidalProtocol {
 				effectiveCollateral: effectiveCollateralAfterDeposit,
 				effectiveDebt: effectiveDebtAfterDeposit
 			)
+
+			log("healthAfterDeposit, \(healthAfterDeposit)")
 
 
 			if healthAfterDeposit <= targetHealth {
@@ -1354,8 +1359,13 @@ access(all) contract TidalProtocol {
 					let trueBalance = TidalProtocol.scaledBalanceToTrueBalance(scaledBalance: balance.scaledBalance,
 					interestIndex: tokenState.creditInterestIndex)
 
+					log("trueBalance")
+					log(trueBalance)
+					log(type)
+
 					let value = priceOracle.price(ofToken: type)! * trueBalance
 
+					log(value)
 					effectiveCollateral = effectiveCollateral + (value * self.collateralFactor[type]!)
 				} else {
 					let trueBalance = TidalProtocol.scaledBalanceToTrueBalance(scaledBalance: balance.scaledBalance,
@@ -1636,6 +1646,8 @@ access(all) contract TidalProtocol {
 				return 0.0
 			}
 			let pool = self.pool.borrow()!
+			log("pool")
+			log(pool)
 			return pool.availableBalance(pid: self.positionID, type: self.type, pullFromTopUpSource: self.pullFromTopUpSource)
 		}
 		/// Withdraws up to the max amount as the sourceType Vault
