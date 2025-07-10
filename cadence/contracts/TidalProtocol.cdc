@@ -47,10 +47,12 @@ access(all) contract TidalProtocol {
         /// is a number relatively close to 1.0, so the scaled balance will be roughly of the same order
         /// of magnitude as the actual balance (thus we can use UFix64 for the scaled balance).
         access(all) var scaledBalance: UFix64
+        access(all) var newScaledBalance: UInt256
 
         init() {
             self.direction = BalanceDirection.Credit
             self.scaledBalance = 0.0
+            self.newScaledBalance = 0
         }
 
         /// Records a deposit of the defined amount, updating the inner scaledBalance as well as relevant values in the
@@ -1796,23 +1798,21 @@ access(all) contract TidalProtocol {
     /// Transforms the provided `scaledBalance` to a true balance (or actual balance) where the true balance is the
     /// scaledBalance + accrued interest and the scaled balance is the amount a borrower has actually interacted with
     /// (via deposits or withdrawals)
-    access(all) view fun scaledBalanceToTrueBalance(scaledBalance: UFix64, interestIndex: UInt64): UFix64 {
-        // The interest index is essentially a fixed point number with 16 decimal places, we convert
-        // it to a UFix64 by copying the byte representation, and then dividing by 10^8 (leaving and
-        // additional 10^8 as required for the UFix64 representation).
-        let indexMultiplier = UFix64.fromBigEndianBytes(interestIndex.toBigEndianBytes())! / UFix64(self.e8)
-        return scaledBalance * indexMultiplier
+    access(all) view fun scaledBalanceToTrueBalance(_ scaled: UInt256, interestIndex: UInt64): UInt256 {
+        // The interest index is a fixed point number with 16 decimal places. To maintain precision,
+        // we multiply the scaled balance by the interest index and then divide by 10^16 to get the
+        // true balance with proper decimal alignment.
+        return (scaled * UInt256(interestIndex)) / UInt256(self.e16)
     }
 
     /// Transforms the provided `trueBalance` to a scaled balance where the scaled balance is the amount a borrower has
     /// actually interacted with (via deposits or withdrawals) and the true balance is the amount with respect to
     /// accrued interest
-    access(all) view fun trueBalanceToScaledBalance(trueBalance: UFix64, interestIndex: UInt64): UFix64 {
-        // The interest index is essentially a fixed point number with 16 decimal places, we convert
-        // it to a UFix64 by copying the byte representation, and then dividing by 10^8 (leaving and
-        // additional 10^8 as required for the UFix64 representation).
-        let indexMultiplier = UFix64.fromBigEndianBytes(interestIndex.toBigEndianBytes())! / UFix64(self.e8)
-        return trueBalance / indexMultiplier
+    access(all) view fun trueBalanceToScaledBalance(_ trueBalance: UInt256, interestIndex: UInt64): UInt256 {
+        // The interest index is a fixed point number with 16 decimal places. To maintain precision,
+        // we multiply the true balance by 10^16 and then divide by the interest index to get the
+        // scaled balance with proper decimal alignment.
+        return (trueBalance * UInt256(self.e16)) / UInt256(interestIndex)
     }
 
     /* --- INTERNAL METHODS --- */
