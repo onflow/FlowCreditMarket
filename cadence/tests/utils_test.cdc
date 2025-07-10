@@ -1,15 +1,18 @@
 import Test
 import BlockchainHelpers
 
-import "test_helpers.cdc"
-
 import "TidalProtocolUtils"
 
 access(all) let protocolAccount = Test.getAccount(0x0000000000000007)
 
 access(all)
 fun setup() {
-    deployContracts()
+    var err = Test.deployContract(
+        name: "TidalProtocolUtils",
+        path: "../contracts/TidalProtocolUtils.cdc",
+        arguments: []
+    )
+    Test.expect(err, Test.beNil())
 }
 
 access(all)
@@ -183,4 +186,152 @@ fun testIntegerPartMaxUFix64AsUInt256ToUFix64Fails() {
         [uintAmount, UInt8(18)]
     )
     Test.expect(convertedResult, Test.beFailed())
+}
+
+/************************
+ * BALANCE CONVERSIONS *
+ ************************/
+
+access(all)
+fun testUFix64ToUInt256BalanceBasicSucceeds() {
+    let ufixAmount: UFix64 = 100.0
+    let expectedUIntAmount: UInt256 = 1_000_000_000_000_000_000
+
+    let actualUIntAmount = TidalProtocolUtils.toUInt256Balance(ufixAmount)
+    Test.assertEqual(expectedUIntAmount, actualUIntAmount)
+}
+
+access(all)
+fun testUInt256BalanceToUFix64BasicSucceeds() {
+    let ufixAmount: UFix64 = 100.0
+    let uintAmount: UInt256 = 1_000_000_000_000_000_000
+
+    let actualUFixAmount = TidalProtocolUtils.toUFix64Balance(uintAmount)
+    Test.assertEqual(ufixAmount, actualUFixAmount)
+}
+
+access(all)
+fun testUFix64ToUInt256BalanceWithFractionalSucceeds() {
+    let ufixAmount: UFix64 = 100.12345678
+    let expectedUIntAmount: UInt256 = 1_001_234_567_800_000_000
+
+    let actualUIntAmount = TidalProtocolUtils.toUInt256Balance(ufixAmount)
+    Test.assertEqual(expectedUIntAmount, actualUIntAmount)
+}
+
+access(all)
+fun testUInt256BalanceToUFix64WithFractionalSucceeds() {
+    let ufixAmount: UFix64 = 100.12345678
+    let uintAmount: UInt256 = 1_001_234_567_800_000_000
+
+    let actualUFixAmount = TidalProtocolUtils.toUFix64Balance(uintAmount)
+    Test.assertEqual(ufixAmount, actualUFixAmount)
+}
+
+access(all)
+fun testUFix64ToUInt256BalanceZeroSucceeds() {
+    let ufixAmount: UFix64 = 0.0
+    let expectedUIntAmount: UInt256 = 0
+
+    let actualUIntAmount = TidalProtocolUtils.toUInt256Balance(ufixAmount)
+    Test.assertEqual(expectedUIntAmount, actualUIntAmount)
+}
+
+access(all)
+fun testUInt256BalanceToUFix64ZeroSucceeds() {
+    let ufixAmount: UFix64 = 0.0
+    let uintAmount: UInt256 = 0
+
+    let actualUFixAmount = TidalProtocolUtils.toUFix64Balance(uintAmount)
+    Test.assertEqual(ufixAmount, actualUFixAmount)
+}
+
+access(all)
+fun testUFix64ToUInt256BalanceSmallAmountSucceeds() {
+    let ufixAmount: UFix64 = 0.00000001
+    let expectedUIntAmount: UInt256 = 100_000_000
+
+    let actualUIntAmount = TidalProtocolUtils.toUInt256Balance(ufixAmount)
+    Test.assertEqual(expectedUIntAmount, actualUIntAmount)
+}
+
+access(all)
+fun testUInt256BalanceToUFix64SmallAmountSucceeds() {
+    let ufixAmount: UFix64 = 0.00000001
+    let uintAmount: UInt256 = 100_000_000
+
+    let actualUFixAmount = TidalProtocolUtils.toUFix64Balance(uintAmount)
+    Test.assertEqual(ufixAmount, actualUFixAmount)
+}
+
+access(all)
+fun testUFix64ToUInt256BalanceLargeAmountSucceeds() {
+    let ufixAmount: UFix64 = 1_000_000.0
+    let expectedUIntAmount: UInt256 = 10_000_000_000_000_000_000_000
+
+    let actualUIntAmount = TidalProtocolUtils.toUInt256Balance(ufixAmount)
+    Test.assertEqual(expectedUIntAmount, actualUIntAmount)
+}
+
+access(all)
+fun testUInt256BalanceToUFix64LargeAmountSucceeds() {
+    let ufixAmount: UFix64 = 1_000_000.0
+    let uintAmount: UInt256 = 10_000_000_000_000_000_000_000
+
+    let actualUFixAmount = TidalProtocolUtils.toUFix64Balance(uintAmount)
+    Test.assertEqual(ufixAmount, actualUFixAmount)
+}
+
+access(all)
+fun testUFix64ToUInt256BalancePrecisionLossSucceeds() {
+    // Test that precision loss is handled correctly (16 decimals vs 8 decimals in UFix64)
+    let ufixAmount: UFix64 = 1.12345678
+    // Expected: precision loss in the last 8 digits, should round down
+    let expectedUIntAmount: UInt256 = 11_234_567_800_000_000
+
+    let actualUIntAmount = TidalProtocolUtils.toUInt256Balance(ufixAmount)
+    Test.assertEqual(expectedUIntAmount, actualUIntAmount)
+}
+
+access(all)
+fun testUInt256BalanceToUFix64PrecisionLossSucceeds() {
+    // Test that precision loss is handled correctly when converting back
+    let ufixAmount: UFix64 = 1.12345678
+    let uintAmount: UInt256 = 11_234_567_800_000_000
+
+    let actualUFixAmount = TidalProtocolUtils.toUFix64Balance(uintAmount)
+    Test.assertEqual(ufixAmount, actualUFixAmount)
+}
+
+access(all)
+fun testBalanceConversionRoundTripSucceeds() {
+    // Test round-trip conversion maintains precision
+    let originalUFix: UFix64 = 123.45678901
+    
+    let toUInt = TidalProtocolUtils.toUInt256Balance(originalUFix)
+    let backToUFix = TidalProtocolUtils.toUFix64Balance(toUInt)
+    
+    Test.assertEqual(originalUFix, backToUFix)
+}
+
+access(all)
+fun testBalanceConversionRoundTripWithZeroSucceeds() {
+    // Test round-trip conversion with zero
+    let originalUFix: UFix64 = 0.0
+    
+    let toUInt = TidalProtocolUtils.toUInt256Balance(originalUFix)
+    let backToUFix = TidalProtocolUtils.toUFix64Balance(toUInt)
+    
+    Test.assertEqual(originalUFix, backToUFix)
+}
+
+access(all)
+fun testBalanceConversionRoundTripWithLargeNumberSucceeds() {
+    // Test round-trip conversion with large number
+    let originalUFix: UFix64 = 999_999.99999999
+    
+    let toUInt = TidalProtocolUtils.toUInt256Balance(originalUFix)
+    let backToUFix = TidalProtocolUtils.toUFix64Balance(toUInt)
+    
+    Test.assertEqual(originalUFix, backToUFix)
 }

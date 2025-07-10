@@ -119,4 +119,18 @@ access(all) contract TidalProtocolUtils {
         }
         return digits
     }
+
+    /************************
+     * BALANCE CONVERSIONS *
+     ************************/
+
+    /// Converts a UFix64 balance to UInt256 with 16 decimal precision for internal calculations
+    access(all) view fun toUInt256Balance(_ value: UFix64): UInt256 {
+        return self.ufix64ToUInt256(value, decimals: 16)
+    }
+
+    /// Converts a UInt256 balance with 16 decimal precision to UFix64 for external interfaces
+    access(all) view fun toUFix64Balance(_ value: UInt256): UFix64 {
+        return self.uint256ToUFix64(value, decimals: 16)
+    }
 }
