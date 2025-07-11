@@ -835,6 +835,32 @@ access(all) contract TidalProtocol {
             return availableTokens + collateralTokenCount
         }
 
+		// Simulates the available balance (withdrawable amount) for a given token as if the position was fully rebalanced.
+		access(all) fun simulateLiquidationValue(pid: UInt64, type: Type): UFix64 {
+			let position = self._borrowPosition(pid: pid)
+
+			let topUpSource = position.topUpSource!
+			let sourceType = topUpSource.getSourceType()
+			let sourceAmount = topUpSource.minimumAvailable()
+
+			let maybeDepositBalance = position.balances[type]!
+
+			let debt = position.balances[sourceType]!.scaledBalance
+
+			let depositTokenState = self._borrowUpdatedTokenState(type: type)
+
+			let depositTokenPrice = self.priceOracle.price(ofToken: type)! 
+			let trueDeposit = TidalProtocol.scaledBalanceToTrueBalance(
+				scaledBalance: maybeDepositBalance.scaledBalance,
+				interestIndex: maybeDepositBalance.direction == BalanceDirection.Credit
+				? depositTokenState.creditInterestIndex
+				: depositTokenState.debitInterestIndex
+			)
+
+			let simulatedValue = trueDeposit + sourceAmount - debt
+			return simulatedValue / depositTokenPrice
+		}
+
         /// Returns the position's health if the given amount of the specified token were deposited
         access(all) fun healthAfterDeposit(pid: UInt64, type: Type, amount: UFix64): UFix64 {
             let balanceSheet = self._getUpdatedBalanceSheet(pid: pid)
@@ -1446,6 +1472,11 @@ access(all) contract TidalProtocol {
             let pool = self.pool.borrow()!
             return pool.availableBalance(pid: self.id, type: type, pullFromTopUpSource: pullFromTopUpSource)
         }
+		access(all) fun liquidationValue(type: Type, pullFromTopUpSource: Bool): UFix64 {
+			let pool = self.pool.borrow()!
+			// return pool.availableBalance(pid: self.id, type: type, pullFromTopUpSource: pullFromTopUpSource)
+			return pool.simulateLiquidationValue(pid: self.id, type: type)
+		}
         /// Returns the current health of the position
         access(all) fun getHealth(): UFix64 {
             let pool = self.pool.borrow()!
