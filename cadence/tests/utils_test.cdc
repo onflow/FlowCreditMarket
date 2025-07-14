@@ -184,3 +184,136 @@ fun testIntegerPartMaxUFix64AsUInt256ToUFix64Fails() {
     )
     Test.expect(convertedResult, Test.beFailed())
 }
+
+access(all)
+fun testInterestIndexScalingWithDecimals16() {
+    // Test: Interest index with 1e16 scale (decimals=16) conversions
+    
+    // Example 1: An interest index of 1.061538461538461538 (16 decimals) represented as UInt256
+    let interestIndexUInt: UInt256 = 10_615_384_615_384_615 // 1.061538461538461538 * 1e16
+    let expectedInterestIndex: UFix64 = 1.06153846 // UFix64 max precision is 8 decimals
+    
+    let actualInterestIndex = TidalProtocolUtils.uint256ToUFix64(interestIndexUInt, decimals: 16)
+    Test.assertEqual(expectedInterestIndex, actualInterestIndex)
+    
+    // Convert back to verify round trip
+    let roundTripUInt = TidalProtocolUtils.ufix64ToUInt256(actualInterestIndex, decimals: 16)
+    let expectedRoundTrip: UInt256 = 10_615_384_600_000_000 // Loses precision beyond 8 decimals
+    Test.assertEqual(expectedRoundTrip, roundTripUInt)
+}
+
+access(all)
+fun testBalanceScalingWithInterestIndex() {
+    // Test: Applying interest index to a balance
+    
+    // Starting balance: 1000.0 FLOW
+    let balanceUFix: UFix64 = 1000.0
+    let balanceUInt: UInt256 = TidalProtocolUtils.ufix64ToUInt256(balanceUFix, decimals: 16)
+    Test.assertEqual(10_000_000_000_000_000_000 as UInt256, balanceUInt) // 1000 * 1e16
+    
+    // Interest index: 1.061538461538461538 (representing 6.15% interest)
+    let interestIndexUInt: UInt256 = 10_615_384_615_384_615
+    
+    // Apply interest: balance * interestIndex / 1e16
+    let divisor: UInt256 = 10_000_000_000_000_000
+    let scaledBalanceUInt = (balanceUInt * interestIndexUInt) / divisor
+    
+    // Convert back to UFix64
+    let scaledBalanceUFix = TidalProtocolUtils.uint256ToUFix64(scaledBalanceUInt, decimals: 16)
+    let expectedScaledBalance: UFix64 = 1061.53846153 // 1000 * 1.061538461538
+    
+    // Due to UFix64 precision limits, we only get 8 decimal places
+    Test.assertEqual(1061.53846153, scaledBalanceUFix)
+}
+
+access(all) 
+fun testScaledBalanceToTrueBalanceConversion() {
+    // Test the pattern used in TidalProtocol.cdc for scaled balance conversion
+    
+    // Scenario: User has a scaled balance that represents 1061.53846151 true tokens
+    // This tests the specific conversion that's failing in the rebalance tests
+    
+    // True balance we expect: 1061.53846151
+    let expectedTrueBalance: UFix64 = 1061.53846151
+    
+    // Interest index at time of calculation
+    let interestIndex: UFix64 = 1.06153846 // Typical interest index after some accrual
+    
+    // Calculate scaled balance: trueBalance / interestIndex
+    // In the protocol, this would be stored as the user's position
+    let scaledBalance = expectedTrueBalance / interestIndex
+    Test.assertEqual(1000.0, scaledBalance) // Should be approximately the original deposit
+    
+    // Now convert back (this is what getTideBalance does)
+    let calculatedTrueBalance = scaledBalance * interestIndex
+    
+    // Due to UFix64 precision, we might lose some precision
+    let tolerance = 0.00000001
+    Test.assert(
+        (calculatedTrueBalance > expectedTrueBalance - tolerance) &&
+        (calculatedTrueBalance < expectedTrueBalance + tolerance),
+        message: "True balance calculation is off. Expected: \(expectedTrueBalance), Got: \(calculatedTrueBalance)"
+    )
+}
+
+access(all)
+fun testRebalanceScenario2ExpectedValues() {
+    // Test the specific values from rebalance_scenario2_test.cdc
+    // These are the expected flow balances after yield price increases
+    
+    let testCases: [{String: UFix64}] = [
+        {"yieldPrice": 1.1, "expectedBalance": 1061.53846151},
+        {"yieldPrice": 1.2, "expectedBalance": 1120.92522857},
+        {"yieldPrice": 1.3, "expectedBalance": 1178.40857358}
+    ]
+    
+    // Starting values
+    let initialDeposit: UFix64 = 1000.0
+    let collateralFactor: UFix64 = 0.8
+    let targetHealthFactor: UFix64 = 1.3
+    
+    for testCase in testCases {
+        // Calculate expected balance based on yield price increase
+        // This mimics what the rebalance logic should produce
+        
+        let yieldPrice = testCase["yieldPrice"]!
+        let expectedBalance = testCase["expectedBalance"]!
+        
+        // Initial loan amount
+        let loanAmount = initialDeposit * (collateralFactor / targetHealthFactor)
+        
+        // Profit from yield increase
+        let yieldProfit = loanAmount * (yieldPrice - 1.0)
+        
+        // Total expected balance
+        let calculatedBalance = initialDeposit + yieldProfit
+        
+        // Check if our calculation matches the expected values
+        let tolerance = 0.01
+        Test.assert(
+            (calculatedBalance > expectedBalance - tolerance) &&
+            (calculatedBalance < expectedBalance + tolerance),
+            message: "Balance calculation mismatch for yield price \(yieldPrice). Expected: \(expectedBalance), Calculated: \(calculatedBalance)"
+        )
+    }
+}
+
+access(all)
+fun testInterestIndexPrecisionLoss() {
+    // Test to demonstrate precision loss when converting interest indices
+    
+    // High precision interest index (16 decimals)
+    let preciseIndexUInt: UInt256 = 11_234_567_891_234_567 // 1.123456789123456789 * 1e16 (actually 17 digits for the full number)
+    
+    // Convert to UFix64 (loses precision beyond 8 decimals)
+    let indexUFix = TidalProtocolUtils.uint256ToUFix64(preciseIndexUInt, decimals: 16)
+    Test.assertEqual(1.12345678, indexUFix) // Only 8 decimal places retained
+    
+    // Convert back to UInt256
+    let backToUInt = TidalProtocolUtils.ufix64ToUInt256(indexUFix, decimals: 16)
+    Test.assertEqual(11_234_567_800_000_000 as UInt256, backToUInt) // Lost precision in lower digits
+    
+    // Calculate precision loss
+    let precisionLoss = preciseIndexUInt - backToUInt
+    Test.assertEqual(91_234_567 as UInt256, precisionLoss)
+}
