@@ -921,8 +921,8 @@ access(all) contract TidalProtocol {
             let availableDebtIncrease = (adjustedCollateral / targetHealth) - effectiveDebt
             let availableTokensFromDebt = (availableDebtIncrease * self.borrowFactor[withdrawType]!) / self.priceOracle.price(ofToken: withdrawType)!
             log("    [CONTRACT] availableDebtIncrease: \(availableDebtIncrease)")
-            log("    [CONTRACT] availableTokens: \(availableTokens)")
-            log("    [CONTRACT] availableTokens + collateralTokenCount: \(availableTokens + collateralTokenCount)")
+            log("    [CONTRACT] availableTokens: \(availableTokensFromDebt)")
+            log("    [CONTRACT] availableTokens + collateralTokenCount: \(availableTokensFromDebt + collateralTokenCount)")
             return collateralTokenCount + availableTokensFromDebt
         }
 
