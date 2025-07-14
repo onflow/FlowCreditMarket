@@ -903,14 +903,6 @@ access(all) contract TidalProtocol {
                     adjustedCollateral = adjustedCollateral - collateralEffectiveValue
                     log("    [CONTRACT] collateralTokenCount: \(collateralTokenCount)")
                     log("    [CONTRACT] effectiveCollateralAfterDeposit: \(effectiveCollateral)")
-
-                    // We can calculate the available debt increase that would bring us to the target health, unless the health
-                    // after deposit is an edgecase, in which case getting to the target health is impossible.
-                    var availableDebtIncrease = (healthAfterAdjustment == UFix64.max ? effectiveCollateral : effectiveCollateral / targetHealth) - effectiveDebt 
-
-                    // var availableDebtIncrease = (effectiveCollateralAfterDeposit / targetHealth) - effectiveDebtAfterDeposit
-                    let availableTokens = (availableDebtIncrease * self.borrowFactor[withdrawType]!) / self.priceOracle.price(ofToken: withdrawType)!
-                    return availableTokens + collateralTokenCount
             }
 
             // At this point, we're either dealing with a position that didn't have a credit balance in the withdraw
