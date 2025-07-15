@@ -358,10 +358,10 @@ access(all) contract TidalProtocol {
     }
 
     access(all) struct AdjustedBalances {
-        access(all) let collateral: UFix64
-        access(all) let debt: UFix64
+        access(all) let collateral: UInt256
+        access(all) let debt: UInt256
 
-        init (collateral: UFix64, debt: UFix64) {
+        init (collateral: UInt256, debt: UInt256) {
             self.collateral = collateral
             self.debt = debt
         }
@@ -652,8 +652,8 @@ access(all) contract TidalProtocol {
         access(self) fun computeRequiredDepositForHealth(
             position: &InternalPosition,
             depositType: Type,
-            effectiveCollateral: UFix64,
-            effectiveDebt: UFix64,
+            effectiveCollateral: UInt256,
+            effectiveDebt: UInt256,
             targetHealth: UFix64
         ): UFix64 {
             var effectiveCollateralAfterWithdrawal = effectiveCollateral
@@ -871,8 +871,8 @@ access(all) contract TidalProtocol {
         access(self) fun computeAvailableWithdrawal(
             position: &InternalPosition,
             withdrawType: Type,
-            effectiveCollateral: UFix64,
-            effectiveDebt: UFix64,
+            effectiveCollateral: UInt256,
+            effectiveDebt: UInt256,
             targetHealth: UFix64
         ): UFix64 {
             var effectiveCollateralAfterDeposit = effectiveCollateral
