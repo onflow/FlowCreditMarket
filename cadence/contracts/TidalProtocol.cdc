@@ -656,18 +656,18 @@ access(all) contract TidalProtocol {
             effectiveDebt: UFix64,
             targetHealth: UFix64
         ): UFix64 {
-            var collateral = effectiveCollateral
-            var debt = effectiveDebt
+            var computeAdjustedBalancesAfterWithdrawal = effectiveCollateral
+            var effectiveDebtAfterWithdrawal = effectiveDebt
 
             // We now have new effective collateral and debt values that reflect the proposed withdrawal (if any!)
             // Now we can figure out how many of the given token would need to be deposited to bring the position
             // to the target health value.
-            var health = TidalProtocol.healthComputation(
-                effectiveCollateral: collateral,
-                effectiveDebt: debt
+            var healthAfterWithdrawal = TidalProtocol.healthComputation(
+                effectiveCollateral: computeAdjustedBalancesAfterWithdrawal,
+                effectiveDebt: effectiveDebtAfterWithdrawal
             )
 
-            if health >= targetHealth {
+            if healthAfterWithdrawal >= targetHealth {
                 // The position is already at or above the target health, so we don't need to deposit anything.
                 return 0.0
             }
@@ -682,7 +682,7 @@ access(all) contract TidalProtocol {
             if maybeBalance != nil && maybeBalance!.direction == BalanceDirection.Debit {
                 // The user has a debt position in the given token, we start by looking at the health impact of paying off
                 // the entire debt.
-                let tokenState = self._borrowUpdatedTokenState(type: depositType)
+                let depositTokenState = self._borrowUpdatedTokenState(type: depositType)
                 // REMOVED: This is now handled by tokenState() helper function
                 // depositTokenState.updateForTimeChange()
                 let debtBalance = maybeBalance!.scaledBalance
@@ -877,13 +877,13 @@ access(all) contract TidalProtocol {
             targetHealth: UFix64
         ): UFix64 {
 
-            var healthAfterAdjustment = TidalProtocol.healthComputation(
+            var healthAfterDeposit = TidalProtocol.healthComputation(
                 effectiveCollateral: effectiveCollateral,
                 effectiveDebt: effectiveDebt
             )
-            log("    [CONTRACT] healthAfterAdjustment: \(healthAfterAdjustment)")
+            log("    [CONTRACT] healthAfterDeposit: \(healthAfterDeposit)")
 
-            if healthAfterAdjustment <= targetHealth {
+            if healthAfterDeposit <= targetHealth {
                 // The position is already at or below the provided target health, so we can't withdraw anything.
                 return 0.0
             }
@@ -919,7 +919,7 @@ access(all) contract TidalProtocol {
                 if potentialHealth <= targetHealth {
                     // We will hit the health target before using up all of the withdraw token credit. We can easily
                     // compute how many units of the token would bring the position down to the target health.
-                    let availableHealth = (healthAfterAdjustment == UFix64.max) ? UFix64.max : healthAfterAdjustment - targetHealth
+                    let availableHealth = (healthAfterDeposit == UFix64.max) ? UFix64.max : healthAfterDeposit - targetHealth
                     let uintAvailableHealth = TidalProtocolUtils.ufix64ToUInt256(availableHealth, decimals: TidalProtocolUtils.decimals)
                     let availableEffectiveValue = (effectiveDebt == 0.0 || availableHealth == UFix64.max)
                         ? adjustedCollateral
@@ -959,10 +959,10 @@ access(all) contract TidalProtocol {
             // We can calculate the available debt increase that would bring us to the target health
             let uintTargetHealth = TidalProtocolUtils.ufix64ToUInt256(targetHealth, decimals: TidalProtocolUtils.decimals)
             var availableDebtIncrease = TidalProtocolUtils.div(effectiveCollateralAfterDeposit, uintTargetHealth) - effectiveDebtAfterDeposit
-            let availableTokensFromDebt = TidalProtocolUtils.div(TidalProtocolUtils.mul(availableDebtIncrease, uintWithdrawBorrowFactor), uintWithdrawPrice)
+            let availableTokens = TidalProtocolUtils.div(TidalProtocolUtils.mul(availableDebtIncrease, uintWithdrawBorrowFactor), uintWithdrawPrice)
             log("    [CONTRACT] availableDebtIncrease: \(availableDebtIncrease)")
-            log("    [CONTRACT] availableTokens: \(availableTokensFromDebt)")
-            log("    [CONTRACT] availableTokens + collateralTokenCount: \(availableTokensFromDebt + collateralTokenCount)")
+            log("    [CONTRACT] availableTokens: \(availableTokens)")
+            log("    [CONTRACT] availableTokens + collateralTokenCount: \(availableTokens + collateralTokenCount)")
             return TidalProtocolUtils.uint256ToUFix64(availableTokens + collateralTokenCount, decimals: TidalProtocolUtils.decimals)
         }
 
