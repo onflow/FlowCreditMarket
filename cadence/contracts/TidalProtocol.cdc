@@ -592,6 +592,7 @@ access(all) contract TidalProtocol {
             return self.computeRequiredDepositForHealth(
                 position: position,
                 depositType: depositType,
+                withdrawType: withdrawType,
                 effectiveCollateral: adjusted.collateral,
                 effectiveDebt: adjusted.debt,
                 targetHealth: targetHealth
@@ -651,6 +652,7 @@ access(all) contract TidalProtocol {
 
         access(self) fun computeRequiredDepositForHealth(
             position: &InternalPosition,
+            depositType: Type,
             withdrawType: Type,
             effectiveCollateral: UInt256,
             effectiveDebt: UInt256,
