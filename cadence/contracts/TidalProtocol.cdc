@@ -747,6 +747,7 @@ access(all) contract TidalProtocol {
             let uintDepositPrice = TidalProtocolUtils.ufix64ToUInt256(self.priceOracle.price(ofToken: depositType)!, decimals: TidalProtocolUtils.decimals)
             let uintDepositBorrowFactor = TidalProtocolUtils.ufix64ToUInt256(self.borrowFactor[depositType]!, decimals: TidalProtocolUtils.decimals)
             let uintDepositCollateralFactor = TidalProtocolUtils.ufix64ToUInt256(self.collateralFactor[depositType]!, decimals: TidalProtocolUtils.decimals)
+
             if depositAmount != 0.0 {
                 if position.balances[depositType] == nil || position.balances[depositType]!.direction == BalanceDirection.Credit {
                     // If there's no debt for the deposit token, we can just compute how much additional effective collateral the deposit will create.
@@ -802,6 +803,7 @@ access(all) contract TidalProtocol {
 
             let uintWithdrawPrice = TidalProtocolUtils.ufix64ToUInt256(self.priceOracle.price(ofToken: withdrawType)!, decimals: TidalProtocolUtils.decimals)
             let uintWithdrawCollateralFactor = TidalProtocolUtils.ufix64ToUInt256(self.collateralFactor[withdrawType]!, decimals: TidalProtocolUtils.decimals)
+            let uintWithdrawBorrowFactor = TidalProtocolUtils.ufix64ToUInt256(self.borrowFactor[withdrawType]!, decimals: TidalProtocolUtils.decimals)
             if position.balances[withdrawType] != nil && position.balances[withdrawType]!.direction == BalanceDirection.Credit {
                 // The user has a credit position in the withdraw token, we start by looking at the health impact of pulling out all
                 // of that collateral
@@ -856,7 +858,7 @@ access(all) contract TidalProtocol {
             // We can calculate the available debt increase that would bring us to the target health
             let uintTargetHealth = TidalProtocolUtils.ufix64ToUInt256(targetHealth, decimals: TidalProtocolUtils.decimals)
             var availableDebtIncrease = TidalProtocolUtils.div(effectiveCollateralAfterDeposit, uintTargetHealth) - effectiveDebtAfterDeposit
-            let availableTokens = TidalProtocolUtils.div(TidalProtocolUtils.mul(availableDebtIncrease, uintDepositBorrowFactor), uintDepositPrice)
+            let availableTokens = TidalProtocolUtils.div(TidalProtocolUtils.mul(availableDebtIncrease, uintWithdrawBorrowFactor), uintWithdrawPrice)
             log("    [CONTRACT] availableDebtIncrease: \(availableDebtIncrease)")
             log("    [CONTRACT] availableTokens: \(availableTokens)")
             log("    [CONTRACT] availableTokens + collateralTokenCount: \(availableTokens + collateralTokenCount)")
