@@ -79,12 +79,11 @@ fun testRebalanceUndercollateralised() {
     let effectiveCollateralAfterDrop = 1_000.0 * 0.8 * (1.0 - priceDropPct) // 640
     let debtBefore = 615.38461538
     let healthAfterPriceChangeVal = healthAfterPriceChange
-    let target = 1.3
 
     // Calculate required pay-down to restore health to target (1.3)
     // Formula derived from: health = effectiveCollateral / effectiveDebt
     // Solving for the debt reduction needed to achieve target health
-	let requiredPaydown: UFix64 = debtBefore - effectiveCollateralAfterDrop / target 
+	let requiredPaydown: UFix64 = debtBefore - effectiveCollateralAfterDrop / targetHealth
     let expectedDebt: UFix64 = debtBefore - requiredPaydown
 
     var actualDebt: UFix64 = 0.0
@@ -110,5 +109,5 @@ fun testRebalanceUndercollateralised() {
 
     // Ensure health is at least the minimum threshold (1.1)
     Test.assert(healthAfterRebalance >= intMinHealth,
-        message: "Health after rebalance should be at least the minimum (1.1) but was ".concat(healthAfterRebalance.toString()))
+        message: "Health after rebalance should be at least the minimum \(intMinHealth) but was ".concat(healthAfterRebalance.toString()))
 } 
