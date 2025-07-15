@@ -1853,7 +1853,7 @@ access(all) contract TidalProtocol {
     // number with 18 decimal places). The input to this function will be just the relative annual interest rate
     // (e.g. 0.05 for 5% interest), and the result will be the per-second multiplier (e.g. 1.000000000001).
     access(all) view fun perSecondInterestRate(yearlyRate: UInt64): UInt64 {
-        let perSecondScaledValue = TidalProtocolUtils.div(UInt256(yearlyRate), TidalProtocolUtils.secondsInYearE18)
+        let perSecondScaledValue: UInt256 = TidalProtocolUtils.div(UInt256(yearlyRate), TidalProtocolUtils.secondsInYearE18)
         assert(perSecondScaledValue < UInt256(UInt64.max), message: "Per-second interest rate \(perSecondScaledValue) is too high")
         return UInt64(perSecondScaledValue + TidalProtocolUtils.e18)
     }
