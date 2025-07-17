@@ -5,6 +5,7 @@ import "test_helpers.cdc"
 
 import "MOET"
 import "TidalProtocol"
+import "TidalProtocolUtils"
 
 access(all) let protocolAccount = Test.getAccount(0x0000000000000007)
 access(all) let userAccount = Test.createAccount()
@@ -14,10 +15,7 @@ access(all) var moetTokenIdentifier = "A.0000000000000007.MOET.Vault"
 access(all) let flowVaultStoragePath = /storage/flowTokenVault
 access(all) let wrapperStoragePath = /storage/tidalProtocolPositionWrapper
 
-access(all) let minHealth = 1.1
-access(all) let targetHealth = 1.3
-access(all) let maxHealth = 1.5
-access(all) let ceilingHealth = UFix64.max      // the maximum health value when health is virtually infinite AKA debt ~0.0
+
 access(all) let flowCollateralFactor = 0.8
 access(all) let flowBorrowFactor = 1.0
 access(all) let flowStartPrice = 1.0            // denominated in MOET
@@ -97,7 +95,7 @@ fun testFundsAvailableAboveTargetHealthAfterDepositingWithPushFromHealthy() {
     // assert expected starting point
     let balanceAfterBorrow = getBalance(address: userAccount.address, vaultPublicPath: MOET.VaultPublicPath)!
     let expectedBorrowAmount = (positionFundingAmount * flowCollateralFactor * flowStartPrice) / targetHealth
-    Test.assert(balanceAfterBorrow >= expectedBorrowAmount - 0.01 && balanceAfterBorrow <= expectedBorrowAmount + 0.01,
+    Test.assert(equalWithinVariance(expectedBorrowAmount, balanceAfterBorrow),
         message: "Expected MOET balance to be ~\(expectedBorrowAmount), but got \(balanceAfterBorrow)")
 
     let evts = Test.eventsOfType(Type<TidalProtocol.Opened>())
@@ -113,8 +111,8 @@ fun testFundsAvailableAboveTargetHealthAfterDepositingWithPushFromHealthy() {
     Test.assertEqual(TidalProtocol.BalanceDirection.Credit, flowPositionBalance.direction)
     Test.assertEqual(TidalProtocol.BalanceDirection.Debit, moetBalance.direction)
 
-    Test.assertEqual(targetHealth, health)
-    // Test.assertEqual(ceilingHealth, health)
+    Test.assert(equalWithinVariance(intTargetHealth, health),
+        message: "Expected health to be \(intTargetHealth), but got \(health)")
 
     log("[TEST] FLOW price set to \(flowStartPrice)")
 
@@ -126,8 +124,8 @@ fun testFundsAvailableAboveTargetHealthAfterDepositingWithPushFromHealthy() {
         runFundsAvailableAboveTargetHealthAfterDepositing(
             pid: positionID,
             existingBorrowed: expectedBorrowAmount,
-            existingFlowCollateral: positionFundingAmount,
-            currentFlowPrice: flowStartPrice,
+            existingFLOWCollateral: positionFundingAmount,
+            currentFLOWPrice: flowStartPrice,
             depositAmount: amount,
             withdrawIdentifier: moetTokenIdentifier,
             depositIdentifier: flowTokenIdentifier
@@ -141,8 +139,8 @@ fun testFundsAvailableAboveTargetHealthAfterDepositingWithPushFromHealthy() {
         runFundsAvailableAboveTargetHealthAfterDepositing(
             pid: positionID,
             existingBorrowed: expectedBorrowAmount,
-            existingFlowCollateral: positionFundingAmount,
-            currentFlowPrice: flowStartPrice,
+            existingFLOWCollateral: positionFundingAmount,
+            currentFLOWPrice: flowStartPrice,
             depositAmount: amount,
             withdrawIdentifier: moetTokenIdentifier,
             depositIdentifier: flowTokenIdentifier
@@ -198,8 +196,8 @@ fun testFundsAvailableAboveTargetHealthAfterDepositingWithoutPushFromHealthy() {
         runFundsAvailableAboveTargetHealthAfterDepositing(
             pid: positionID,
             existingBorrowed: expectedBorrowAmount,
-            existingFlowCollateral: positionFundingAmount,
-            currentFlowPrice: flowStartPrice,
+            existingFLOWCollateral: positionFundingAmount,
+            currentFLOWPrice: flowStartPrice,
             depositAmount: amount,
             withdrawIdentifier: moetTokenIdentifier,
             depositIdentifier: flowTokenIdentifier
@@ -213,8 +211,8 @@ fun testFundsAvailableAboveTargetHealthAfterDepositingWithoutPushFromHealthy() {
         runFundsAvailableAboveTargetHealthAfterDepositing(
             pid: positionID,
             existingBorrowed: expectedBorrowAmount,
-            existingFlowCollateral: positionFundingAmount,
-            currentFlowPrice: flowStartPrice,
+            existingFLOWCollateral: positionFundingAmount,
+            currentFLOWPrice: flowStartPrice,
             depositAmount: amount,
             withdrawIdentifier: moetTokenIdentifier,
             depositIdentifier: flowTokenIdentifier
@@ -282,12 +280,11 @@ fun testFundsAvailableAboveTargetHealthAfterDepositingWithoutPushFromOvercollate
 
     log("..............................")
     var depositAmount = 0.0
-    // var expectedAvailable = expectedAvailableAboveTarget + (depositAmount * flowCollateralFactor / targetHealth * flowBorrowFactor) * newPrice
     var expectedAvailable = (positionFundingAmount + depositAmount) * newPrice * flowCollateralFactor / targetHealth * flowBorrowFactor
     var actualAvailable = fundsAvailableAboveTargetHealthAfterDepositing(
             pid: positionID,
             withdrawType: moetTokenIdentifier,
-            targetHealth: targetHealth,
+            targetHealth: intTargetHealth,
             depositType: flowTokenIdentifier,
             depositAmount: depositAmount,
             beFailed: false
@@ -295,8 +292,7 @@ fun testFundsAvailableAboveTargetHealthAfterDepositingWithoutPushFromOvercollate
     log("[TEST] Depositing: \(depositAmount)")
     log("[TEST] Expected Available: \(expectedAvailable)")
     log("[TEST] Actual Available: \(actualAvailable)")
-    // getting error here -  expected: 76.92307692, actual: 61.53846153
-    Test.assert(equalWithinVariance(expectedAvailable, actualAvailable, plusMinus: nil),
+    Test.assert(equalWithinVariance(expectedAvailable, actualAvailable),
         message: "Values are not equal within variance - expected: \(expectedAvailable), actual: \(actualAvailable)")
 
     log("..............................")
@@ -306,7 +302,7 @@ fun testFundsAvailableAboveTargetHealthAfterDepositingWithoutPushFromOvercollate
     actualAvailable = fundsAvailableAboveTargetHealthAfterDepositing(
             pid: positionID,
             withdrawType: moetTokenIdentifier,
-            targetHealth: targetHealth,
+            targetHealth: intTargetHealth,
             depositType: flowTokenIdentifier,
             depositAmount: depositAmount,
             beFailed: false
@@ -314,7 +310,7 @@ fun testFundsAvailableAboveTargetHealthAfterDepositingWithoutPushFromOvercollate
     log("[TEST] Depositing: \(depositAmount)")
     log("[TEST] Expected Available: \(expectedAvailable)")
     log("[TEST] Actual Available: \(actualAvailable)")
-    Test.assert(equalWithinVariance(expectedAvailable, actualAvailable, plusMinus: nil),
+    Test.assert(equalWithinVariance(expectedAvailable, actualAvailable),
         message: "Values are not equal within variance - expected: \(expectedAvailable), actual: \(actualAvailable)")
 
     log("==============================")
@@ -330,20 +326,20 @@ access(all)
 fun runFundsAvailableAboveTargetHealthAfterDepositing(
     pid: UInt64,
     existingBorrowed: UFix64,
-    existingFlowCollateral: UFix64,
-    currentFlowPrice: UFix64,
+    existingFLOWCollateral: UFix64,
+    currentFLOWPrice: UFix64,
     depositAmount: UFix64,
     withdrawIdentifier: String,
     depositIdentifier: String
 ) {
     log("..............................")
-    let expectedTotalBorrowCapacity = (existingFlowCollateral + depositAmount) * currentFlowPrice * flowCollateralFactor / targetHealth * flowBorrowFactor
+    let expectedTotalBorrowCapacity = (existingFLOWCollateral + depositAmount) * currentFLOWPrice * flowCollateralFactor / targetHealth * flowBorrowFactor
     let expectedAvailable = expectedTotalBorrowCapacity - existingBorrowed
 
     let actualAvailable = fundsAvailableAboveTargetHealthAfterDepositing(
             pid: pid,
             withdrawType: withdrawIdentifier,
-            targetHealth: targetHealth,
+            targetHealth: intTargetHealth,
             depositType: depositIdentifier,
             depositAmount: depositAmount,
             beFailed: false
@@ -353,6 +349,6 @@ fun runFundsAvailableAboveTargetHealthAfterDepositing(
     log("[TEST] Depositing: \(depositAmount)")
     log("[TEST] Expected Available: \(expectedAvailable)")
     log("[TEST] Actual Available: \(actualAvailable)")
-    Test.assert(equalWithinVariance(expectedAvailable, actualAvailable, plusMinus: nil),
+    Test.assert(equalWithinVariance(expectedAvailable, actualAvailable),
         message: "Values are not equal within variance - expected: \(expectedAvailable), actual: \(actualAvailable)")
 }
