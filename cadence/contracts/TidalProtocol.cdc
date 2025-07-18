@@ -610,7 +610,7 @@ access(all) contract TidalProtocol {
             let uintWithdrawBorrowFactor = TidalProtocolUtils.ufix64ToUInt256(self.borrowFactor[withdrawType]!, decimals: TidalProtocolUtils.decimals)
 
             let maybeBalance = position.balances[withdrawType]
-                if maybeBalance == nil || maybeBalance!.direction == BalanceDirection.Debit {
+                if maybeBalance?.direction == BalanceDirection.Debit {
                     // If the position doesn't have any collateral for the withdrawn token, we can just compute how much
                     // additional effective debt the withdrawal will create.
                     effectiveDebtAfterWithdrawal = balanceSheet.effectiveDebt +
@@ -679,7 +679,7 @@ access(all) contract TidalProtocol {
             let uintDepositBorrowFactor = TidalProtocolUtils.ufix64ToUInt256(self.borrowFactor[depositType]!, decimals: TidalProtocolUtils.decimals)
             let uintWithdrawBorrowFactor = TidalProtocolUtils.ufix64ToUInt256(self.borrowFactor[withdrawType]!, decimals: TidalProtocolUtils.decimals)
             let maybeBalance = position.balances[depositType]
-            if maybeBalance != nil && maybeBalance!.direction == BalanceDirection.Debit {
+            if maybeBalance?.direction == BalanceDirection.Debit {
                 // The user has a debt position in the given token, we start by looking at the health impact of paying off
                 // the entire debt.
                 let depositTokenState = self._borrowUpdatedTokenState(type: depositType)
@@ -902,7 +902,7 @@ access(all) contract TidalProtocol {
             let uintWithdrawBorrowFactor = TidalProtocolUtils.ufix64ToUInt256(self.borrowFactor[withdrawType]!, decimals: TidalProtocolUtils.decimals)
 
             let maybeBalance = position.balances[withdrawType]
-            if maybeBalance != nil && maybeBalance!.direction == BalanceDirection.Credit {
+            if maybeBalance?.direction == BalanceDirection.Credit {
                 // The user has a credit position in the withdraw token, we start by looking at the health impact of pulling out all
                 // of that collateral
                 let withdrawTokenState = self._borrowUpdatedTokenState(type: withdrawType)
