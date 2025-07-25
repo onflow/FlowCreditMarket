@@ -14,8 +14,8 @@ access(all) contract TidalProtocolUtils {
     access(all) let secondsInYearE18: UInt256
 
     /**************
-     * MATH UTILS *
-     **************/
+    * MATH UTILS *
+    **************/
 
     /// Raises the base to the power of the exponent
     ///
@@ -153,8 +153,8 @@ access(all) contract TidalProtocolUtils {
     }
 
     /************************
-     * BALANCE CONVERSIONS *
-     ************************/
+    * BALANCE CONVERSIONS *
+    ************************/
 
     /// Converts a UFix64 balance to UInt256 with 18 decimal precision for internal calculations
     ///
@@ -173,8 +173,8 @@ access(all) contract TidalProtocolUtils {
     }
 
     /***********************
-     * FIXED POINT MATH   *
-     ***********************/
+    * FIXED POINT MATH   *
+    ***********************/
 
     /// Multiplies two 18-decimal fixed-point numbers
     /// Both operands and result are scaled by 10^18
@@ -252,6 +252,56 @@ access(all) contract TidalProtocolUtils {
         }
         return x / y
     }
+
+    /// Rounds a UInt256 value with 18 decimal precision to a UFix64 value (8 decimals)
+    ///
+    /// Example: 1e18 -> 1.0, 123456000000000000000 -> 1.23456000, 123456789012345678901 -> 1.23456789
+    ///
+    /// @param value: The UInt256 value to convert and round
+    /// @return: The UFix64 value, rounded to the nearest 8 decimals
+    access(all) view fun roundToUFix64(_ value: UInt256): UFix64 {
+        let decimalsFrom: UInt8 = 18
+        let decimalsTo: UInt8 = 8
+        let factor = self.pow(UInt256(10), to: decimalsFrom - decimalsTo) // 10^10
+
+        // Add half the factor to round (instead of floor)
+        let rounded = (value + (factor / 2)) / factor
+
+        // UFix64 expects up to 8 decimals, so we can safely cast
+        return UFix64(rounded) / UFix64(1_00_000_000)
+    }
+
+    access(all) fun divUFix64(_ x: UFix64, _ y: UFix64): UFix64 {
+        pre {
+            y > 0.0: "Division by zero"
+        }
+        let uintX: UInt256 = self.toUInt256Balance(x)
+        let uintY: UInt256 = self.toUInt256Balance(y)
+        let uintResult = self.div(uintX, uintY)
+        let result = self.roundToUFix64(uintResult)
+
+        return result
+
+    }
+
+    access(all) fun mulUFix64(_ x: UFix64, _ y: UFix64): UFix64 {
+        let uintX: UInt256 = self.toUInt256Balance(x)
+        let uintY: UInt256 = self.toUInt256Balance(y)
+        log("uintx")
+        log(uintX)
+        log("uinty")
+        log(uintY)
+        let uintResult = self.mul(uintX, uintY)
+        log("uintResult")
+        log(uintResult)
+        let result = self.roundToUFix64(uintResult)
+        log("result")
+        log(result)
+
+        return result
+
+    }
+
 
     init() {
         self.e18 = 1_000_000_000_000_000_000
