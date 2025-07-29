@@ -142,8 +142,8 @@ fun getPositionHealth(pid: UInt64, beFailed: Bool): UInt128 {
 access(all)
 fun getPositionDetails(pid: UInt64, beFailed: Bool): TidalProtocol.PositionDetails {
     let res = _executeScript("../scripts/tidal-protocol/position_details.cdc",
-        [pid]
-    )
+            [pid]
+        )
     Test.expect(res, beFailed ? Test.beFailed() : Test.beSucceeded())
     return res.returnValue as! TidalProtocol.PositionDetails
 }
