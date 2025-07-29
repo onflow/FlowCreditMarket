@@ -5,16 +5,16 @@ import "TidalProtocol"
 
 access(all) let defaultTokenIdentifier = "A.0000000000000007.MOET.Vault"
 access(all) let defaultUFixVariance = 0.00000001
-access(all) let defaultUIntVariance: UInt256 = 1_000_000_000
+access(all) let defaultUIntVariance: UInt128 = 1_000_000_000_000_000
 
 // Health values
 access(all) let minHealth = 1.1
 access(all) let targetHealth = 1.3
 access(all) let maxHealth = 1.5
-access(all) var intMinHealth: UInt256 = 1_100_000_000_000_000_000
-access(all) var intTargetHealth: UInt256 = 1_300_000_000_000_000_000
-access(all) var intMaxHealth: UInt256 = 1_500_000_000_000_000_000
-access(all) let ceilingHealth = UInt256.max      // the maximum health value when health is virtually infinite AKA debt ~0.0
+access(all) var intMinHealth: UInt128 = 1_100_000_000_000_000_000_000_000
+access(all) var intTargetHealth: UInt128 = 1_300_000_000_000_000_000_000_000
+access(all) var intMaxHealth: UInt128 = 1_500_000_000_000_000_000_000_000
+access(all) let ceilingHealth = UInt128.max      // the maximum health value when health is virtually infinite AKA debt ~0.0
 
 /* --- Test execution helpers --- */
 
@@ -46,6 +46,12 @@ fun deployContracts() {
     )
     Test.expect(err, Test.beNil())
     err = Test.deployContract(
+        name: "DeFiActionsMathUtils",
+        path: "../../DeFiActions/cadence/contracts/utils/DeFiActionsMathUtils.cdc",
+        arguments: []
+    )
+    Test.expect(err, Test.beNil())
+    err = Test.deployContract(
         name: "DeFiActions",
         path: "../../DeFiActions/cadence/contracts/interfaces/DeFiActions.cdc",
         arguments: []
@@ -60,12 +66,6 @@ fun deployContracts() {
     )
     Test.expect(err, Test.beNil())
 
-    err = Test.deployContract(
-        name: "TidalProtocolUtils",
-        path: "../contracts/TidalProtocolUtils.cdc",
-        arguments: []
-    )
-    Test.expect(err, Test.beNil())
     err = Test.deployContract(
         name: "TidalProtocol",
         path: "../contracts/TidalProtocol.cdc",

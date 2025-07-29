@@ -5,7 +5,6 @@ import "test_helpers.cdc"
 
 import "MOET"
 import "TidalProtocol"
-import "TidalProtocolUtils"
 
 access(all) let protocolAccount = Test.getAccount(0x0000000000000007)
 access(all) let userAccount = Test.createAccount()
