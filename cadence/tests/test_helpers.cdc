@@ -57,7 +57,7 @@ fun deployContracts() {
         arguments: []
     )
     Test.expect(err, Test.beNil())
-    
+
     let initialSupply = 0.0
     err = Test.deployContract(
         name: "MOET",
@@ -72,7 +72,7 @@ fun deployContracts() {
         arguments: []
     )
     Test.expect(err, Test.beNil())
-    
+
     // Deploy MockTidalProtocolConsumer
     err = Test.deployContract(
         name: "MockTidalProtocolConsumer",
@@ -95,7 +95,7 @@ fun deployContracts() {
         arguments: [initialYieldTokenSupply]
     )
     Test.expect(err, Test.beNil())
-    
+
     // Deploy FungibleTokenStack
     err = Test.deployContract(
         name: "FungibleTokenStack",
@@ -124,28 +124,28 @@ fun getReserveBalance(vaultIdentifier: String): UFix64 {
 access(all)
 fun getAvailableBalance(pid: UInt64, vaultIdentifier: String, pullFromTopUpSource: Bool, beFailed: Bool): UFix64 {
     let res = _executeScript("../scripts/tidal-protocol/get_available_balance.cdc",
-            [pid, vaultIdentifier, pullFromTopUpSource]
-        )
-    Test.expect(res, beFailed ? Test.beFailed() : Test.beSucceeded())
-    return res.status == Test.ResultStatus.failed ? 0.0 : res.returnValue as! UFix64
+    [pid, vaultIdentifier, pullFromTopUpSource]
+)
+Test.expect(res, beFailed ? Test.beFailed() : Test.beSucceeded())
+return res.status == Test.ResultStatus.failed ? 0.0 : res.returnValue as! UFix64
 }
 
 access(all)
-fun getPositionHealth(pid: UInt64, beFailed: Bool): UInt256 {
+fun getPositionHealth(pid: UInt64, beFailed: Bool): UInt128 {
     let res = _executeScript("../scripts/tidal-protocol/position_health.cdc",
-            [pid]
-        )
-    Test.expect(res, beFailed ? Test.beFailed() : Test.beSucceeded())
-    return res.status == Test.ResultStatus.failed ? 0 : res.returnValue as! UInt256
+    [pid]
+)
+Test.expect(res, beFailed ? Test.beFailed() : Test.beSucceeded())
+return res.status == Test.ResultStatus.failed ? 0 : res.returnValue as! UInt128
 }
 
 access(all)
 fun getPositionDetails(pid: UInt64, beFailed: Bool): TidalProtocol.PositionDetails {
     let res = _executeScript("../scripts/tidal-protocol/position_details.cdc",
-            [pid]
-        )
-    Test.expect(res, beFailed ? Test.beFailed() : Test.beSucceeded())
-    return res.returnValue as! TidalProtocol.PositionDetails
+    [pid]
+)
+Test.expect(res, beFailed ? Test.beFailed() : Test.beSucceeded())
+return res.returnValue as! TidalProtocol.PositionDetails
 }
 
 access(all)
@@ -159,32 +159,32 @@ access(all)
 fun fundsAvailableAboveTargetHealthAfterDepositing(
     pid: UInt64,
     withdrawType: String,
-    targetHealth: UInt256,
+    targetHealth: UInt128,
     depositType: String,
     depositAmount: UFix64,
     beFailed: Bool
 ): UFix64 {
     let res = _executeScript("../scripts/tidal-protocol/funds_avail_above_target_health_after_deposit.cdc",
-            [pid, withdrawType, targetHealth, depositType, depositAmount]
-        )
-    Test.expect(res, beFailed ? Test.beFailed() : Test.beSucceeded())
-    return res.returnValue as! UFix64
+    [pid, withdrawType, targetHealth, depositType, depositAmount]
+)
+Test.expect(res, beFailed ? Test.beFailed() : Test.beSucceeded())
+return res.returnValue as! UFix64
 }
 
 access(all)
 fun fundsRequiredForTargetHealthAfterWithdrawing(
     pid: UInt64,
     depositType: String,
-    targetHealth: UInt256,
+    targetHealth: UInt128,
     withdrawType: String,
     withdrawAmount: UFix64,
     beFailed: Bool
 ): UFix64 {
     let res = _executeScript("../scripts/tidal-protocol/funds_req_for_target_health_after_withdraw.cdc",
-            [pid, depositType, targetHealth, withdrawType, withdrawAmount]
-        )
-    Test.expect(res, beFailed ? Test.beFailed() : Test.beSucceeded())
-    return res.returnValue as! UFix64
+    [pid, depositType, targetHealth, withdrawType, withdrawAmount]
+)
+Test.expect(res, beFailed ? Test.beFailed() : Test.beSucceeded())
+return res.returnValue as! UFix64
 }
 
 /* --- Transaction Helpers --- */
@@ -309,8 +309,8 @@ access(all) fun equalWithinVariance(_ expected: AnyStruct, _ actual: AnyStruct):
     let actualType = actual.getType()
     if expectedType == Type<UFix64>() && actualType == Type<UFix64>() {
         return ufixEqualWithinVariance(expected as! UFix64, actual as! UFix64)
-    } else if expectedType == Type<UInt256>() && actualType == Type<UInt256>() {
-        return uintEqualWithinVariance(expected as! UInt256, actual as! UInt256)
+    } else if expectedType == Type<UInt128>() && actualType == Type<UInt128>() {
+        return uintEqualWithinVariance(expected as! UInt128, actual as! UInt128)
     }
     panic("Expected and actual types do not match - expected: \(expectedType.identifier), actual: \(actualType.identifier)")
 }
@@ -323,8 +323,8 @@ access(all) fun ufixEqualWithinVariance(_ expected: UFix64, _ actual: UFix64): B
     return absDiff <= defaultUFixVariance
 }
 
-access(all) fun uintEqualWithinVariance(_ expected: UInt256, _ actual: UInt256): Bool {
-    let diff = Int256(expected) - Int256(actual)
-    let absDiff: UInt256 = diff < 0 ? UInt256(Int256(-1) * diff) : UInt256(diff)
+access(all) fun uintEqualWithinVariance(_ expected: UInt128, _ actual: UInt128): Bool {
+    let diff = Int128(expected) - Int128(actual)
+    let absDiff: UInt128 = diff < 0 ? UInt128(Int128(-1) * diff) : UInt128(diff)
     return absDiff <= defaultUIntVariance
 }
