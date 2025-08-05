@@ -721,7 +721,7 @@ access(all) contract TidalProtocol {
 
                     log("    [CONTRACT] paybackAmount: \(paybackAmount)")
 
-                    return DeFiActionsMathUtils.toUFix64Round(paybackAmount)
+                    return DeFiActionsMathUtils.toUFix64RoundUp(paybackAmount)
                 } else {
                     // We can pay off the entire debt, but we still need to deposit more to reach the target health.
                     // We have logic below that can determine the collateral deposition required to reach the target health
@@ -937,7 +937,7 @@ access(all) contract TidalProtocol {
                     let availableTokenCount = DeFiActionsMathUtils.div(DeFiActionsMathUtils.div(availableEffectiveValue, uintWithdrawCollateralFactor), uintWithdrawPrice)
                     log("    [CONTRACT] availableTokenCount: \(availableTokenCount)")
 
-                    return DeFiActionsMathUtils.toUFix64Round(availableTokenCount)
+                    return DeFiActionsMathUtils.toUFix64RoundDown(availableTokenCount)
                 } else {
                     // We can flip this credit position into a debit position, before hitting the target health.
                     // We have logic below that can determine health changes for debit positions. We've copied it here
@@ -953,7 +953,7 @@ access(all) contract TidalProtocol {
                     log("    [CONTRACT] availableDebtIncrease: \(availableDebtIncrease)")
                     log("    [CONTRACT] availableTokens: \(availableTokens)")
                     log("    [CONTRACT] availableTokens + collateralTokenCount: \(availableTokens + collateralTokenCount)")
-                    return DeFiActionsMathUtils.toUFix64Round(availableTokens + collateralTokenCount)
+                    return DeFiActionsMathUtils.toUFix64RoundDown(availableTokens + collateralTokenCount)
                 }
             }
 
@@ -966,7 +966,7 @@ access(all) contract TidalProtocol {
             log("    [CONTRACT] availableDebtIncrease: \(availableDebtIncrease)")
             log("    [CONTRACT] availableTokens: \(availableTokens)")
             log("    [CONTRACT] availableTokens + collateralTokenCount: \(availableTokens + collateralTokenCount)")
-            return DeFiActionsMathUtils.toUFix64Round(availableTokens + collateralTokenCount)
+            return DeFiActionsMathUtils.toUFix64RoundDown(availableTokens + collateralTokenCount)
         }
 
         /// Returns the position's health if the given amount of the specified token were deposited
