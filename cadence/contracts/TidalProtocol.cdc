@@ -471,6 +471,36 @@ access(all) contract TidalProtocol {
             }
         }
 
+		// Simulates the available balance (withdrawable amount) for a given token as if the position was fully rebalanced.
+		access(all) fun simulateLiquidationValue(pid: UInt64, type: Type): UFix64 {
+			let position = self._borrowPosition(pid: pid)
+
+			let topUpSource = position.topUpSource!
+			let sourceType = topUpSource.getSourceType()
+			let sourceAmount = topUpSource.minimumAvailable()
+            let uintSourceAmount = DeFiActionsMathUtils.toUInt128(sourceAmount)
+
+			let maybeDepositBalance = position.balances[type]!
+
+			let debt = position.balances[sourceType]!.scaledBalance
+
+			let depositTokenState = self._borrowUpdatedTokenState(type: type)
+
+			let depositTokenPrice = self.priceOracle.price(ofToken: type)!
+            let uintDepositTokenPrice = DeFiActionsMathUtils.toUInt128(depositTokenPrice)
+			let trueDeposit = TidalProtocol.scaledBalanceToTrueBalance(
+				 maybeDepositBalance.scaledBalance,
+				interestIndex: maybeDepositBalance.direction == BalanceDirection.Credit
+				? depositTokenState.creditInterestIndex
+				: depositTokenState.debitInterestIndex
+			)
+
+			let simulatedValue = trueDeposit + uintSourceAmount - debt
+            let uintLiquidationValue = DeFiActionsMathUtils.div(simulatedValue, uintDepositTokenPrice)
+
+			return DeFiActionsMathUtils.toUFix64Round(uintLiquidationValue)
+		}
+
         /// Returns the health of the given position, which is the ratio of the position's effective collateral to its
         /// debt as denominated in the Pool's default token. "Effective collateral" means the value of each credit balance
         /// times the liquidation threshold for that token. i.e. the maximum borrowable amount
@@ -1814,11 +1844,14 @@ access(all) contract TidalProtocol {
             return self.type
         }
         /// Returns the minimum availble this Source can provide on withdrawal
-        access(all) fun minimumAvailable(): UFix64 {
+        access(all) fun minimumAvailable(liquidation: Bool): UFix64 {
             if !self.pool.check() {
                 return 0.0
             }
             let pool = self.pool.borrow()!
+            if liquidation {
+                return pool.simulateLiquidationValue(pid: self.positionID, type: self.type)
+            }
             return pool.availableBalance(pid: self.positionID, type: self.type, pullFromTopUpSource: self.pullFromTopUpSource)
         }
         /// Withdraws up to the max amount as the sourceType Vault
