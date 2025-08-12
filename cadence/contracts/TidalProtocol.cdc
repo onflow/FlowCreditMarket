@@ -597,10 +597,9 @@ access(all) contract TidalProtocol {
             return vaultRef!.balance
         }
 
-        /// Returns a position's balance available for withdrawal of a given Vault type. If pullFromTopUpSource is true,
-        /// the calculation will be made assuming the position is topped up if the withdrawal amount puts the Position
-        /// below its min health. If pullFromTopUpSource is true, the calculation will return the balance currently
-        /// available without topping up the position.
+        /// Returns a position's balance available for withdrawal of a given Vault type.
+        /// Phase 0 refactor: compute via pure helpers using a PositionView and TokenSnapshot for the base path.
+        /// When pullFromTopUpSource is true and a topUpSource exists, preserve deposit-assisted semantics.
         access(all) fun availableBalance(pid: UInt64, type: Type, pullFromTopUpSource: Bool): UFix64 {
             log("    [CONTRACT] availableBalance(pid: \(pid), type: \(type.contractName!), pullFromTopUpSource: \(pullFromTopUpSource))")
             let position = self._borrowPosition(pid: pid)
@@ -618,14 +617,31 @@ access(all) contract TidalProtocol {
                     depositType: sourceType,
                     depositAmount: sourceAmount
                 )
-            } else {
-                log("    [CONTRACT] Calling to fundsAvailableAboveTargetHealth with targetHealth \(position.minHealth)")
-                return self.fundsAvailableAboveTargetHealth(
-                    pid: pid,
-                    type: type,
-                    targetHealth: position.minHealth
-                )
             }
+
+            let view = self.buildPositionView(pid: pid)
+
+            // Build a TokenSnapshot for the requested withdraw type (may not exist in view.snaps)
+            let tokenState = self._borrowUpdatedTokenState(type: type)
+            let snap = TidalProtocol.TokenSnapshot(
+                price: TidalProtocolUtils.ufix64ToUInt256(self.priceOracle.price(ofToken: type)!, decimals: 18),
+                credit: tokenState.creditInterestIndex,
+                debit: tokenState.debitInterestIndex,
+                risk: TidalProtocol.RiskParams(
+                    cf: TidalProtocolUtils.ufix64ToUInt256(self.collateralFactor[type]!, decimals: 18),
+                    bf: TidalProtocolUtils.ufix64ToUInt256(self.borrowFactor[type]!, decimals: 18),
+                    lb: TidalProtocolUtils.e18 + 50_000_000_000_000_000
+                )
+            )
+
+            let withdrawBal = view.balances[type]
+            let uintMax = TidalProtocol.maxWithdraw(
+                view: view,
+                withdrawSnap: snap,
+                withdrawBal: withdrawBal,
+                targetHealth: view.minHealth
+            )
+            return TidalProtocolUtils.uint256ToUFix64(uintMax, decimals: 18)
         }
 
         /// Returns the health of the given position, which is the ratio of the position's effective collateral to its
