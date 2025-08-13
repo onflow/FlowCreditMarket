@@ -352,8 +352,8 @@ access(all) contract TidalProtocol {
                 creditRate = 0
             }
 
-            self.currentCreditRate = TidalProtocol.perSecondInterestRate(yearlyRate: UInt128(creditRate))
-            self.currentDebitRate = TidalProtocol.perSecondInterestRate(yearlyRate: UInt128(debitRate))
+            self.currentCreditRate = TidalProtocol.perSecondInterestRate(yearlyRate: creditRate)
+            self.currentDebitRate = TidalProtocol.perSecondInterestRate(yearlyRate: debitRate)
         }
     }
 
@@ -697,7 +697,6 @@ access(all) contract TidalProtocol {
             )
             log("    [CONTRACT] healthAfterWithdrawal: \(healthAfterWithdrawal)")
 
-            // let uintTargetHealth = DeFiActionsMathUtils.toUInt128(targetHealth)
             if healthAfterWithdrawal >= targetHealth {
                 // The position is already at or above the target health, so we don't need to deposit anything.
                 return 0.0
@@ -960,7 +959,6 @@ access(all) contract TidalProtocol {
                     //     : DeFiActionsMathUtils.mul(availableHealth, effectiveDebtAfterDeposit)
 
                     let availableEffectiveValue = effectiveCollateralAfterDeposit - DeFiActionsMathUtils.mul(targetHealth, effectiveDebtAfterDeposit)
-                    // log("    [CONTRACT] availableHealth: \(availableHealth)")
                     log("    [CONTRACT] availableEffectiveValue: \(availableEffectiveValue)")
 
                     // The amount of the token we can take using that amount of health
@@ -1774,7 +1772,7 @@ access(all) contract TidalProtocol {
     /// be constructed from a Position object.
     access(all) struct PositionSink: DeFiActions.Sink {
         /// An optional DeFiActions.UniqueIdentifier that identifies this Sink with the DeFiActions stack its a part of
-        access(contract) let uniqueID: DeFiActions.UniqueIdentifier?
+        access(contract) var uniqueID: DeFiActions.UniqueIdentifier?
         /// An authorized Capability on the Pool for which the related Position is in
         access(self) let pool: Capability<auth(EPosition) &Pool>
         /// The ID of the position in the Pool
@@ -1811,6 +1809,19 @@ access(all) contract TidalProtocol {
                 )
             }
         }
+        access(all) fun getComponentInfo(): DeFiActions.ComponentInfo {
+            return DeFiActions.ComponentInfo(
+                type: self.getType(),
+                id: self.id(),
+                innerComponents: []
+            )
+        }
+        access(contract) view fun copyID(): DeFiActions.UniqueIdentifier? {
+            return self.uniqueID
+        }
+        access(contract) fun setID(_ id: DeFiActions.UniqueIdentifier?) {
+            self.uniqueID = id
+        }
     }
 
     /// PositionSource
@@ -1820,7 +1831,7 @@ access(all) contract TidalProtocol {
     ///
     access(all) struct PositionSource: DeFiActions.Source {
         /// An optional DeFiActions.UniqueIdentifier that identifies this Sink with the DeFiActions stack its a part of
-        access(contract) let uniqueID: DeFiActions.UniqueIdentifier?
+        access(contract) var uniqueID: DeFiActions.UniqueIdentifier?
         /// An authorized Capability on the Pool for which the related Position is in
         access(self) let pool: Capability<auth(EPosition) &Pool>
         /// The ID of the position in the Pool
@@ -1868,6 +1879,19 @@ access(all) contract TidalProtocol {
                 // Create an empty vault - this is a limitation we need to handle properly
                 return <- DeFiActionsUtils.getEmptyVault(self.type)
             }
+        }
+        access(all) fun getComponentInfo(): DeFiActions.ComponentInfo {
+            return DeFiActions.ComponentInfo(
+                type: self.getType(),
+                id: self.id(),
+                innerComponents: []
+            )
+        }
+        access(contract) view fun copyID(): DeFiActions.UniqueIdentifier? {
+            return self.uniqueID
+        }
+        access(contract) fun setID(_ id: DeFiActions.UniqueIdentifier?) {
+            self.uniqueID = id
         }
     }
 
@@ -1965,7 +1989,6 @@ access(all) contract TidalProtocol {
             // the health is essentially infinite
             return UInt128.max
         }
-        // TODO: return this value after refactoring health to UInt128
         return DeFiActionsMathUtils.div(effectiveCollateral, effectiveDebt)
     }
 
@@ -1981,7 +2004,6 @@ access(all) contract TidalProtocol {
 
     /// Returns the compounded interest index reflecting the passage of time
     /// The result is: newIndex = oldIndex * perSecondRate ^ seconds
-    // access(all) view fun compoundInterestIndex(oldIndex: UInt128, perSecondRate: UInt128, elapsedSeconds: UFix64): UInt128 {
     access(all) fun compoundInterestIndex(oldIndex: UInt128, perSecondRate: UInt128, elapsedSeconds: UFix64): UInt128 {
         var result = oldIndex
         var current = UInt128(perSecondRate)
