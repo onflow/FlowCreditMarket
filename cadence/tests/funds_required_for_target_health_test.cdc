@@ -5,7 +5,7 @@ import "test_helpers.cdc"
 
 import "MOET"
 import "TidalProtocol"
-import "TidalProtocolUtils"
+import "DeFiActionsMathUtils"
 
 access(all) let protocolAccount = Test.getAccount(0x0000000000000007)
 access(all) let userAccount = Test.createAccount()
@@ -316,9 +316,9 @@ fun testFundsRequiredForTargetHealthAfterWithdrawingWithPushFromOvercollateraliz
     )
     let actualHealthAfterPriceIncrease = getPositionHealth(pid: positionID, beFailed: false)
     // calculate new health based on updated collateral value - should increase proportionally to price increase
-    let expectedHealthAfterPriceIncrease = TidalProtocolUtils.mul(
+    let expectedHealthAfterPriceIncrease = DeFiActionsMathUtils.mul(
             actualHealthBeforePriceIncrease,
-            TidalProtocolUtils.ufix64ToUInt256(1.0 + priceIncrease, decimals: TidalProtocolUtils.decimals)
+            DeFiActionsMathUtils.toUInt128(1.0 + priceIncrease)
         )
     Test.assertEqual(expectedHealthAfterPriceIncrease, actualHealthAfterPriceIncrease)
 
@@ -474,9 +474,9 @@ fun testFundsRequiredForTargetHealthAfterWithdrawingWithPushFromUndercollaterali
     )
     let actualHealthAfterPriceDecrease = getPositionHealth(pid: positionID, beFailed: false)
     // calculate new health based on updated collateral value - should increase proportionally to price increase
-    let expectedHealthAfterPriceDecrease = TidalProtocolUtils.mul(
+    let expectedHealthAfterPriceDecrease = DeFiActionsMathUtils.mul(
             actualHealthBeforePriceIncrease,
-            TidalProtocolUtils.ufix64ToUInt256(1.0 - priceDecrease, decimals: TidalProtocolUtils.decimals)
+            DeFiActionsMathUtils.toUInt128(1.0 - priceDecrease)
         )
     Test.assertEqual(expectedHealthAfterPriceDecrease, actualHealthAfterPriceDecrease)
 
@@ -526,26 +526,26 @@ fun runFundsRequiredForTargetHealthAfterWithdrawing(
 ) {
     log("..............................")
 
-    let intFLOWCollateralFactor = TidalProtocolUtils.ufix64ToUInt256(flowCollateralFactor, decimals: TidalProtocolUtils.decimals)
-    let intFLOWBorrowFactor = TidalProtocolUtils.ufix64ToUInt256(flowBorrowFactor, decimals: TidalProtocolUtils.decimals)
-    let intFLOWPrice = TidalProtocolUtils.ufix64ToUInt256(currentFLOWPrice, decimals: TidalProtocolUtils.decimals)
-    let intFLOWCollateral = TidalProtocolUtils.ufix64ToUInt256(existingFLOWCollateral, decimals: TidalProtocolUtils.decimals)
-    let intFLOWBorrowed = TidalProtocolUtils.ufix64ToUInt256(existingBorrowed, decimals: TidalProtocolUtils.decimals)
-    let intWithdrawAmount = TidalProtocolUtils.ufix64ToUInt256(withdrawAmount, decimals: TidalProtocolUtils.decimals)
+    let intFLOWCollateralFactor = DeFiActionsMathUtils.toUInt128(flowCollateralFactor)
+    let intFLOWBorrowFactor = DeFiActionsMathUtils.toUInt128(flowBorrowFactor)
+    let intFLOWPrice = DeFiActionsMathUtils.toUInt128(currentFLOWPrice)
+    let intFLOWCollateral = DeFiActionsMathUtils.toUInt128(existingFLOWCollateral)
+    let intFLOWBorrowed = DeFiActionsMathUtils.toUInt128(existingBorrowed)
+    let intWithdrawAmount = DeFiActionsMathUtils.toUInt128(withdrawAmount)
 
     // effectiveCollateralValue = collateralBalance * collateralPrice * collateralFactor
-    let effectiveFLOWCollateralValue = TidalProtocolUtils.mul(TidalProtocolUtils.mul(intFLOWCollateral, intFLOWPrice), intFLOWCollateralFactor)
+    let effectiveFLOWCollateralValue = DeFiActionsMathUtils.mul(DeFiActionsMathUtils.mul(intFLOWCollateral, intFLOWPrice), intFLOWCollateralFactor)
     // borrowLimit = (effectiveCollateralValue / targetHealth) * borrowFactor
-    let expectedBorrowCapacity = TidalProtocolUtils.mul(TidalProtocolUtils.div(effectiveFLOWCollateralValue, intTargetHealth), intFLOWBorrowFactor)
+    let expectedBorrowCapacity = DeFiActionsMathUtils.mul(DeFiActionsMathUtils.div(effectiveFLOWCollateralValue, intTargetHealth), intFLOWBorrowFactor)
     let desiredFinalDebt = intFLOWBorrowed + intWithdrawAmount
 
-    var expectedRequired: UInt256 = 0
+    var expectedRequired: UInt128 = 0
     if desiredFinalDebt > expectedBorrowCapacity {
         let valueDiff = desiredFinalDebt - expectedBorrowCapacity
-        expectedRequired = TidalProtocolUtils.div(TidalProtocolUtils.mul(valueDiff, intTargetHealth), intFLOWPrice)
-        expectedRequired = TidalProtocolUtils.div(expectedRequired, intFLOWCollateralFactor)
+        expectedRequired = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(valueDiff, intTargetHealth), intFLOWPrice)
+        expectedRequired = DeFiActionsMathUtils.div(expectedRequired, intFLOWCollateralFactor)
     }
-    let ufixExpectedRequired = TidalProtocolUtils.uint256ToUFix64(expectedRequired, decimals: TidalProtocolUtils.decimals)
+    let ufixExpectedRequired = DeFiActionsMathUtils.toUFix64Round(expectedRequired)
 
     log("[TEST] existingFLOWCollateral: \(existingFLOWCollateral)")
     log("[TEST] existingBorrowed: \(existingBorrowed)")

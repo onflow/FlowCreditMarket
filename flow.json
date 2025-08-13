@@ -12,6 +12,12 @@
 				"testing": "0x0000000000000006"
 			}
 		},
+		"DeFiActionsMathUtils": {
+			"source": "./DeFiActions/cadence/contracts/utils/DeFiActionsMathUtils.cdc",
+			"aliases": {
+				"testing": "0x0000000000000006"
+			}
+		},
 		"DeFiActionsUtils": {
 			"source": "./DeFiActions/cadence/contracts/utils/DeFiActionsUtils.cdc",
 			"aliases": {
@@ -38,12 +44,6 @@
 		},
 		"TidalProtocol": {
 			"source": "./cadence/contracts/TidalProtocol.cdc",
-			"aliases": {
-				"testing": "0x0000000000000007"
-			}
-		},
-		"TidalProtocolUtils": {
-			"source": "./cadence/contracts/TidalProtocolUtils.cdc",
 			"aliases": {
 				"testing": "0x0000000000000007"
 			}
@@ -141,6 +141,7 @@
 	"deployments": {
 		"emulator": {
 			"emulator-account": [
+				"DeFiActionsMathUtils",
 				"DeFiActionsUtils",
 				"DeFiActions",
 				{
@@ -152,7 +153,6 @@
 						}
 					]
 				},
-				"TidalProtocolUtils",
 				"TidalProtocol"
 			]
 		}
