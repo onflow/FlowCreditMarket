@@ -451,7 +451,7 @@ access(all) contract TidalProtocol {
             if pullFromTopUpSource && position.topUpSource != nil {
                 let topUpSource = position.topUpSource!
                 let sourceType = topUpSource.getSourceType()
-                let sourceAmount = topUpSource.minimumAvailable()
+                let sourceAmount = topUpSource.minimumAvailable(liquidation: false)
                 log("    [CONTRACT] Calling to fundsAvailableAboveTargetHealthAfterDepositing with sourceAmount \(sourceAmount) and targetHealth \(position.minHealth)")
 
                 return self.fundsAvailableAboveTargetHealthAfterDepositing(
@@ -477,7 +477,7 @@ access(all) contract TidalProtocol {
 
 			let topUpSource = position.topUpSource!
 			let sourceType = topUpSource.getSourceType()
-			let sourceAmount = topUpSource.minimumAvailable()
+            let sourceAmount = topUpSource.minimumAvailable(liquidation: true)
             let uintSourceAmount = DeFiActionsMathUtils.toUInt128(sourceAmount)
 
 			let maybeDepositBalance = position.balances[type]!
