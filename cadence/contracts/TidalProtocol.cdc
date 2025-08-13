@@ -352,8 +352,8 @@ access(all) contract TidalProtocol {
                 creditRate = 0
             }
 
-            self.currentCreditRate = TidalProtocol.perSecondInterestRate(yearlyRate: UInt128(creditRate))
-            self.currentDebitRate = TidalProtocol.perSecondInterestRate(yearlyRate: UInt128(debitRate))
+            self.currentCreditRate = TidalProtocol.perSecondInterestRate(yearlyRate: creditRate)
+            self.currentDebitRate = TidalProtocol.perSecondInterestRate(yearlyRate: debitRate)
         }
     }
 
@@ -667,7 +667,6 @@ access(all) contract TidalProtocol {
             )
             log("    [CONTRACT] healthAfterWithdrawal: \(healthAfterWithdrawal)")
 
-            // let uintTargetHealth = DeFiActionsMathUtils.toUInt128(targetHealth)
             if healthAfterWithdrawal >= targetHealth {
                 // The position is already at or above the target health, so we don't need to deposit anything.
                 return 0.0
@@ -1932,7 +1931,6 @@ access(all) contract TidalProtocol {
             // the health is essentially infinite
             return UInt128.max
         }
-        // TODO: return this value after refactoring health to UInt128
         return DeFiActionsMathUtils.div(effectiveCollateral, effectiveDebt)
     }
 
@@ -1948,7 +1946,6 @@ access(all) contract TidalProtocol {
 
     /// Returns the compounded interest index reflecting the passage of time
     /// The result is: newIndex = oldIndex * perSecondRate ^ seconds
-    // access(all) view fun compoundInterestIndex(oldIndex: UInt128, perSecondRate: UInt128, elapsedSeconds: UFix64): UInt128 {
     access(all) fun compoundInterestIndex(oldIndex: UInt128, perSecondRate: UInt128, elapsedSeconds: UFix64): UInt128 {
         var result = oldIndex
         var current = UInt128(perSecondRate)
