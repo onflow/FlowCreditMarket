@@ -451,7 +451,7 @@ access(all) contract TidalProtocol {
             if pullFromTopUpSource && position.topUpSource != nil {
                 let topUpSource = position.topUpSource!
                 let sourceType = topUpSource.getSourceType()
-                let sourceAmount = topUpSource.minimumAvailable(liquidation: false)
+                let sourceAmount = topUpSource.minimumAvailable(liquidate: false)
                 log("    [CONTRACT] Calling to fundsAvailableAboveTargetHealthAfterDepositing with sourceAmount \(sourceAmount) and targetHealth \(position.minHealth)")
 
                 return self.fundsAvailableAboveTargetHealthAfterDepositing(
@@ -496,7 +496,7 @@ access(all) contract TidalProtocol {
             let uintSourceTokenPrice  = DeFiActionsMathUtils.toUInt128(maybeSourceTokenPrice!)
 
             // Amount available from the top-up source under liquidation semantics
-            let sourceAmountUFix   = topUpSource.minimumAvailable(liquidation: true)
+            let sourceAmountUFix   = topUpSource.minimumAvailable(liquidate: true)
             let uintSourceAmount   = DeFiActionsMathUtils.toUInt128(sourceAmountUFix)
 
             // ----- Deposit token leg (this position's balance in `type`) -----
@@ -1914,12 +1914,12 @@ access(all) contract TidalProtocol {
             return self.type
         }
         /// Returns the minimum availble this Source can provide on withdrawal
-        access(all) fun minimumAvailable(liquidation: Bool): UFix64 {
+        access(all) fun minimumAvailable(liquidate: Bool): UFix64 {
             if !self.pool.check() {
                 return 0.0
             }
             let pool = self.pool.borrow()!
-            if liquidation {
+            if liquidate {
                 return pool.simulateLiquidationAmount(pid: self.positionID, type: self.type)
             }
             return pool.availableBalance(pid: self.positionID, type: self.type, pullFromTopUpSource: self.pullFromTopUpSource)
