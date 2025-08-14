@@ -473,12 +473,12 @@ access(all) contract TidalProtocol {
 
         /// Simulates the withdrawable amount of `type` if the position were fully rebalanced (liquidation scenario).
         /// Returns the amount in units of `type`.
-        access(all) fun simulateLiquidationValue(pid: UInt64, type: Type): UFix64 {
+        access(all) fun simulateLiquidationAmount(pid: UInt64, type: Type): UFix64 {
             let position = self._borrowPosition(pid: pid)
 
             // If there's no top-up source configured, nothing can be pulled during liquidation.
             if position.topUpSource == nil {
-                log("simulateLiquidationValue: no topUpSource; returning 0.0")
+                log("simulateLiquidationAmount: no topUpSource; returning 0.0")
                 return 0.0
             }
 
@@ -489,7 +489,7 @@ access(all) contract TidalProtocol {
             let maybeDepositTokenPrice = self.priceOracle.price(ofToken: type)
             let maybeSourceTokenPrice = self.priceOracle.price(ofToken: sourceType)
             if maybeDepositTokenPrice == nil || maybeSourceTokenPrice == nil {
-                log("simulateLiquidationValue: missing price(s); returning 0.0")
+                log("simulateLiquidationAmount: missing price(s); returning 0.0")
                 return 0.0
             }
             let uintDepositTokenPrice = DeFiActionsMathUtils.toUInt128(maybeDepositTokenPrice!)
@@ -546,13 +546,13 @@ access(all) contract TidalProtocol {
                 netQuote = additions - subtractions
             } else {
                 // Nothing left for withdrawal in `type` after covering debts
-                log("simulateLiquidationValue: net quote is non-positive; returning 0.0")
+                log("simulateLiquidationAmount: net quote is non-positive; returning 0.0")
                 return 0.0
             }
 
             // Convert net quote value back into `type` units
             if uintDepositTokenPrice == 0 {
-                log("simulateLiquidationValue: deposit token price is zero; returning 0.0")
+                log("simulateLiquidationAmount: deposit token price is zero; returning 0.0")
                 return 0.0
             }
             let uintLiquidationAmountInType = DeFiActionsMathUtils.div(netQuote, uintDepositTokenPrice)
@@ -1920,7 +1920,7 @@ access(all) contract TidalProtocol {
             }
             let pool = self.pool.borrow()!
             if liquidation {
-                return pool.simulateLiquidationValue(pid: self.positionID, type: self.type)
+                return pool.simulateLiquidationAmount(pid: self.positionID, type: self.type)
             }
             return pool.availableBalance(pid: self.positionID, type: self.type, pullFromTopUpSource: self.pullFromTopUpSource)
         }
