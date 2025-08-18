@@ -5,16 +5,16 @@ import "TidalProtocol"
 
 access(all) let defaultTokenIdentifier = "A.0000000000000007.MOET.Vault"
 access(all) let defaultUFixVariance = 0.00000001
-access(all) let defaultUIntVariance: UInt256 = 1_000_000_000
+access(all) let defaultUIntVariance: UInt128 = 1_000_000_000_000_000
 
 // Health values
 access(all) let minHealth = 1.1
 access(all) let targetHealth = 1.3
 access(all) let maxHealth = 1.5
-access(all) var intMinHealth: UInt256 = 1_100_000_000_000_000_000
-access(all) var intTargetHealth: UInt256 = 1_300_000_000_000_000_000
-access(all) var intMaxHealth: UInt256 = 1_500_000_000_000_000_000
-access(all) let ceilingHealth = UInt256.max      // the maximum health value when health is virtually infinite AKA debt ~0.0
+access(all) var intMinHealth: UInt128 = 1_100_000_000_000_000_000_000_000
+access(all) var intTargetHealth: UInt128 = 1_300_000_000_000_000_000_000_000
+access(all) var intMaxHealth: UInt128 = 1_500_000_000_000_000_000_000_000
+access(all) let ceilingHealth = UInt128.max      // the maximum health value when health is virtually infinite AKA debt ~0.0
 
 /* --- Test execution helpers --- */
 
@@ -46,12 +46,18 @@ fun deployContracts() {
     )
     Test.expect(err, Test.beNil())
     err = Test.deployContract(
+        name: "DeFiActionsMathUtils",
+        path: "../../DeFiActions/cadence/contracts/utils/DeFiActionsMathUtils.cdc",
+        arguments: []
+    )
+    Test.expect(err, Test.beNil())
+    err = Test.deployContract(
         name: "DeFiActions",
         path: "../../DeFiActions/cadence/contracts/interfaces/DeFiActions.cdc",
         arguments: []
     )
     Test.expect(err, Test.beNil())
-    
+
     let initialSupply = 0.0
     err = Test.deployContract(
         name: "MOET",
@@ -61,18 +67,12 @@ fun deployContracts() {
     Test.expect(err, Test.beNil())
 
     err = Test.deployContract(
-        name: "TidalProtocolUtils",
-        path: "../contracts/TidalProtocolUtils.cdc",
-        arguments: []
-    )
-    Test.expect(err, Test.beNil())
-    err = Test.deployContract(
         name: "TidalProtocol",
         path: "../contracts/TidalProtocol.cdc",
         arguments: []
     )
     Test.expect(err, Test.beNil())
-    
+
     // Deploy MockTidalProtocolConsumer
     err = Test.deployContract(
         name: "MockTidalProtocolConsumer",
@@ -95,11 +95,11 @@ fun deployContracts() {
         arguments: [initialYieldTokenSupply]
     )
     Test.expect(err, Test.beNil())
-    
-    // Deploy FungibleTokenStack
+
+    // Deploy FungibleTokenConnectors
     err = Test.deployContract(
-        name: "FungibleTokenStack",
-        path: "../../DeFiActions/cadence/contracts/connectors/FungibleTokenStack.cdc",
+        name: "FungibleTokenConnectors",
+        path: "../../DeFiActions/cadence/contracts/connectors/FungibleTokenConnectors.cdc",
         arguments: []
     )
     Test.expect(err, Test.beNil())
@@ -131,12 +131,12 @@ fun getAvailableBalance(pid: UInt64, vaultIdentifier: String, pullFromTopUpSourc
 }
 
 access(all)
-fun getPositionHealth(pid: UInt64, beFailed: Bool): UInt256 {
+fun getPositionHealth(pid: UInt64, beFailed: Bool): UInt128 {
     let res = _executeScript("../scripts/tidal-protocol/position_health.cdc",
             [pid]
         )
     Test.expect(res, beFailed ? Test.beFailed() : Test.beSucceeded())
-    return res.status == Test.ResultStatus.failed ? 0 : res.returnValue as! UInt256
+    return res.status == Test.ResultStatus.failed ? 0 : res.returnValue as! UInt128
 }
 
 access(all)
@@ -159,7 +159,7 @@ access(all)
 fun fundsAvailableAboveTargetHealthAfterDepositing(
     pid: UInt64,
     withdrawType: String,
-    targetHealth: UInt256,
+    targetHealth: UInt128,
     depositType: String,
     depositAmount: UFix64,
     beFailed: Bool
@@ -175,7 +175,7 @@ access(all)
 fun fundsRequiredForTargetHealthAfterWithdrawing(
     pid: UInt64,
     depositType: String,
-    targetHealth: UInt256,
+    targetHealth: UInt128,
     withdrawType: String,
     withdrawAmount: UFix64,
     beFailed: Bool
@@ -309,8 +309,8 @@ access(all) fun equalWithinVariance(_ expected: AnyStruct, _ actual: AnyStruct):
     let actualType = actual.getType()
     if expectedType == Type<UFix64>() && actualType == Type<UFix64>() {
         return ufixEqualWithinVariance(expected as! UFix64, actual as! UFix64)
-    } else if expectedType == Type<UInt256>() && actualType == Type<UInt256>() {
-        return uintEqualWithinVariance(expected as! UInt256, actual as! UInt256)
+    } else if expectedType == Type<UInt128>() && actualType == Type<UInt128>() {
+        return uintEqualWithinVariance(expected as! UInt128, actual as! UInt128)
     }
     panic("Expected and actual types do not match - expected: \(expectedType.identifier), actual: \(actualType.identifier)")
 }
@@ -323,8 +323,8 @@ access(all) fun ufixEqualWithinVariance(_ expected: UFix64, _ actual: UFix64): B
     return absDiff <= defaultUFixVariance
 }
 
-access(all) fun uintEqualWithinVariance(_ expected: UInt256, _ actual: UInt256): Bool {
-    let diff = Int256(expected) - Int256(actual)
-    let absDiff: UInt256 = diff < 0 ? UInt256(Int256(-1) * diff) : UInt256(diff)
+access(all) fun uintEqualWithinVariance(_ expected: UInt128, _ actual: UInt128): Bool {
+    let diff = Int128(expected) - Int128(actual)
+    let absDiff: UInt128 = diff < 0 ? UInt128(Int128(-1) * diff) : UInt128(diff)
     return absDiff <= defaultUIntVariance
 }

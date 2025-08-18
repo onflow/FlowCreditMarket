@@ -5,7 +5,6 @@ import "test_helpers.cdc"
 
 import "MOET"
 import "TidalProtocol"
-import "TidalProtocolUtils"
 
 access(all) let protocolAccount = Test.getAccount(0x0000000000000007)
 access(all) let userAccount = Test.createAccount()
@@ -107,7 +106,9 @@ fun testFundsAvailableAboveTargetHealthAfterDepositingWithPushFromHealthy() {
     let moetBalance = positionDetails.balances[0]
     let flowPositionBalance = positionDetails.balances[1]
     Test.assertEqual(positionFundingAmount, flowPositionBalance.balance)
-    Test.assertEqual(expectedBorrowAmount, moetBalance.balance)
+
+    Test.assert(equalWithinVariance(expectedBorrowAmount, moetBalance.balance),
+        message: "Expected borrow amount to be \(expectedBorrowAmount), but got \(moetBalance.balance)")
     Test.assertEqual(TidalProtocol.BalanceDirection.Credit, flowPositionBalance.direction)
     Test.assertEqual(TidalProtocol.BalanceDirection.Debit, moetBalance.direction)
 
