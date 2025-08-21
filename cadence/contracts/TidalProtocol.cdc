@@ -1191,12 +1191,12 @@ access(all) contract TidalProtocol {
 
         /// Simulates the withdrawable amount of `type` if the position were fully rebalanced (liquidation scenario).
         /// Returns the amount in units of `type`.
-        access(all) fun simulateLiquidationAmount(pid: UInt64, type: Type): UFix64 {
+        access(all) fun simulateCloseoutWithdrawalAmount(pid: UInt64, type: Type): UFix64 {
             let position = self._borrowPosition(pid: pid)
 
             // If there's no top-up source configured, nothing can be pulled during liquidation.
             if position.topUpSource == nil {
-                log("simulateLiquidationAmount: no topUpSource found for position \(pid) - returning 0.0")
+                log("simulateCloseoutWithdrawalAmount: no topUpSource found for position \(pid) - returning 0.0")
                 return 0.0
             }
 
@@ -1207,7 +1207,7 @@ access(all) contract TidalProtocol {
             let maybeWithdrawPrice = self.priceOracle.price(ofToken: type)
             let maybeSourcePrice = self.priceOracle.price(ofToken: sourceType)
             if maybeWithdrawPrice == nil || maybeSourcePrice == nil {
-                log("simulateLiquidationAmount: missing price(s); returning 0.0")
+                log("simulateCloseoutWithdrawalAmount: missing price(s); returning 0.0")
                 return 0.0
             }
             // Build a view of the position for pure math
@@ -1935,7 +1935,7 @@ access(all) contract TidalProtocol {
         }
 		access(all) fun closeoutBalance(type: Type, pullFromTopUpSource: Bool): UFix64 {
 			let pool = self.pool.borrow()!
-			return pool.simulateLiquidationAmount(pid: self.id, type: type)
+			return pool.simulateCloseoutWithdrawalAmount(pid: self.id, type: type)
 		}
         /// Returns the current health of the position
         access(all) fun getHealth(): UInt128 {
@@ -2149,7 +2149,7 @@ access(all) contract TidalProtocol {
                 return 0.0
             }
             let pool = self.pool.borrow()!
-            return pool.simulateLiquidationAmount(pid: self.positionID, type: self.type)
+            return pool.simulateCloseoutWithdrawalAmount(pid: self.positionID, type: self.type)
         }
         /// Withdraws up to the max amount as the sourceType Vault
         access(FungibleToken.Withdraw) fun withdrawAvailable(maxAmount: UFix64): @{FungibleToken.Vault} {
