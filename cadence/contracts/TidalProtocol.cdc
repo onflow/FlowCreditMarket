@@ -1145,31 +1145,94 @@ access(all) contract TidalProtocol {
             return DeFiActionsMathUtils.toUFix64RoundDown(availableTokens + collateralTokenCount)
         }
 
-		// Simulates the available balance (withdrawable amount) for a given token as if the position was fully rebalanced.
-		access(all) fun simulateLiquidationValue(pid: UInt64, type: Type): UFix64 {
-			let position = self._borrowPosition(pid: pid)
+        /// Simulates the withdrawable amount of `type` if the position were fully rebalanced (liquidation scenario).
+        /// Returns the amount in units of `type`.
+        access(all) fun simulateLiquidationAmount(pid: UInt64, type: Type): UFix64 {
+            let position = self._borrowPosition(pid: pid)
 
-			let topUpSource = position.topUpSource!
-			let sourceType = topUpSource.getSourceType()
-			let sourceAmount = topUpSource.minimumAvailable()
+            // If there's no top-up source configured, nothing can be pulled during liquidation.
+            if position.topUpSource == nil {
+                log("simulateLiquidationAmount: no topUpSource found for position \(pid) - returning 0.0")
+                return 0.0
+            }
 
-			let maybeDepositBalance = position.balances[type]!
+            let topUpSource = position.topUpSource!
+            let sourceType = topUpSource.getSourceType()
 
-			let debt = position.balances[sourceType]!.scaledBalance
+            // Prices (in default token units)
+            let maybeDepositTokenPrice = self.priceOracle.price(ofToken: type)
+            let maybeSourceTokenPrice = self.priceOracle.price(ofToken: sourceType)
+            if maybeDepositTokenPrice == nil || maybeSourceTokenPrice == nil {
+                log("simulateLiquidationAmount: missing price(s); returning 0.0")
+                return 0.0
+            }
+            let uintDepositTokenPrice = DeFiActionsMathUtils.toUInt128(maybeDepositTokenPrice!)
+            let uintSourceTokenPrice  = DeFiActionsMathUtils.toUInt128(maybeSourceTokenPrice!)
 
-			let depositTokenState = self._borrowUpdatedTokenState(type: type)
+            // Amount available from the top-up source under liquidation semantics
+            let sourceAmountUFix   = topUpSource.maximumAvailable()
+            let uintSourceAmount   = DeFiActionsMathUtils.toUInt128(sourceAmountUFix)
 
-			let depositTokenPrice = self.priceOracle.price(ofToken: type)! 
-			let trueDeposit = TidalProtocol.scaledBalanceToTrueBalance(
-				scaledBalance: maybeDepositBalance.scaledBalance,
-				interestIndex: maybeDepositBalance.direction == BalanceDirection.Credit
-				? depositTokenState.creditInterestIndex
-				: depositTokenState.debitInterestIndex
-			)
+            // ----- Deposit token leg (this position's balance in `type`) -----
+            let maybeDepositBalance = position.balances[type]
+            var depositCreditQuote: UInt128 = 0   // value (in default token) of credit in `type`
+            var depositDebtQuote:   UInt128 = 0   // value (in default token) of debt in `type`
 
-			let simulatedValue = trueDeposit + sourceAmount - debt
-			return simulatedValue / depositTokenPrice
-		}
+            if maybeDepositBalance != nil {
+                let depositTokenState = self._borrowUpdatedTokenState(type: type)
+                let bal = maybeDepositBalance!
+                if bal.direction == BalanceDirection.Credit {
+                    let trueCredit = TidalProtocol.scaledBalanceToTrueBalance(
+                        bal.scaledBalance,
+                        interestIndex: depositTokenState.creditInterestIndex
+                    )
+                    depositCreditQuote = DeFiActionsMathUtils.mul(trueCredit, uintDepositTokenPrice)
+                } else {
+                    let trueDebt = TidalProtocol.scaledBalanceToTrueBalance(
+                        bal.scaledBalance,
+                        interestIndex: depositTokenState.debitInterestIndex
+                    )
+                    depositDebtQuote = DeFiActionsMathUtils.mul(trueDebt, uintDepositTokenPrice)
+                }
+            }
+
+            // ----- Source token debt leg (debt in the top-up token we must cover first) -----
+            let maybeSourceBalance = position.balances[sourceType]
+            var sourceDebtQuote: UInt128 = 0
+            if maybeSourceBalance?.direction == BalanceDirection.Debit {
+                let sourceTokenState = self._borrowUpdatedTokenState(type: sourceType)
+                let trueSourceDebt = TidalProtocol.scaledBalanceToTrueBalance(
+                    maybeSourceBalance!.scaledBalance,
+                    interestIndex: sourceTokenState.debitInterestIndex
+                )
+                sourceDebtQuote = DeFiActionsMathUtils.mul(trueSourceDebt, uintSourceTokenPrice)
+            }
+
+            // ----- Source token available (credit we can pull during liquidation) -----
+            let sourceAvailQuote = DeFiActionsMathUtils.mul(uintSourceAmount, uintSourceTokenPrice)
+
+            // Net value in default-token quote terms
+            // netQuote = depositCreditQuote + sourceAvailQuote - sourceDebtQuote - depositDebtQuote
+            var netQuote: UInt128 = 0
+            let additions = depositCreditQuote + sourceAvailQuote
+            let subtractions = sourceDebtQuote + depositDebtQuote
+            if additions > subtractions {
+                netQuote = additions - subtractions
+            } else {
+                // Nothing left for withdrawal in `type` after covering debts
+                log("simulateLiquidationAmount: net quote is non-positive; returning 0.0")
+                return 0.0
+            }
+
+            // Convert net quote value back into `type` units
+            if uintDepositTokenPrice == 0 {
+                log("simulateLiquidationAmount: deposit token price is zero; returning 0.0")
+                return 0.0
+            }
+            let uintLiquidationAmountInType = DeFiActionsMathUtils.div(netQuote, uintDepositTokenPrice)
+
+            return DeFiActionsMathUtils.toUFix64Round(uintLiquidationAmountInType)
+        }
 
         /// Returns the position's health if the given amount of the specified token were deposited
         access(all) fun healthAfterDeposit(pid: UInt64, type: Type, amount: UFix64): UInt128 {
@@ -1660,7 +1723,7 @@ access(all) contract TidalProtocol {
                 self._queuePositionForUpdateIfNecessary(pid: pid)
                 processed = processed + 1
             }
-        }
+        } 
 
         /// Executes an asynchronous update on the specified position
         access(EImplementation) fun asyncUpdatePosition(pid: UInt64) {
@@ -1856,10 +1919,9 @@ access(all) contract TidalProtocol {
             let pool = self.pool.borrow()!
             return pool.availableBalance(pid: self.id, type: type, pullFromTopUpSource: pullFromTopUpSource)
         }
-		access(all) fun liquidationValue(type: Type, pullFromTopUpSource: Bool): UFix64 {
+		access(all) fun closeOutAmount(type: Type, pullFromTopUpSource: Bool): UFix64 {
 			let pool = self.pool.borrow()!
-			// return pool.availableBalance(pid: self.id, type: type, pullFromTopUpSource: pullFromTopUpSource)
-			return pool.simulateLiquidationValue(pid: self.id, type: type)
+			return pool.simulateLiquidationAmount(pid: self.id, type: type)
 		}
         /// Returns the current health of the position
         access(all) fun getHealth(): UInt128 {
@@ -2067,6 +2129,13 @@ access(all) contract TidalProtocol {
             }
             let pool = self.pool.borrow()!
             return pool.availableBalance(pid: self.positionID, type: self.type, pullFromTopUpSource: self.pullFromTopUpSource)
+        }
+        access(all) fun maximumAvailable(): UFix64 {
+            if !self.pool.check() {
+                return 0.0
+            }
+            let pool = self.pool.borrow()!
+            return pool.simulateLiquidationAmount(pid: self.positionID, type: self.type)
         }
         /// Withdraws up to the max amount as the sourceType Vault
         access(FungibleToken.Withdraw) fun withdrawAvailable(maxAmount: UFix64): @{FungibleToken.Vault} {
