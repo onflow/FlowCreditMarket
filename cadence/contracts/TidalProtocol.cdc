@@ -1231,7 +1231,7 @@ access(all) contract TidalProtocol {
             }
             let uintLiquidationAmountInType = DeFiActionsMathUtils.div(netQuote, uintDepositTokenPrice)
 
-            return DeFiActionsMathUtils.toUFix64Round(uintLiquidationAmountInType)
+            return DeFiActionsMathUtils.toUFix64RoundDown(uintLiquidationAmountInType)
         }
 
         /// Returns the position's health if the given amount of the specified token were deposited
@@ -1919,7 +1919,7 @@ access(all) contract TidalProtocol {
             let pool = self.pool.borrow()!
             return pool.availableBalance(pid: self.id, type: type, pullFromTopUpSource: pullFromTopUpSource)
         }
-		access(all) fun closeOutAmount(type: Type, pullFromTopUpSource: Bool): UFix64 {
+		access(all) fun closeoutBalance(type: Type, pullFromTopUpSource: Bool): UFix64 {
 			let pool = self.pool.borrow()!
 			return pool.simulateLiquidationAmount(pid: self.id, type: type)
 		}
