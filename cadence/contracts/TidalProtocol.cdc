@@ -196,7 +196,7 @@ access(all) contract TidalProtocol {
         /// A DeFiActions Source that if non-nil will enable the Pool to pull underflown value automatically when the
         /// position falls below its minimum health based on the value of deposited collateral versus withdrawals. If
         /// this value is not set, liquidation may occur in the event of undercollateralization.
-        access(mapping ImplementationUpdates) var topUpSource: {DeFiActions.Source}?
+        access(mapping ImplementationUpdates) var topUpSource: {DeFiActions.Source, DeFiActions.Liquidator}?
 
         init() {
             self.balances = {}
@@ -223,7 +223,7 @@ access(all) contract TidalProtocol {
         }
         /// Sets the InternalPosition's topUpSource. If `nil`, the Pool will not be able to pull underflown value when
         /// the position falls below its minimum health which may result in liquidation.
-        access(EImplementation) fun setTopUpSource(_ source: {DeFiActions.Source}?) {
+        access(EImplementation) fun setTopUpSource(_ source: {DeFiActions.Source, DeFiActions.Liquidator}?) {
             self.topUpSource = source
         }
     }
@@ -515,6 +515,50 @@ access(all) contract TidalProtocol {
             )
             return deltaTokens > maxPossible ? maxPossible : deltaTokens
         }
+    }
+
+    /// Computes the amount of `withdrawSnap` token obtainable after fully
+    /// liquidating a position and pulling up to `topUpAvailable` of the
+    /// `topUpSnap` token. The calculation operates entirely on the provided
+    /// `PositionView`, so callers can unit test the logic without spinning up
+    /// on-chain state.
+    access(all) view fun calculateCloseoutBalance(
+        view: PositionView,
+        withdrawSnap: TokenSnapshot,
+        topUpSnap: TokenSnapshot,
+        topUpAvailable: UInt128
+    ): UInt128 {
+        // Value (in default-token units) available from the external top-up source
+        var additions: UInt128 = DeFiActionsMathUtils.mul(topUpAvailable, topUpSnap.price)
+        var subtractions: UInt128 = 0
+
+        // Aggregate all existing position balances regardless of token type
+        for tokenType in view.balances.keys {
+            let bal = view.balances[tokenType]!
+            let snap = view.snapshots[tokenType]!
+            if bal.direction == BalanceDirection.Credit {
+                let trueCredit = TidalProtocol.scaledBalanceToTrueBalance(
+                    bal.scaledBalance,
+                    interestIndex: snap.creditIndex
+                )
+                additions = additions + DeFiActionsMathUtils.mul(trueCredit, snap.price)
+            } else {
+                let trueDebt = TidalProtocol.scaledBalanceToTrueBalance(
+                    bal.scaledBalance,
+                    interestIndex: snap.debitIndex
+                )
+                subtractions = subtractions + DeFiActionsMathUtils.mul(trueDebt, snap.price)
+            }
+        }
+
+        if additions <= subtractions {
+            return 0
+        }
+        let netQuote = additions - subtractions
+        if withdrawSnap.price == 0 {
+            return 0
+        }
+        return DeFiActionsMathUtils.div(netQuote, withdrawSnap.price)
     }
 
     // ----- End Phase 0 additions ---------------------------------------------
@@ -1145,6 +1189,65 @@ access(all) contract TidalProtocol {
             return DeFiActionsMathUtils.toUFix64RoundDown(availableTokens + collateralTokenCount)
         }
 
+        /// Simulates the withdrawable amount of `type` if the position were fully rebalanced (liquidation scenario).
+        /// Returns the amount in units of `type`.
+        access(all) fun simulateCloseoutWithdrawalAmount(pid: UInt64, type: Type): UFix64 {
+            let position = self._borrowPosition(pid: pid)
+
+            // If there's no top-up source configured, nothing can be pulled during liquidation.
+            if position.topUpSource == nil {
+                log("simulateCloseoutWithdrawalAmount: no topUpSource found for position \(pid) - returning 0.0")
+                return 0.0
+            }
+
+            let topUpSource = position.topUpSource!
+            let sourceType = topUpSource.getSourceType()
+
+            // Prices (in default token units)
+            let maybeWithdrawPrice = self.priceOracle.price(ofToken: type)
+            let maybeSourcePrice = self.priceOracle.price(ofToken: sourceType)
+            if maybeWithdrawPrice == nil || maybeSourcePrice == nil {
+                log("simulateCloseoutWithdrawalAmount: missing price(s); returning 0.0")
+                return 0.0
+            }
+            // Build a view of the position for pure math
+            let view = self.buildPositionView(pid: pid)
+
+            // Snapshots for withdraw and source tokens
+            let withdrawState = self._borrowUpdatedTokenState(type: type)
+            let withdrawSnap = TidalProtocol.TokenSnapshot(
+                price: DeFiActionsMathUtils.toUInt128(maybeWithdrawPrice!),
+                credit: withdrawState.creditInterestIndex,
+                debit: withdrawState.debitInterestIndex,
+                risk: TidalProtocol.RiskParams(
+                    cf: DeFiActionsMathUtils.toUInt128(self.collateralFactor[type]!),
+                    bf: DeFiActionsMathUtils.toUInt128(self.borrowFactor[type]!),
+                    lb: DeFiActionsMathUtils.e24 + 50_000_000_000_000_000_000_000
+                )
+            )
+
+            let sourceState = self._borrowUpdatedTokenState(type: sourceType)
+            let sourceSnap = TidalProtocol.TokenSnapshot(
+                price: DeFiActionsMathUtils.toUInt128(maybeSourcePrice!),
+                credit: sourceState.creditInterestIndex,
+                debit: sourceState.debitInterestIndex,
+                risk: TidalProtocol.RiskParams(
+                    cf: DeFiActionsMathUtils.toUInt128(self.collateralFactor[sourceType]!),
+                    bf: DeFiActionsMathUtils.toUInt128(self.borrowFactor[sourceType]!),
+                    lb: DeFiActionsMathUtils.e24 + 50_000_000_000_000_000_000_000
+                )
+            )
+
+            let topUpAvailable = DeFiActionsMathUtils.toUInt128(topUpSource.liquidationAmount())
+            let uintAmount = TidalProtocol.calculateCloseoutBalance(
+                view: view,
+                withdrawSnap: withdrawSnap,
+                topUpSnap: sourceSnap,
+                topUpAvailable: topUpAvailable
+            )
+            return DeFiActionsMathUtils.toUFix64RoundDown(uintAmount)
+        }
+
         /// Returns the position's health if the given amount of the specified token were deposited
         access(all) fun healthAfterDeposit(pid: UInt64, type: Type, amount: UFix64): UInt128 {
             let balanceSheet = self._getUpdatedBalanceSheet(pid: pid)
@@ -1263,7 +1366,7 @@ access(all) contract TidalProtocol {
         access(all) fun createPosition(
             funds: @{FungibleToken.Vault},
             issuanceSink: {DeFiActions.Sink},
-            repaymentSource: {DeFiActions.Source}?,
+            repaymentSource: {DeFiActions.Source, DeFiActions.Liquidator}?,
             pushToDrawDownSink: Bool
         ): UInt64 {
             pre {
@@ -1496,7 +1599,7 @@ access(all) contract TidalProtocol {
 
         /// Sets the InternalPosition's topUpSource. If `nil`, the Pool will not be able to pull underflown value when
         /// the position falls below its minimum health which may result in liquidation.
-        access(EPosition) fun provideTopUpSource(pid: UInt64, source: {DeFiActions.Source}?) {
+        access(EPosition) fun provideTopUpSource(pid: UInt64, source: {DeFiActions.Source, DeFiActions.Liquidator}?) {
             let position = self._borrowPosition(pid: pid)
             position.setTopUpSource(source)
         }
@@ -1557,7 +1660,7 @@ access(all) contract TidalProtocol {
             if balanceSheet.health < position.targetHealth {
                 // The position is undercollateralized, see if the source can get more collateral to bring it up to the target health.
                 if position.topUpSource != nil {
-                    let topUpSource = position.topUpSource! as auth(FungibleToken.Withdraw) &{DeFiActions.Source}
+                    let topUpSource = position.topUpSource! as auth(FungibleToken.Withdraw) &{DeFiActions.Source, DeFiActions.Liquidator}
                     let idealDeposit = self.fundsRequiredForTargetHealth(
                         pid: pid,
                         type: topUpSource.getSourceType(),
@@ -1906,7 +2009,7 @@ access(all) contract TidalProtocol {
         /// Returns a new Source for the given token type that will service withdrawals of that token and update the
         /// position's collateral and/or debt accordingly. Note that calling this method multiple times will create
         /// multiple sources, each of which will continue to work regardless of how many other sources have been created.
-        access(FungibleToken.Withdraw) fun createSource(type: Type): {DeFiActions.Source} {
+        access(FungibleToken.Withdraw) fun createSource(type: Type): {DeFiActions.Source, DeFiActions.Liquidator} {
             // Create enhanced source with pullFromTopUpSource = true
             return self.createSourceWithOptions(type: type, pullFromTopUpSource: false)
         }
@@ -1914,7 +2017,7 @@ access(all) contract TidalProtocol {
         /// of that token and update the position's collateral and/or debt accordingly. Note that calling this method
         /// multiple times will create multiple sources, each of which will continue to work regardless of how many
         /// other sources have been created.
-        access(FungibleToken.Withdraw) fun createSourceWithOptions(type: Type, pullFromTopUpSource: Bool): {DeFiActions.Source} {
+        access(FungibleToken.Withdraw) fun createSourceWithOptions(type: Type, pullFromTopUpSource: Bool): {DeFiActions.Source, DeFiActions.Liquidator} {
             let pool = self.pool.borrow()!
             return PositionSource(id: self.id, pool: self.pool, type: type, pullFromTopUpSource: pullFromTopUpSource)
         }
@@ -1935,7 +2038,7 @@ access(all) contract TidalProtocol {
         /// Each position can have only one source, and the source must accept the default token type configured for the
         /// pool. Providing a new source will replace the existing source. Pass nil to configure the position to not
         /// pull tokens.
-        access(all) fun provideSource(source: {DeFiActions.Source}?) {
+        access(all) fun provideSource(source: {DeFiActions.Source, DeFiActions.Liquidator}?) {
             let pool = self.pool.borrow()!
             pool.provideTopUpSource(pid: self.id, source: source)
         }
@@ -2004,7 +2107,7 @@ access(all) contract TidalProtocol {
     /// A DeFiActions connector enabling withdrawals from a Position from within a DeFiActions stack. This Source is
     /// intended to be constructed from a Position object.
     ///
-    access(all) struct PositionSource: DeFiActions.Source {
+    access(all) struct PositionSource: DeFiActions.Source, DeFiActions.Liquidator {
         /// An optional DeFiActions.UniqueIdentifier that identifies this Sink with the DeFiActions stack its a part of
         access(contract) var uniqueID: DeFiActions.UniqueIdentifier?
         /// An authorized Capability on the Pool for which the related Position is in
@@ -2036,6 +2139,20 @@ access(all) contract TidalProtocol {
             }
             let pool = self.pool.borrow()!
             return pool.availableBalance(pid: self.positionID, type: self.type, pullFromTopUpSource: self.pullFromTopUpSource)
+        }
+        access(all) fun liquidationAmount(): UFix64 {
+            if let pool = self.pool.borrow() {
+                return pool.simulateCloseoutWithdrawalAmount(pid: self.positionID, type: self.type)
+            }
+            return 0.0
+        }
+        access(all) fun liquidate(data: AnyStruct?): @{FungibleToken.Vault} {
+            if let pool = self.pool.borrow() {
+                let amt = pool.simulateCloseoutWithdrawalAmount(pid: self.positionID, type: self.type)
+                return <- self.withdrawAvailable(maxAmount: amt)
+            }
+            // If the pool capability is invalid, return an empty vault of the correct type
+            return <- DeFiActionsUtils.getEmptyVault(self.type)
         }
         /// Withdraws up to the max amount as the sourceType Vault
         access(FungibleToken.Withdraw) fun withdrawAvailable(maxAmount: UFix64): @{FungibleToken.Vault} {
@@ -2138,7 +2255,7 @@ access(all) contract TidalProtocol {
     access(all) fun openPosition(
         collateral: @{FungibleToken.Vault},
         issuanceSink: {DeFiActions.Sink},
-        repaymentSource: {DeFiActions.Source}?,
+        repaymentSource: {DeFiActions.Source, DeFiActions.Liquidator}?,
         pushToDrawDownSink: Bool
     ): Position {
         let pid = self._borrowPool().createPosition(
