@@ -403,7 +403,8 @@ access(all) contract TidalProtocol {
     access(all) struct RiskParams {
         access(all) let collateralFactor: UInt128
         access(all) let borrowFactor: UInt128
-        access(all) let liquidationBonus: UInt128
+        access(all) let liquidationBonus: UInt128  // New: e24, e.g. 5% = 5e22
+
         init(cf: UInt128, bf: UInt128, lb: UInt128) {
             self.collateralFactor = cf
             self.borrowFactor = bf
@@ -581,6 +582,8 @@ access(all) contract TidalProtocol {
         /// The borrowFactor determines how much of a position's "effective collateral" can be borrowed against as a
         /// percentage between 0.0 and 1.0
         access(self) var borrowFactor: {Type: UFix64}
+        /// Per-token liquidation bonus fraction (e.g., 0.05 for 5%)
+        access(self) var liquidationBonus: {Type: UFix64}
         /// The count of positions to update per asynchronous update
         access(self) var positionsProcessedPerCallback: UInt64
         /// Position update queue to be processed as an asynchronous update
@@ -612,6 +615,7 @@ access(all) contract TidalProtocol {
             self.priceOracle = priceOracle
             self.collateralFactor = {defaultToken: 1.0}
             self.borrowFactor = {defaultToken: 1.0}
+            self.liquidationBonus = {defaultToken: 0.05}
             self.nextPositionID = 0
             self.positionsNeedingUpdates = []
             self.positionsProcessedPerCallback = 100
@@ -810,6 +814,12 @@ access(all) contract TidalProtocol {
             // Build snapshots
             let debtState = self._borrowUpdatedTokenState(type: debtType)
             let seizeState = self._borrowUpdatedTokenState(type: seizeType)
+            // Resolve per-token liquidation bonus (default 5%) for debtType
+            var lbDebtUFix: UFix64 = 0.05
+            let lbDebtOpt = self.liquidationBonus[debtType]
+            if lbDebtOpt != nil {
+                lbDebtUFix = lbDebtOpt!
+            }
             let debtSnap = TidalProtocol.TokenSnapshot(
                 price: DeFiActionsMathUtils.toUInt128(self.priceOracle.price(ofToken: debtType)!),
                 credit: debtState.creditInterestIndex,
@@ -817,9 +827,15 @@ access(all) contract TidalProtocol {
                 risk: TidalProtocol.RiskParams(
                     cf: DeFiActionsMathUtils.toUInt128(self.collateralFactor[debtType]!),
                     bf: DeFiActionsMathUtils.toUInt128(self.borrowFactor[debtType]!),
-                    lb: DeFiActionsMathUtils.e24 + 50_000_000_000_000_000_000_000
+                    lb: DeFiActionsMathUtils.toUInt128(lbDebtUFix)
                 )
             )
+            // Resolve per-token liquidation bonus (default 5%) for seizeType
+            var lbSeizeUFix: UFix64 = 0.05
+            let lbSeizeOpt = self.liquidationBonus[seizeType]
+            if lbSeizeOpt != nil {
+                lbSeizeUFix = lbSeizeOpt!
+            }
             let seizeSnap = TidalProtocol.TokenSnapshot(
                 price: DeFiActionsMathUtils.toUInt128(self.priceOracle.price(ofToken: seizeType)!),
                 credit: seizeState.creditInterestIndex,
@@ -827,16 +843,24 @@ access(all) contract TidalProtocol {
                 risk: TidalProtocol.RiskParams(
                     cf: DeFiActionsMathUtils.toUInt128(self.collateralFactor[seizeType]!),
                     bf: DeFiActionsMathUtils.toUInt128(self.borrowFactor[seizeType]!),
-                    lb: DeFiActionsMathUtils.e24 + 50_000_000_000_000_000_000_000
+                    lb: DeFiActionsMathUtils.toUInt128(lbSeizeUFix)
                 )
             )
 
-            // Recompute effective totals
+            // Recompute effective totals and capture available true collateral for seizeType
             var effColl: UInt128 = 0
             var effDebt: UInt128 = 0
+            var trueCollateralSeize: UInt128 = 0
+            var trueDebt: UInt128 = 0
             for t in view.balances.keys {
                 let b = view.balances[t]!
                 let st = self._borrowUpdatedTokenState(type: t)
+                // Resolve per-token liquidation bonus (default 5%) for token t
+                var lbTUFix: UFix64 = 0.05
+                let lbTOpt = self.liquidationBonus[t]
+                if lbTOpt != nil {
+                    lbTUFix = lbTOpt!
+                }
                 let snap = TidalProtocol.TokenSnapshot(
                     price: DeFiActionsMathUtils.toUInt128(self.priceOracle.price(ofToken: t)!),
                     credit: st.creditInterestIndex,
@@ -844,14 +868,20 @@ access(all) contract TidalProtocol {
                     risk: TidalProtocol.RiskParams(
                         cf: DeFiActionsMathUtils.toUInt128(self.collateralFactor[t]!),
                         bf: DeFiActionsMathUtils.toUInt128(self.borrowFactor[t]!),
-                        lb: DeFiActionsMathUtils.e24 + 50_000_000_000_000_000_000_000
+                        lb: DeFiActionsMathUtils.toUInt128(lbTUFix)
                     )
                 )
                 if b.direction == BalanceDirection.Credit {
                     let trueBal = TidalProtocol.scaledBalanceToTrueBalance(b.scaledBalance, interestIndex: snap.creditIndex)
+                    if t == seizeType {
+                        trueCollateralSeize = trueBal
+                    }
                     effColl = effColl + TidalProtocol.effectiveCollateral(credit: trueBal, snap: snap)
                 } else {
                     let trueBal = TidalProtocol.scaledBalanceToTrueBalance(b.scaledBalance, interestIndex: snap.debitIndex)
+                    if t == debtType {
+                        trueDebt = trueBal
+                    }
                     effDebt = effDebt + TidalProtocol.effectiveDebt(debit: trueBal, snap: snap)
                 }
             }
@@ -875,23 +905,53 @@ access(all) contract TidalProtocol {
             if effDebt <= effDebtNew {
                 return TidalProtocol.LiquidationQuote(requiredRepay: 0.0, seizeType: seizeType, seizeAmount: 0.0, newHF: target)
             }
-            let reductionNeeded = effDebt - effDebtNew
-            let repayTrue = DeFiActionsMathUtils.div(
-                DeFiActionsMathUtils.mul(reductionNeeded, debtSnap.risk.borrowFactor),
-                debtSnap.price
-            )
+            // Use simultaneous solve below; the approximate path is omitted
 
-            // Seize from collateral to pay keeper: seize = repayValue * (1+bonus) / (Pc * CF)
-            let repayValue = reductionNeeded // already in effective debt value units
-            let lb = seizeSnap.risk.liquidationBonus
-            let seizeTrue = DeFiActionsMathUtils.div(
-                DeFiActionsMathUtils.mul(repayValue, lb),
-                DeFiActionsMathUtils.mul(seizeSnap.price, seizeSnap.risk.collateralFactor)
-            )
+            // New simultaneous solve for repayTrue (let R = repayTrue, S = seizeTrue):
+            // Target HF = (effColl - S * Pc * CF) / (effDebt - R * Pd / BF)
+            // S = (R * Pd / BF) * (1 + LB) / (Pc * CF)
+            // Solve for R such that HF = target
+            let Pd = debtSnap.price
+            let Pc = seizeSnap.price
+            let BF = debtSnap.risk.borrowFactor
+            let CF = seizeSnap.risk.collateralFactor
+            let LB = seizeSnap.risk.liquidationBonus
 
-            let repayUf = DeFiActionsMathUtils.toUFix64Round(repayTrue)
-            let seizeUf = DeFiActionsMathUtils.toUFix64Round(seizeTrue)
-            return TidalProtocol.LiquidationQuote(requiredRepay: repayUf, seizeType: seizeType, seizeAmount: seizeUf, newHF: target)
+            // Reuse previously computed effective collateral and debt
+
+            if effDebt == 0 || effColl / effDebt >= target {
+                return TidalProtocol.LiquidationQuote(requiredRepay: 0.0, seizeType: seizeType, seizeAmount: 0.0, newHF: effColl / effDebt)
+            }
+
+            // Derived formula with positive denominator: u = (t * effDebt - effColl) / (t - (1 + LB) * CF)
+            let num = DeFiActionsMathUtils.mul(effDebt, target) - effColl
+            let denomFactor = target - DeFiActionsMathUtils.mul((DeFiActionsMathUtils.e24 + LB), CF)
+            if denomFactor <= UInt128(0) {
+                // Impossible target, return 0
+                return TidalProtocol.LiquidationQuote(requiredRepay: 0.0, seizeType: seizeType, seizeAmount: 0.0, newHF: health)
+            }
+            var repayTrueU128 = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(num, BF), DeFiActionsMathUtils.mul(Pd, denomFactor))
+            if repayTrueU128 > trueDebt {
+                repayTrueU128 = trueDebt
+            }
+            let u = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(repayTrueU128, Pd), BF)
+            var seizeTrueU128 = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(u, (DeFiActionsMathUtils.e24 + LB)), Pc)
+            if seizeTrueU128 > trueCollateralSeize {
+                seizeTrueU128 = trueCollateralSeize
+                let uAllowed = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(seizeTrueU128, Pc), (DeFiActionsMathUtils.e24 + LB))
+                repayTrueU128 = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(uAllowed, BF), Pd)
+                if repayTrueU128 > trueDebt {
+                    repayTrueU128 = trueDebt
+                }
+            }
+            let repayExact = DeFiActionsMathUtils.toUFix64Round(repayTrueU128)
+            let seizeExact = DeFiActionsMathUtils.toUFix64Round(seizeTrueU128)
+            let repayEff = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(repayTrueU128, Pd), BF)
+            let seizeEff = DeFiActionsMathUtils.mul(seizeTrueU128, DeFiActionsMathUtils.mul(Pc, CF))
+            let newEffColl = effColl > seizeEff ? effColl - seizeEff : UInt128(0)
+            let newEffDebt = effDebt > repayEff ? effDebt - repayEff : UInt128(0)
+            let newHF = newEffDebt == UInt128(0) ? UInt128.max : DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(newEffColl, DeFiActionsMathUtils.e24), newEffDebt)
+            return TidalProtocol.LiquidationQuote(requiredRepay: repayExact, seizeType: seizeType, seizeAmount: seizeExact, newHF: newHF)
         }
 
         /// Returns the quantity of funds of a specified token which would need to be deposited in order to bring the
@@ -955,7 +1015,7 @@ access(all) contract TidalProtocol {
             // Quote required repay and seize
             let quote = self.quoteLiquidation(pid: pid, debtType: debtType, seizeType: seizeType)
             assert(quote.requiredRepay > 0.0, message: "Position not liquidatable or already healthy")
-            assert(maxRepayAmount >= quote.requiredRepay, message: "Insufficient repay amount provided")
+            assert(maxRepayAmount >= quote.requiredRepay, message: "Insufficient max repay")
             assert(quote.seizeAmount >= minSeizeAmount, message: "Seize amount below minimum")
 
             // Ensure internal reserves exist for seizeType and debtType
@@ -1798,6 +1858,17 @@ access(all) contract TidalProtocol {
 
             // Set borrow factor (risk adjustment for borrowed amounts)
             self.borrowFactor[tokenType] = borrowFactor
+            // Default liquidation bonus per token = 5%
+            self.liquidationBonus[tokenType] = 0.05
+        }
+
+        /// Sets per-token liquidation bonus fraction (0.0 to 1.0). E.g., 0.05 means +5% seize bonus.
+        access(EGovernance) fun setTokenLiquidationBonus(tokenType: Type, bonus: UFix64) {
+            pre {
+                self.globalLedger[tokenType] != nil: "Unsupported token type"
+                bonus >= 0.0 && bonus <= 1.0: "Liquidation bonus must be between 0 and 1"
+            }
+            self.liquidationBonus[tokenType] = bonus
         }
 
         /// Rebalances the position to the target health value. If `force` is `true`, the position will be rebalanced
