@@ -951,6 +951,13 @@ access(all) contract TidalProtocol {
             let newEffColl = effColl > seizeEff ? effColl - seizeEff : UInt128(0)
             let newEffDebt = effDebt > repayEff ? effDebt - repayEff : UInt128(0)
             let newHF = newEffDebt == UInt128(0) ? UInt128.max : DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(newEffColl, DeFiActionsMathUtils.e24), newEffDebt)
+
+            // Prevent liquidation if it would worsen HF (deep insolvency case)
+            if newHF < health {
+                return TidalProtocol.LiquidationQuote(requiredRepay: 0.0, seizeType: seizeType, seizeAmount: 0.0, newHF: health)
+            }
+
+            log("[LIQ][QUOTE] repayExact=\(repayExact) seizeExact=\(seizeExact) trueCollateralSeize=\(DeFiActionsMathUtils.toUFix64Round(trueCollateralSeize))")
             return TidalProtocol.LiquidationQuote(requiredRepay: repayExact, seizeType: seizeType, seizeAmount: seizeExact, newHF: newHF)
         }
 
@@ -992,7 +999,7 @@ access(all) contract TidalProtocol {
             )
         }
 
-        /// Permissionless liquidation: keeper repays exactly the required amount to reach liquidationTargetHF and receives seized collateral
+        /// Permissionless liquidation: keeper repays exactly the required amount to reach target HF and receives seized collateral
         access(all) fun liquidateRepayForSeize(
             pid: UInt64,
             debtType: Type,
@@ -1000,7 +1007,7 @@ access(all) contract TidalProtocol {
             seizeType: Type,
             minSeizeAmount: UFix64,
             from: @{FungibleToken.Vault}
-        ): @{FungibleToken.Vault} {
+        ): @LiquidationResult {
             pre {
                 self.globalLedger[debtType] != nil: "Invalid debt type"
                 self.globalLedger[seizeType] != nil: "Invalid seize type"
@@ -1028,11 +1035,12 @@ access(all) contract TidalProtocol {
 
             // Move repay tokens into reserves (repay vault must exactly match requiredRepay)
             assert(from.getType() == debtType, message: "Vault type mismatch for repay")
-            assert(from.balance == quote.requiredRepay, message: "Repay vault balance must equal requiredRepay")
+            assert(from.balance >= quote.requiredRepay, message: "Repay vault balance must be at least requiredRepay")
+            let toUse <- from.withdraw(amount: quote.requiredRepay)
             let debtReserveRef = (&self.reserves[debtType] as auth(FungibleToken.Withdraw) &{FungibleToken.Vault}?)!
-            debtReserveRef.deposit(from: <-from)
+            debtReserveRef.deposit(from: <-toUse)
 
-            // Reduce borrower's debt position by requiredRepay
+            // Reduce borrower's debt position by repayAmount
             let position = self._borrowPosition(pid: pid)
             let debtState = self._borrowUpdatedTokenState(type: debtType)
             let repayUint = DeFiActionsMathUtils.toUInt128(quote.requiredRepay)
@@ -1051,9 +1059,11 @@ access(all) contract TidalProtocol {
             let seizeReserveRef = (&self.reserves[seizeType] as auth(FungibleToken.Withdraw) &{FungibleToken.Vault}?)!
             let payout <- seizeReserveRef.withdraw(amount: quote.seizeAmount)
 
-            emit LiquidationExecuted(pid: pid, poolUUID: self.uuid, debtType: debtType.identifier, repayAmount: quote.requiredRepay, seizeType: seizeType.identifier, seizeAmount: quote.seizeAmount, newHF: self.liquidationTargetHF)
+            let actualNewHF = self.positionHealth(pid: pid)
 
-            return <- payout
+            emit LiquidationExecuted(pid: pid, poolUUID: self.uuid, debtType: debtType.identifier, repayAmount: quote.requiredRepay, seizeType: seizeType.identifier, seizeAmount: quote.seizeAmount, newHF: actualNewHF)
+
+            return <- create LiquidationResult(seized: <-payout, remainder: <-from)
         }
 
         access(self) fun computeAdjustedBalancesAfterWithdrawal(
@@ -2573,5 +2583,25 @@ access(all) contract TidalProtocol {
             to: self.PoolFactoryPath
         )
         let factory = self.account.storage.borrow<&PoolFactory>(from: self.PoolFactoryPath)!
+    }
+
+    access(all) resource LiquidationResult {
+        access(all) var seized: @{FungibleToken.Vault}?
+        access(all) var remainder: @{FungibleToken.Vault}?
+
+        init(seized: @{FungibleToken.Vault}, remainder: @{FungibleToken.Vault}) {
+            self.seized <- seized
+            self.remainder <- remainder
+        }
+
+        access(all) fun takeSeized(): @{FungibleToken.Vault} {
+            let s <- self.seized <- nil
+            return <- s!
+        }
+
+        access(all) fun takeRemainder(): @{FungibleToken.Vault} {
+            let r <- self.remainder <- nil
+            return <- r!
+        }
     }
 }

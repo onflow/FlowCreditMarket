@@ -10,9 +10,9 @@ import "MOET"
 transaction(pid: UInt64, debtVaultIdentifier: String, seizeVaultIdentifier: String, maxRepayAmount: UFix64, minSeizeAmount: UFix64) {
     let pool: &TidalProtocol.Pool
     let receiver: &{FungibleToken.Receiver}
+    var refundReceiver: &{FungibleToken.Receiver}?
     let debtType: Type
     let seizeType: Type
-    let requiredRepay: UFix64
     let repay: @{FungibleToken.Vault}
 
     prepare(signer: auth(BorrowValue, SaveValue, IssueStorageCapabilityController, PublishCapability, UnpublishCapability) &Account) {
@@ -24,26 +24,34 @@ transaction(pid: UInt64, debtVaultIdentifier: String, seizeVaultIdentifier: Stri
         self.debtType = CompositeType(debtVaultIdentifier) ?? panic("Invalid debtVaultIdentifier: \(debtVaultIdentifier)")
         self.seizeType = CompositeType(seizeVaultIdentifier) ?? panic("Invalid seizeVaultIdentifier: \(seizeVaultIdentifier)")
 
-        // Quote required repay and seize amounts
+        // Add refundReceiver setup
+        self.refundReceiver = nil
+        if self.debtType == Type<@MOET.Vault>() {
+            self.refundReceiver = signer.capabilities.borrow<&{FungibleToken.Receiver}>(MOET.ReceiverPublicPath)
+        } else if self.debtType == Type<@FlowToken.Vault>() {
+            self.refundReceiver = signer.capabilities.borrow<&{FungibleToken.Receiver}>(/public/flowTokenReceiver)
+        }
+        assert(self.refundReceiver != nil, message: "Missing refund receiver for debt type")
+
+        // Quote
         let quote = self.pool.quoteLiquidation(pid: pid, debtType: self.debtType, seizeType: self.seizeType)
         assert(quote.requiredRepay > 0.0, message: "Nothing to liquidate")
         assert(quote.seizeAmount >= minSeizeAmount, message: "Seize below minimum")
-        self.requiredRepay = quote.requiredRepay
+        assert(maxRepayAmount >= quote.requiredRepay, message: "Max repay too low")
 
-        // Withdraw exactly requiredRepay, honoring maxRepayAmount and available balance
-        assert(maxRepayAmount >= self.requiredRepay, message: "Max repay too low")
+        // Withdraw maxRepayAmount
         var tmpRepay: @{FungibleToken.Vault}? <- nil
         if self.debtType == Type<@MOET.Vault>() {
             let repayVaultRef = signer.storage.borrow<auth(FungibleToken.Withdraw) &{FungibleToken.Vault}>(from: MOET.VaultStoragePath)
                 ?? panic("No MOET vault in storage")
-            assert(repayVaultRef.balance >= self.requiredRepay, message: "Insufficient MOET balance for required repay")
-            tmpRepay <-! repayVaultRef.withdraw(amount: self.requiredRepay)
+            assert(repayVaultRef.balance >= maxRepayAmount, message: "Insufficient MOET balance")
+            tmpRepay <-! repayVaultRef.withdraw(amount: maxRepayAmount)
         }
         if tmpRepay == nil && self.debtType == Type<@FlowToken.Vault>() {
             let repayVaultRef = signer.storage.borrow<auth(FungibleToken.Withdraw) &{FungibleToken.Vault}>(from: /storage/flowTokenVault)
                 ?? panic("No Flow vault in storage")
-            assert(repayVaultRef.balance >= self.requiredRepay, message: "Insufficient Flow balance for required repay")
-            tmpRepay <-! repayVaultRef.withdraw(amount: self.requiredRepay)
+            assert(repayVaultRef.balance >= maxRepayAmount, message: "Insufficient Flow balance")
+            tmpRepay <-! repayVaultRef.withdraw(amount: maxRepayAmount)
         }
         assert(tmpRepay != nil, message: "Unsupported debt token type for demo transaction")
         self.repay <- tmpRepay!
@@ -61,16 +69,19 @@ transaction(pid: UInt64, debtVaultIdentifier: String, seizeVaultIdentifier: Stri
 
     execute {
         // Execute liquidation; get seized collateral vault
-        let seized <- self.pool.liquidateRepayForSeize(
+        let result <- self.pool.liquidateRepayForSeize(
             pid: pid,
             debtType: self.debtType,
-            maxRepayAmount: self.requiredRepay,
+            maxRepayAmount: maxRepayAmount,
             seizeType: self.seizeType,
             minSeizeAmount: minSeizeAmount,
             from: <-self.repay
         )
+        let seized <- result.takeSeized()
+        let remainder <- result.takeRemainder()
+        destroy result
 
-        // Deposit seized assets to signer's receiver
         self.receiver.deposit(from: <-seized)
+        self.refundReceiver!.deposit(from: <-remainder)
     }
 }

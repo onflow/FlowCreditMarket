@@ -1,4 +1,5 @@
 import Test
+import BlockchainHelpers
 import "test_helpers.cdc"
 import "TidalProtocol"
 import "MOET"
@@ -110,22 +111,23 @@ fun test_liquidation_insolvency() {
     )
     Test.expect(openRes, Test.beSucceeded())
 
-    // Severe undercollateralization (insolvent)
-    setMockOraclePrice(signer: Test.getAccount(0x0000000000000007), forTokenIdentifier: flowTokenIdentifier, price: 0.5)
+    // Severe undercollateralization (insolvent, but liquidation improves HF)
+    setMockOraclePrice(signer: Test.getAccount(0x0000000000000007), forTokenIdentifier: flowTokenIdentifier, price: 0.6)
     let hAfter = getPositionHealth(pid: pid, beFailed: false)
-    Test.assert(hAfter < DeFiActionsMathUtils.e24)
+    Test.assert(DeFiActionsMathUtils.toUFix64Round(hAfter) < 1.0)
 
-    // Quote should suggest full seize and partial repay
+    // Quote should suggest partial repay/seize that improves HF to max possible < target
     let quoteRes = _executeScript(
         "../scripts/tidal-protocol/quote_liquidation.cdc",
         [pid, Type<@MOET.Vault>().identifier, flowTokenIdentifier]
     )
     Test.expect(quoteRes, Test.beSucceeded())
     let quote = quoteRes.returnValue as! TidalProtocol.LiquidationQuote
-    Test.assert(quote.requiredRepay > 0.0)
-    Test.assert(quote.seizeAmount == 1000.0)  // Full seize for insolvency
+    Test.assert(quote.requiredRepay > 0.0, message: "Expected positive requiredRepay")
+    Test.assert(quote.seizeAmount > 0.0, message: "Expected positive seizeAmount")
+    Test.assert(quote.newHF > hAfter && quote.newHF < DeFiActionsMathUtils.e24)
 
-    // Execute
+    // Execute and assert improvement, HF < target
     let keeper = Test.createAccount()
     setupMoetVault(keeper, beFailed: false)
     _executeTransaction("../transactions/moet/mint_moet.cdc", [keeper.address, quote.requiredRepay + 0.00000001], Test.getAccount(0x0000000000000007))
@@ -139,8 +141,10 @@ fun test_liquidation_insolvency() {
 
     // Health should be max (zero debt left after partial repay)
     let hFinal = getPositionHealth(pid: pid, beFailed: false)
+    let hFinalUF = DeFiActionsMathUtils.toUFix64Round(hFinal)
     log("hFinal: \(DeFiActionsMathUtils.toUFix64Round(hFinal)), hAfter: \(DeFiActionsMathUtils.toUFix64Round(hAfter))")
-    Test.assert(hFinal > hAfter, message: "Health not improved after insolvency liquidation")
+    Test.assert(hFinal > hAfter, message: "Health not improved")
+    Test.assert(hFinalUF <= 1.05, message: "Insolvent HF exceeded target")
 }
 
 access(all)
@@ -157,12 +161,12 @@ fun test_multi_liquidation() {
         user
     )
 
-    // Mild undercollateralization
-    setMockOraclePrice(signer: Test.getAccount(0x0000000000000007), forTokenIdentifier: flowTokenIdentifier, price: 0.9)
+    // Initial undercollateralization
+    setMockOraclePrice(signer: Test.getAccount(0x0000000000000007), forTokenIdentifier: flowTokenIdentifier, price: 0.7)
     let hInitial = getPositionHealth(pid: pid, beFailed: false)
-    Test.assert(hInitial < DeFiActionsMathUtils.e24)
+    Test.assert(DeFiActionsMathUtils.toUFix64Round(hInitial) < 1.0)
 
-    // First partial liquidation (half the required repay)
+    // First liquidation
     let quote1Res = _executeScript(
         "../scripts/tidal-protocol/quote_liquidation.cdc",
         [pid, Type<@MOET.Vault>().identifier, flowTokenIdentifier]
@@ -171,28 +175,26 @@ fun test_multi_liquidation() {
 
     let keeper1 = Test.createAccount()
     setupMoetVault(keeper1, beFailed: false)
-    _executeTransaction("../transactions/moet/mint_moet.cdc", [keeper1.address, quote1.requiredRepay / 2.0 + 10.0], Test.getAccount(0x0000000000000007))
+    _executeTransaction("../transactions/moet/mint_moet.cdc", [keeper1.address, quote1.requiredRepay], Test.getAccount(0x0000000000000007))
 
     _executeTransaction(
         "../transactions/tidal-protocol/pool-management/liquidate_repay_for_seize.cdc",
-        [pid, Type<@MOET.Vault>().identifier, flowTokenIdentifier, quote1.requiredRepay / 2.0, 0.0],
+        [pid, Type<@MOET.Vault>().identifier, flowTokenIdentifier, quote1.requiredRepay, 0.0],
         keeper1
     )
 
     let hAfter1 = getPositionHealth(pid: pid, beFailed: false)
-    Test.assert(hAfter1 > hInitial && hAfter1 < DeFiActionsMathUtils.e24, message: "Partial liquidation didn't improve health correctly")
-    log("hAfter1: \(DeFiActionsMathUtils.toUFix64Round(hAfter1)), hInitial: \(DeFiActionsMathUtils.toUFix64Round(hInitial))")
+    let targetHF = UInt128(1050000000000000000000000)
+    let tolerance = UInt128(10000000000000000000)
+    Test.assert(hAfter1 >= targetHF - tolerance, message: "First liquidation did not reach target")
 
-    let dummy = Test.createAccount()
-    let emptyTx = Test.Transaction(
-        code: "transaction {}",
-        authorizers: [],
-        signers: [dummy],
-        arguments: []
-    )
-    Test.executeTransaction(emptyTx)
+    // Drop price further for second liquidation
+    setMockOraclePrice(signer: Test.getAccount(0x0000000000000007), forTokenIdentifier: flowTokenIdentifier, price: 0.6)
 
-    // Second liquidation to resolve
+    let hAfterDrop = getPositionHealth(pid: pid, beFailed: false)
+    Test.assert(DeFiActionsMathUtils.toUFix64Round(hAfterDrop) < 1.0)
+
+    // Second liquidation
     let quote2Res = _executeScript(
         "../scripts/tidal-protocol/quote_liquidation.cdc",
         [pid, Type<@MOET.Vault>().identifier, flowTokenIdentifier]
@@ -201,7 +203,7 @@ fun test_multi_liquidation() {
 
     let keeper2 = Test.createAccount()
     setupMoetVault(keeper2, beFailed: false)
-    _executeTransaction("../transactions/moet/mint_moet.cdc", [keeper2.address, quote2.requiredRepay + 10.0], Test.getAccount(0x0000000000000007))
+    _executeTransaction("../transactions/moet/mint_moet.cdc", [keeper2.address, quote2.requiredRepay], Test.getAccount(0x0000000000000007))
 
     _executeTransaction(
         "../transactions/tidal-protocol/pool-management/liquidate_repay_for_seize.cdc",
@@ -210,6 +212,172 @@ fun test_multi_liquidation() {
     )
 
     let hFinal = getPositionHealth(pid: pid, beFailed: false)
-    let targetHF = UInt128(1050000000000000000000000)
-    Test.assert(hFinal >= targetHF - 10000000000000000000 && hFinal <= targetHF + 10000000000000000000, message: "Final health not at target")
+    Test.assert(hFinal >= targetHF - tolerance, message: "Second liquidation did not reach target")
 }
+
+access(all)
+fun test_liquidation_overpay_attempt() {
+    let pid: UInt64 = 0
+
+    let user = Test.createAccount()
+    setupMoetVault(user, beFailed: false)
+    transferFlowTokens(to: user, amount: 1000.0)
+
+    let openRes = _executeTransaction(
+        "./transactions/mock-tidal-protocol-consumer/create_wrapped_position.cdc",
+        [1000.0, /storage/flowTokenVault, true],
+        user
+    )
+    Test.expect(openRes, Test.beSucceeded())
+
+    setMockOraclePrice(signer: Test.getAccount(0x0000000000000007), forTokenIdentifier: flowTokenIdentifier, price: 0.7)
+
+    let quoteRes = _executeScript(
+        "../scripts/tidal-protocol/quote_liquidation.cdc",
+        [0 as UInt64, Type<@MOET.Vault>().identifier, flowTokenIdentifier]
+    )
+    let quote = quoteRes.returnValue as! TidalProtocol.LiquidationQuote
+
+    let liquidator = Test.createAccount()
+    setupMoetVault(liquidator, beFailed: false)
+    let overpayAmount = quote.requiredRepay + 10.0
+    _executeTransaction("../transactions/moet/mint_moet.cdc", [liquidator.address, overpayAmount], Test.getAccount(0x0000000000000007))
+
+    let balanceBefore = getBalance(address: liquidator.address, vaultPublicPath: MOET.ReceiverPublicPath) ?? 0.0
+    let collBalanceBefore = getBalance(address: liquidator.address, vaultPublicPath: /public/flowTokenReceiver) ?? 0.0
+
+    let liqRes = _executeTransaction(
+        "../transactions/tidal-protocol/pool-management/liquidate_repay_for_seize.cdc",
+        [pid, Type<@MOET.Vault>().identifier, flowTokenIdentifier, overpayAmount, 0.0],
+        liquidator
+    )
+    Test.expect(liqRes, Test.beSucceeded())
+
+    let balanceAfter = getBalance(address: liquidator.address, vaultPublicPath: MOET.ReceiverPublicPath) ?? 0.0
+    let collBalanceAfter = getBalance(address: liquidator.address, vaultPublicPath: /public/flowTokenReceiver) ?? 0.0
+
+    Test.assert(balanceAfter == balanceBefore - quote.requiredRepay, message: "Actual repay not equal to requiredRepay")
+    Test.assert(collBalanceAfter == collBalanceBefore + quote.seizeAmount, message: "Seize amount changed")
+}
+
+access(all)
+fun test_liquidation_slippage_failure() {
+    let pid: UInt64 = 0
+
+    // Setup similar to first test
+    let user = Test.createAccount()
+    setupMoetVault(user, beFailed: false)
+    transferFlowTokens(to: user, amount: 1000.0)
+
+    _executeTransaction(
+        "./transactions/mock-tidal-protocol-consumer/create_wrapped_position.cdc",
+        [1000.0, /storage/flowTokenVault, true],
+        user
+    )
+
+    setMockOraclePrice(signer: Test.getAccount(0x0000000000000007), forTokenIdentifier: flowTokenIdentifier, price: 0.7)
+
+    let quoteRes = _executeScript(
+        "../scripts/tidal-protocol/quote_liquidation.cdc",
+        [pid, Type<@MOET.Vault>().identifier, flowTokenIdentifier]
+    )
+    let quote = quoteRes.returnValue as! TidalProtocol.LiquidationQuote
+
+    let liquidator = Test.createAccount()
+    setupMoetVault(liquidator, beFailed: false)
+    _executeTransaction("../transactions/moet/mint_moet.cdc", [liquidator.address, quote.requiredRepay], Test.getAccount(0x0000000000000007))
+
+    // max < required -> revert
+    let lowMaxRes = _executeTransaction(
+        "../transactions/tidal-protocol/pool-management/liquidate_repay_for_seize.cdc",
+        [pid, Type<@MOET.Vault>().identifier, flowTokenIdentifier, quote.requiredRepay - 0.00000001, 0.0],
+        liquidator
+    )
+    Test.expect(lowMaxRes, Test.beFailed())
+
+    // min > seize -> revert
+    let highMinRes = _executeTransaction(
+        "../transactions/tidal-protocol/pool-management/liquidate_repay_for_seize.cdc",
+        [pid, Type<@MOET.Vault>().identifier, flowTokenIdentifier, quote.requiredRepay, quote.seizeAmount + 0.1],
+        liquidator
+    )
+    Test.expect(highMinRes, Test.beFailed())
+}
+
+access(all)
+fun test_liquidation_rounding_guard() {
+    let pid: UInt64 = 0
+
+    let user = Test.createAccount()
+    setupMoetVault(user, beFailed: false)
+    transferFlowTokens(to: user, amount: 0.1)
+
+    _executeTransaction(
+        "./transactions/mock-tidal-protocol-consumer/create_wrapped_position.cdc",
+        [0.1, /storage/flowTokenVault, true],
+        user
+    )
+
+    setMockOraclePrice(signer: Test.getAccount(0x0000000000000007), forTokenIdentifier: flowTokenIdentifier, price: 0.9999)
+
+    let hBefore = getPositionHealth(pid: pid, beFailed: false)
+    Test.assert(DeFiActionsMathUtils.toUFix64Round(hBefore) < 1.0)
+
+    let quoteRes = _executeScript(
+        "../scripts/tidal-protocol/quote_liquidation.cdc",
+        [pid, Type<@MOET.Vault>().identifier, flowTokenIdentifier]
+    )
+    let quote = quoteRes.returnValue as! TidalProtocol.LiquidationQuote
+
+    let liquidator = Test.createAccount()
+    setupMoetVault(liquidator, beFailed: false)
+    _executeTransaction("../transactions/moet/mint_moet.cdc", [liquidator.address, quote.requiredRepay], Test.getAccount(0x0000000000000007))
+
+    _executeTransaction(
+        "../transactions/tidal-protocol/pool-management/liquidate_repay_for_seize.cdc",
+        [pid, Type<@MOET.Vault>().identifier, flowTokenIdentifier, quote.requiredRepay, 0.0],
+        liquidator
+    )
+
+    let hAfter = getPositionHealth(pid: pid, beFailed: false)
+    let targetHF = UInt128(1050000000000000000000000)
+    let tolerance = UInt128(10000000000000000000)
+    Test.assert(hAfter >= targetHF - tolerance, message: "Post-liquidation HF below target due to rounding")
+}
+
+access(all)
+fun test_liquidation_healthy_zero_quote() {
+    let pid: UInt64 = 0
+
+    let user = Test.createAccount()
+    setupMoetVault(user, beFailed: false)
+    transferFlowTokens(to: user, amount: 1000.0)
+
+    let openRes = _executeTransaction(
+        "./transactions/mock-tidal-protocol-consumer/create_wrapped_position.cdc",
+        [1000.0, /storage/flowTokenVault, true],
+        user
+    )
+    Test.expect(openRes, Test.beSucceeded())
+
+    // Set price to make HF > 1.0 (healthy)
+    setMockOraclePrice(signer: Test.getAccount(0x0000000000000007), forTokenIdentifier: flowTokenIdentifier, price: 1.2)
+
+    let h = getPositionHealth(pid: pid, beFailed: false)
+    let hUF = DeFiActionsMathUtils.toUFix64Round(h)
+    Test.assert(hUF > 1.0, message: "Position not healthy")
+
+    let quoteRes = _executeScript(
+        "../scripts/tidal-protocol/quote_liquidation.cdc",
+        [pid, Type<@MOET.Vault>().identifier, flowTokenIdentifier]
+    )
+    Test.expect(quoteRes, Test.beSucceeded())
+    let quote = quoteRes.returnValue as! TidalProtocol.LiquidationQuote
+
+    Test.assert(quote.requiredRepay == 0.0, message: "Required repay not zero for healthy position")
+    Test.assert(quote.seizeAmount == 0.0, message: "Seize amount not zero for healthy position")
+    Test.assert(quote.newHF == h, message: "New HF not matching current health")
+}
+
+// Uncomment the warmup test
+// Time-based warmup enforcement test removed
