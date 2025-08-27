@@ -146,4 +146,51 @@
 - High-level design (Notion): https://www.notion.so/Liquidation-Mechanism-in-Tidal-23a9c94cfb9c8087bee9d8e99045b3d9
 - Implementation doc (this branch): https://github.com/onflow/TidalProtocol/blob/feature/liquidation-mechanism/LIQUIDATION_MECHANISM_DESIGN.md
 
+## Liquidation policy (Phase 1)
+- **Target health factor (HF):** `liquidationTargetHF = 1.05e24`.
+- **Trigger condition:** Liquidation is only allowed when current HF < 1.0e24.
+- **Quote behavior (`quoteLiquidation`):**
+  - **If feasible:** Return the unique pair `(requiredRepay, seizeAmount)` that moves the position to HF ≈ `liquidationTargetHF` using the minimal necessary repayment and collateral seize.
+  - **If infeasible (insolvency):** Return the pair that maximizes HF subject to `seizeAmount ≤ availableCollateral`. This may still be HF < 1.0e24. Do not exceed available collateral.
+  - **No over-reward:** The quote never recommends seizing more collateral than required by the target (or insolvency boundary). Extra repayment must not increase seized collateral.
+  - **Monotonicity:** As price worsens, `requiredRepay` must not decrease. As price improves, `requiredRepay` must not increase (for the same state).
+  - **Rounding:** Round conservatively so post-quote execution is not below target due to rounding; small “at or above target” tolerance is acceptable.
+- **Execution behavior (`liquidateRepayForSeize`):**
+  - Uses the quote and takes **exactly** `requiredRepay` from the passed-in vault; if more is provided, the excess is returned/refunded to the caller.
+  - Sends **exactly** `seizeAmount` collateral to the liquidator; never more.
+  - Enforce slippage guards: `maxRepayAmount ≥ requiredRepay` and `minSeizeAmount ≤ seizeAmount`, else revert.
+  - Multiple liquidations can occur over time, but each call performs a single exact-to-quote step. No “extra repay for extra seize.”
+
+## Acceptance criteria
+- **Feasible cases:** After execution, `newHF` is ≥ `liquidationTargetHF - ε` (tiny tolerance for rounding) and ≈ target.
+- **Insolvent cases:** After execution, `newHF` is strictly improved compared to pre-liquidation HF; it may remain < 1.0e24.
+- **No over-repay/over-seize:** Sending a larger vault must not increase `seizeAmount`; the contract only consumes `requiredRepay`.
+- **Slippage respected:** Transactions revert if `maxRepayAmount` < `requiredRepay` or `minSeizeAmount` > `seizeAmount`.
+
+## What needs to be fixed/verified
+- **Config**
+  - Verify `liquidationTargetHF` is 1.05e24 and exposed via `get_liquidation_params.cdc`.
+- **Contract**
+  - Ensure `quoteLiquidation`:
+    - Solves to target when feasible; otherwise returns boundary solution that maximizes HF under `seize ≤ availableCollateral`.
+    - Rounds conservatively (post-exec HF not below target when feasible).
+    - Respects monotonicity vs price.
+  - Ensure `liquidateRepayForSeize`:
+    - Consumes exactly `requiredRepay` and seizes exactly `seizeAmount`.
+    - Refunds any excess funds passed in.
+    - Enforces slippage guards and rejects partial repayments that do not meet the quoted requirement.
+- **Tests**
+  - Update insolvency test:
+    - Expect `requiredRepay > 0`, `seizeAmount > 0`.
+    - Do not require “full seize” by default; instead require `newHF` > pre-HF and not above target; if the scenario is known infeasible, allow `newHF < 1.0e24`.
+  - Update multi-liquidation test:
+    - Ensure initial price produces HF < 1.0.
+    - After one liquidation, assert `newHF` ≥ target (feasible case); if you want multi-step, drop price further and liquidate again.
+  - Add an “overpay attempt” test:
+    - Pass `maxRepayAmount` > `requiredRepay` and assert actual repay equals `requiredRepay` and `seizeAmount` unchanged.
+  - Add a slippage failure test:
+    - `maxRepayAmount < requiredRepay` → revert; `minSeizeAmount > seizeAmount` → revert.
+  - Add rounding guard test:
+    - Feasible case should not end below target due to rounding.
+
 
