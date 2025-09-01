@@ -30,8 +30,8 @@ access(all) contract MockDexSwapper {
 
         init(inVault: Type, outVault: Type, vaultSource: Capability<auth(FungibleToken.Withdraw) &{FungibleToken.Vault}>, priceRatio: UFix64, uniqueID: DeFiActions.UniqueIdentifier?) {
             pre {
-                inVault.getType().isSubtype(of: Type<@{FungibleToken.Vault}>()): "inVault must be a FungibleToken Vault"
-                outVault.getType().isSubtype(of: Type<@{FungibleToken.Vault}>()): "outVault must be a FungibleToken Vault"
+                inVault.isSubtype(of: Type<@{FungibleToken.Vault}>()): "inVault must be a FungibleToken Vault"
+                outVault.isSubtype(of: Type<@{FungibleToken.Vault}>()): "outVault must be a FungibleToken Vault"
                 vaultSource.check(): "Invalid vaultSource capability"
                 priceRatio > 0.0: "Invalid price ratio"
             }
