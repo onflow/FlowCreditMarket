@@ -65,6 +65,16 @@ fun testCreateUserPositionSucceeds() {
     setupMoetVault(user, beFailed: false)
     mintFlow(to: user, amount: collateralAmount)
 
+    let betaTxn = Test.Transaction(
+        code: Test.readFile("../tests/transactions/tidal-protocol/pool-management/03_grant_beta.cdc"),
+        authorizers: [protocolAccount.address, user.address],
+        signers: [protocolAccount, user],
+        arguments: []
+    )
+    let betaTxResult = Test.executeTransaction(betaTxn)
+
+    Test.expect(betaTxResult, Test.beSucceeded())
+
     // ensure user does not have a MOET balance
     var moetBalance = getBalance(address: user.address, vaultPublicPath: MOET.VaultPublicPath)!
     Test.assertEqual(0.0, moetBalance)
@@ -115,6 +125,16 @@ fun testUndercollateralizedPositionRebalanceSucceeds() {
     let user = Test.createAccount()
     setupMoetVault(user, beFailed: false)
     mintFlow(to: user, amount: collateralAmount)
+
+    let betaTxn = Test.Transaction(
+        code: Test.readFile("../tests/transactions/tidal-protocol/pool-management/03_grant_beta.cdc"),
+        authorizers: [protocolAccount.address, user.address],
+        signers: [protocolAccount, user],
+        arguments: []
+    )
+    let betaTxResult = Test.executeTransaction(betaTxn)
+
+    Test.expect(betaTxResult, Test.beSucceeded())
 
     // open the position & push to drawDownSink - forces MOET to downstream test sink which is user's MOET Vault
     let res = executeTransaction("./transactions/mock-tidal-protocol-consumer/create_wrapped_position.cdc",
@@ -179,6 +199,16 @@ fun testOvercollateralizedPositionRebalanceSucceeds() {
     let user = Test.createAccount()
     setupMoetVault(user, beFailed: false)
     mintFlow(to: user, amount: collateralAmount)
+
+    let betaTxn = Test.Transaction(
+        code: Test.readFile("../tests/transactions/tidal-protocol/pool-management/03_grant_beta.cdc"),
+        authorizers: [protocolAccount.address, user.address],
+        signers: [protocolAccount, user],
+        arguments: []
+    )
+    let betaTxResult = Test.executeTransaction(betaTxn)
+
+    Test.expect(betaTxResult, Test.beSucceeded())
 
     // open the position & push to drawDownSink - forces MOET to downstream test sink which is user's MOET Vault
     let res = executeTransaction("./transactions/mock-tidal-protocol-consumer/create_wrapped_position.cdc",

@@ -23,8 +23,31 @@ access(all) contract MockTidalProtocolConsumer {
         repaymentSource: {DeFiActions.Source}?,
         pushToDrawDownSink: Bool
     ): @PositionWrapper {
+        panic("use createPositionWrapper_beta")
+        // return <- create PositionWrapper(
+        //     position: TidalProtocol.openPosition(
+        //         collateral: <-collateral,
+        //         issuanceSink: issuanceSink,
+        //         repaymentSource: repaymentSource,
+        //         pushToDrawDownSink: pushToDrawDownSink
+        //     )
+        // )
+    }
+
+    /// Opens a TidalProtocol Position and returns a PositionWrapper containing that new position
+    /// Closed Beta version
+    ///
+    access(all)
+    fun createPositionWrapper_beta(
+        betaCap: Capability<&{TidalProtocol.PoolBeta}>,
+        collateral: @{FungibleToken.Vault},
+        issuanceSink: {DeFiActions.Sink},
+        repaymentSource: {DeFiActions.Source}?,
+        pushToDrawDownSink: Bool
+    ): @PositionWrapper {
         return <- create PositionWrapper(
-            position: TidalProtocol.openPosition(
+            position: TidalProtocol.openPosition_beta(
+                betaCap: betaCap,
                 collateral: <-collateral,
                 issuanceSink: issuanceSink,
                 repaymentSource: repaymentSource,

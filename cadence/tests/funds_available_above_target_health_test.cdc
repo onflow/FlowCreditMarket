@@ -71,6 +71,16 @@ fun setup() {
     setupMoetVault(userAccount, beFailed: false)
     mintFlow(to: userAccount, amount: positionFundingAmount)
 
+    let betaTxn = Test.Transaction(
+        code: Test.readFile("../tests/transactions/tidal-protocol/pool-management/03_grant_beta.cdc"),
+        authorizers: [protocolAccount.address, userAccount.address],
+        signers: [protocolAccount, userAccount],
+        arguments: []
+    )
+    let betaTxResult = Test.executeTransaction(betaTxn)
+
+    Test.expect(betaTxResult, Test.beSucceeded())
+
     snapshot = getCurrentBlockHeight()
 
     log("----- funds_available_above_target_health_test.cdc SETUP COMPLETE -----")

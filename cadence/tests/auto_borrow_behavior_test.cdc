@@ -41,6 +41,16 @@ fun testAutoBorrowBehaviorWithTargetHealth() {
     setupMoetVault(user, beFailed: false)
     mintFlow(to: user, amount: 1_000.0)
 
+    let betaTxn = Test.Transaction(
+        code: Test.readFile("../tests/transactions/tidal-protocol/pool-management/03_grant_beta.cdc"),
+        authorizers: [protocolAccount.address, user.address],
+        signers: [protocolAccount, user],
+        arguments: []
+    )
+    let betaTxResult = Test.executeTransaction(betaTxn)
+
+    Test.expect(betaTxResult, Test.beSucceeded())
+
     // Capture MOET balance before opening the position for later comparison (no MOET should be minted)
     let moetVaultBalanceBefore = getBalance(address: user.address, vaultPublicPath: MOET.VaultPublicPath) ?? 0.0
 
@@ -101,6 +111,16 @@ fun testNoAutoBorrowWhenPushToDrawDownSinkFalse() {
     let user = Test.createAccount()
     setupMoetVault(user, beFailed: false)
     mintFlow(to: user, amount: 1_000.0)
+
+    let betaTxn = Test.Transaction(
+        code: Test.readFile("../tests/transactions/tidal-protocol/pool-management/03_grant_beta.cdc"),
+        authorizers: [protocolAccount.address, user.address],
+        signers: [protocolAccount, user],
+        arguments: []
+    )
+    let betaTxResult = Test.executeTransaction(betaTxn)
+
+    Test.expect(betaTxResult, Test.beSucceeded())
 
     // Capture MOET balance before opening the position for later comparison (no MOET should be minted)
     let moetVaultBalanceBefore = getBalance(address: user.address, vaultPublicPath: MOET.VaultPublicPath) ?? 0.0
