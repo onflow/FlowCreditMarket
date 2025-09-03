@@ -971,16 +971,36 @@ access(all) contract TidalProtocol {
                     repayTrueU128 = trueDebt
                 }
             }
-            let repayExact = DeFiActionsMathUtils.toUFix64Round(repayTrueU128)
-            let seizeExact = DeFiActionsMathUtils.toUFix64Round(seizeTrueU128)
+            let repayExact = DeFiActionsMathUtils.toUFix64RoundUp(repayTrueU128)
+            let seizeExact = DeFiActionsMathUtils.toUFix64RoundUp(seizeTrueU128)
             let repayEff = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(repayTrueU128, Pd), BF)
             let seizeEff = DeFiActionsMathUtils.mul(seizeTrueU128, DeFiActionsMathUtils.mul(Pc, CF))
             let newEffColl = effColl > seizeEff ? effColl - seizeEff : UInt128(0)
             let newEffDebt = effDebt > repayEff ? effDebt - repayEff : UInt128(0)
             let newHF = newEffDebt == UInt128(0) ? UInt128.max : DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(newEffColl, DeFiActionsMathUtils.e24), newEffDebt)
 
-            // Prevent liquidation if it would worsen HF (deep insolvency case)
+            // Prevent liquidation if it would worsen HF (deep insolvency case).
+            // As a fallback, try maximizing HF by seizing all available collateral of the chosen seizeType.
             if newHF < health {
+                var seizeTrueFallback = trueCollateralSeize
+                if seizeTrueFallback > UInt128(0) {
+                    let uAllowed = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(seizeTrueFallback, Pc), (DeFiActionsMathUtils.e24 + LB))
+                    var repayTrueFallback = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(uAllowed, BF), Pd)
+                    if repayTrueFallback > trueDebt {
+                        repayTrueFallback = trueDebt
+                    }
+                    let repayEff2 = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(repayTrueFallback, Pd), BF)
+                    let seizeEff2 = DeFiActionsMathUtils.mul(seizeTrueFallback, DeFiActionsMathUtils.mul(Pc, CF))
+                    let newEffColl2 = effColl > seizeEff2 ? effColl - seizeEff2 : UInt128(0)
+                    let newEffDebt2 = effDebt > repayEff2 ? effDebt - repayEff2 : UInt128(0)
+                    let newHF2 = newEffDebt2 == UInt128(0) ? UInt128.max : DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(newEffColl2, DeFiActionsMathUtils.e24), newEffDebt2)
+                    if newHF2 > health && repayTrueFallback > UInt128(0) {
+                        let repayExact2 = DeFiActionsMathUtils.toUFix64RoundUp(repayTrueFallback)
+                        let seizeExact2 = DeFiActionsMathUtils.toUFix64RoundUp(seizeTrueFallback)
+                        log("[LIQ][QUOTE][FALLBACK] repayExact=\(repayExact2) seizeExact=\(seizeExact2) fullSeize=true")
+                        return TidalProtocol.LiquidationQuote(requiredRepay: repayExact2, seizeType: seizeType, seizeAmount: seizeExact2, newHF: newHF2)
+                    }
+                }
                 return TidalProtocol.LiquidationQuote(requiredRepay: 0.0, seizeType: seizeType, seizeAmount: 0.0, newHF: health)
             }
 
