@@ -151,7 +151,7 @@
 - **Trigger condition:** Liquidation is only allowed when current HF < 1.0e24.
 - **Quote behavior (`quoteLiquidation`):**
   - **If feasible:** Return the unique pair `(requiredRepay, seizeAmount)` that moves the position to HF ≈ `liquidationTargetHF` using the minimal necessary repayment and collateral seize.
-  - **If infeasible (insolvency):** Return the pair that maximizes HF subject to `seizeAmount ≤ availableCollateral`. This may still be HF < 1.0e24. Do not exceed available collateral.
+  - **If infeasible (insolvency):** Return the pair that maximizes HF subject to `seizeAmount ≤ availableCollateral`. If reaching the target is not possible but solvency is, the quote should move HF to ≥ 1.0e24 (as close to target as allowed). If even solvency is not achievable, the quote must strictly improve HF while remaining < 1.0e24. Do not exceed available collateral.
   - **No over-reward:** The quote never recommends seizing more collateral than required by the target (or insolvency boundary). Extra repayment must not increase seized collateral.
   - **Monotonicity:** As price worsens, `requiredRepay` must not decrease. As price improves, `requiredRepay` must not increase (for the same state).
   - **Rounding:** Round conservatively so post-quote execution is not below target due to rounding; small “at or above target” tolerance is acceptable.
@@ -161,9 +161,21 @@
   - Enforce slippage guards: `maxRepayAmount ≥ requiredRepay` and `minSeizeAmount ≤ seizeAmount`, else revert.
   - Multiple liquidations can occur over time, but each call performs a single exact-to-quote step. No “extra repay for extra seize.”
 
+### Insolvency redemption (borrower path)
+- **Repay-all-and-redeem:** The borrower must always be able to repay all outstanding debt and fully redeem their collateral in one operation, regardless of HF (including when HF < 1.0e24). This closes the position and returns all collateral to the borrower.
+- **Partial borrower repayments:** Borrowers can partially repay debt via normal repay flows; collateral withdrawals remain gated by the health check. The effective collateral-to-debt exchange rate is determined by risk parameters and prices, not by discretionary ratios.
+
+### Typical insolvency scenarios
+- **Missed/late liquidation:** Automation or keepers fail to liquidate promptly after HF dips below 1.0, allowing interest accrual or price drift to deepen undercollateralization.
+- **Sharp price gap:** A sudden oracle price drop (or market gap) pushes HF far below 1.0 faster than liquidation can be executed.
+- **Route guards:** DEX-vs-oracle deviation guard or slippage limits temporarily block the DEX route; HF may worsen until conditions normalize or a keeper route executes.
+
+### Partial-to-above-one policy
+- When `liquidationTargetHF` cannot be reached due to constraints, but HF ≥ 1.0 is reachable, liquidations should proceed to bring HF above 1.0 immediately rather than waiting to hit 1.05 later. Subsequent liquidations can finish the move to target as conditions allow.
+
 ## Acceptance criteria
 - **Feasible cases:** After execution, `newHF` is ≥ `liquidationTargetHF - ε` (tiny tolerance for rounding) and ≈ target.
-- **Insolvent cases:** After execution, `newHF` is strictly improved compared to pre-liquidation HF; it may remain < 1.0e24.
+- **Insolvent cases:** After execution, `newHF` is strictly improved compared to pre-liquidation HF. If the target is unreachable but solvency is, `newHF ≥ 1.0e24`. If even solvency is unreachable, `newHF < 1.0e24` but greater than pre-HF.
 - **No over-repay/over-seize:** Sending a larger vault must not increase `seizeAmount`; the contract only consumes `requiredRepay`.
 - **Slippage respected:** Transactions revert if `maxRepayAmount` < `requiredRepay` or `minSeizeAmount` > `seizeAmount`.
 
