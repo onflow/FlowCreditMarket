@@ -29,14 +29,6 @@ access(all) contract TidalProtocolClosedBeta {
         }
     }
 
-    // ===== Account-gated core =====
-
-    access(all) fun betaRef(): &{IBeta} {
-        return self.account.storage
-            .borrow<&{IBeta}>(from: self.BetaBadgeStoragePath)
-            ?? panic("Beta badge missing on strategies account")
-    }
-
     init() {
         self.BetaBadgeStoragePath = StoragePath(
             identifier: "TidalProtocolClosedBetaBadge_\(self.account.address)"

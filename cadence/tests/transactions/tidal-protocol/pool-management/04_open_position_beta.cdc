@@ -8,15 +8,14 @@ import "TidalProtocolClosedBeta"
 
 transaction() {
     prepare(signer: auth(BorrowValue, Storage, Capabilities) &Account) {
-        let betaCap: Capability<&{TidalProtocolClosedBeta.IBeta}> =
-        signer.capabilities.storage.issue<&{TidalProtocolClosedBeta.IBeta}>(
-            TidalProtocolClosedBeta.BetaBadgeStoragePath
-        )
+        let betaRef = signer.storage.borrow<&{TidalProtocolClosedBeta.IBeta}>(
+            from: TidalProtocolClosedBeta.BetaBadgeStoragePath
+        ) ?? panic("Beta badge missing on strategies account")
 
         let zero1 <- DeFiActionsUtils.getEmptyVault(Type<@MOET.Vault>())
 
         let _pos = TidalProtocol.openPosition_beta(
-            betaCap: betaCap,
+            betaRef: betaRef,
             collateral: <- zero1,
             issuanceSink: TestHelpers.NoopSink(),
             repaymentSource: nil,

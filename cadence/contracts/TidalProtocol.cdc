@@ -1952,15 +1952,12 @@ return TidalProtocol.healthComputation(
     }
 
     access(all) fun openPosition_beta(
-        betaCap: Capability<&{TidalProtocolClosedBeta.IBeta}>,
+        betaRef: &{TidalProtocolClosedBeta.IBeta},
         collateral: @{FungibleToken.Vault},
         issuanceSink: {DeFiActions.Sink},
         repaymentSource: {DeFiActions.Source}?,
         pushToDrawDownSink: Bool
     ): Position {
-        pre {
-            betaCap.check(): "Beta only: valid IBeta capability required"
-        }
         let pid = self._borrowPool().createPosition(
             funds: <-collateral,
             issuanceSink: issuanceSink,

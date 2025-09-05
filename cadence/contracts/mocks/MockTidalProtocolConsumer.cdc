@@ -40,7 +40,7 @@ access(all) contract MockTidalProtocolConsumer {
     ///
     access(all)
     fun createPositionWrapper_beta(
-        betaCap: Capability<&{TidalProtocolClosedBeta.IBeta}>,
+        betaRef: &{TidalProtocolClosedBeta.IBeta},
         collateral: @{FungibleToken.Vault},
         issuanceSink: {DeFiActions.Sink},
         repaymentSource: {DeFiActions.Source}?,
@@ -48,7 +48,7 @@ access(all) contract MockTidalProtocolConsumer {
     ): @PositionWrapper {
         return <- create PositionWrapper(
             position: TidalProtocol.openPosition_beta(
-                betaCap: betaCap,
+                betaRef: betaRef,
                 collateral: <-collateral,
                 issuanceSink: issuanceSink,
                 repaymentSource: repaymentSource,

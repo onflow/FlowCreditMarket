@@ -24,7 +24,7 @@ transaction(amount: UFix64, vaultStoragePath: StoragePath, pushToDrawDownSink: B
     // the signer's account in which to store a PositionWrapper
     let account: auth(SaveValue) &Account
 
-    let betaCap: Capability<&{TidalProtocolClosedBeta.IBeta}>
+    let betaRef: &{TidalProtocolClosedBeta.IBeta}
 
     prepare(signer: auth(BorrowValue, SaveValue, IssueStorageCapabilityController, PublishCapability, UnpublishCapability) &Account) {
         // configure a MOET Vault to receive the loaned amount
@@ -63,16 +63,15 @@ transaction(amount: UFix64, vaultStoragePath: StoragePath, pushToDrawDownSink: B
 
         // assign the signer's account enabling the execute block to save the wrapper
         self.account = signer
-        self.betaCap =
-        signer.capabilities.storage.issue<&{TidalProtocolClosedBeta.IBeta}>(
-            TidalProtocolClosedBeta.BetaBadgeStoragePath
-        )
+        self.betaRef = signer.storage.borrow<&{TidalProtocolClosedBeta.IBeta}>(
+            from: TidalProtocolClosedBeta.BetaBadgeStoragePath
+        ) ?? panic("Beta badge missing on strategies account")
     }
 
     execute {
         // open a position & save in the Wrapper
         let wrapper <- MockTidalProtocolConsumer.createPositionWrapper_beta(
-            betaCap: self.betaCap,
+            betaRef: self.betaRef,
             collateral: <-self.collateral,
             issuanceSink: self.sink,
             repaymentSource: self.source,
