@@ -1,4 +1,4 @@
-access(all) contract ClosedBeta {
+access(all) contract TidalProtocolClosedBeta {
 
     // 1) Define an entitlement only the admin can issue
     access(all) entitlement Admin
@@ -13,17 +13,17 @@ access(all) contract ClosedBeta {
     access(all) resource AdminHandle {
         access(Admin) fun grantBeta(to: auth(Storage) &Account) {
             pre {
-                to.storage.type(at: ClosedBeta.BetaBadgeStoragePath) == nil:
+                to.storage.type(at: TidalProtocolClosedBeta.BetaBadgeStoragePath) == nil:
                     "BetaBadge already exists for this account"
             }
-            to.storage.save(<-create BetaBadge(), to: ClosedBeta.BetaBadgeStoragePath)
+            to.storage.save(<-create BetaBadge(), to: TidalProtocolClosedBeta.BetaBadgeStoragePath)
         }
         access(Admin) fun revokeBeta(from: auth(Storage) &Account) {
             pre {
-                from.storage.type(at: ClosedBeta.BetaBadgeStoragePath) != nil:
+                from.storage.type(at: TidalProtocolClosedBeta.BetaBadgeStoragePath) != nil:
                     "No BetaBadge to revoke"
             }
-            let badge <- from.storage.load<@BetaBadge>(from: ClosedBeta.BetaBadgeStoragePath)
+            let badge <- from.storage.load<@BetaBadge>(from: TidalProtocolClosedBeta.BetaBadgeStoragePath)
                 ?? panic("Missing BetaBadge")
             destroy badge
         }

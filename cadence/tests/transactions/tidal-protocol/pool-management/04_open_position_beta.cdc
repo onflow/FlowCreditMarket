@@ -4,14 +4,14 @@ import "TidalProtocol"
 import "TestHelpers"
 import "MOET"
 import "DeFiActionsUtils"
-import "ClosedBeta"
+import "TidalProtocolClosedBeta"
 
 transaction() {
     prepare(signer: auth(BorrowValue, Storage, Capabilities) &Account) {
-        let betaCap: Capability<&{ClosedBeta.IBeta}> =
-            signer.capabilities.storage.issue<&{ClosedBeta.IBeta}>(
-                ClosedBeta.BetaBadgeStoragePath
-            )
+        let betaCap: Capability<&{TidalProtocolClosedBeta.IBeta}> =
+        signer.capabilities.storage.issue<&{TidalProtocolClosedBeta.IBeta}>(
+            TidalProtocolClosedBeta.BetaBadgeStoragePath
+        )
 
         let zero1 <- DeFiActionsUtils.getEmptyVault(Type<@MOET.Vault>())
 

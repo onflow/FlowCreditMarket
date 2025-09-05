@@ -6,7 +6,7 @@ import "FungibleTokenConnectors"
 import "MOET"
 import "MockTidalProtocolConsumer"
 import "TidalProtocol"
-import "ClosedBeta"
+import "TidalProtocolClosedBeta"
 
 /// TEST TRANSACTION - DO NOT USE IN PRODUCTION
 ///
@@ -24,7 +24,7 @@ transaction(amount: UFix64, vaultStoragePath: StoragePath, pushToDrawDownSink: B
     // the signer's account in which to store a PositionWrapper
     let account: auth(SaveValue) &Account
 
-    let betaCap: Capability<&{ClosedBeta.IBeta}>
+    let betaCap: Capability<&{TidalProtocolClosedBeta.IBeta}>
 
     prepare(signer: auth(BorrowValue, SaveValue, IssueStorageCapabilityController, PublishCapability, UnpublishCapability) &Account) {
         // configure a MOET Vault to receive the loaned amount
@@ -64,9 +64,9 @@ transaction(amount: UFix64, vaultStoragePath: StoragePath, pushToDrawDownSink: B
         // assign the signer's account enabling the execute block to save the wrapper
         self.account = signer
         self.betaCap =
-            signer.capabilities.storage.issue<&{ClosedBeta.IBeta}>(
-                ClosedBeta.BetaBadgeStoragePath
-            )
+        signer.capabilities.storage.issue<&{TidalProtocolClosedBeta.IBeta}>(
+            TidalProtocolClosedBeta.BetaBadgeStoragePath
+        )
     }
 
     execute {

@@ -1,7 +1,7 @@
 {
 	"contracts": {
-		"ClosedBeta": {
-			"source": "./cadence/contracts/ClosedBeta.cdc",
+		"TidalProtocolClosedBeta": {
+			"source": "./cadence/contracts/TidalProtocolClosedBeta.cdc",
 			"aliases": {
 				"testing": "0000000000000007"
 			}
@@ -162,6 +162,7 @@
 						}
 					]
 				},
+        "TidalProtocolClosedBeta",
 				"TidalProtocol"
 			]
 		}
