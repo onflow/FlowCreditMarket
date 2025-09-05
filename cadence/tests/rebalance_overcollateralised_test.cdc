@@ -41,16 +41,9 @@ fun testRebalanceOvercollateralised() {
     setupMoetVault(user, beFailed: false)
     mintFlow(to: user, amount: 1_000.0)
 
-    let betaTxn = Test.Transaction(
-        code: Test.readFile("../tests/transactions/tidal-protocol/pool-management/03_grant_beta.cdc"),
-        authorizers: [protocolAccount.address, user.address],
-        signers: [protocolAccount, user],
-        arguments: []
-    )
-    let betaTxResult = Test.executeTransaction(betaTxn)
+    let betaTxResult = grantBeta(protocolAccount, user)
 
     Test.expect(betaTxResult, Test.beSucceeded())
-
 
     let openRes = executeTransaction(
         "./transactions/mock-tidal-protocol-consumer/create_wrapped_position.cdc",

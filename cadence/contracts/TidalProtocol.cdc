@@ -8,6 +8,7 @@ import "DeFiActionsUtils"
 import "DeFiActions"
 import "MOET"
 import "DeFiActionsMathUtils"
+import "ClosedBeta"
 
 access(all) contract TidalProtocol {
 
@@ -32,9 +33,6 @@ access(all) contract TidalProtocol {
     access(all) entitlement EImplementation
 
     access(all) entitlement EParticipant
-    access(all) resource interface PoolBeta {}
-    access(all) resource BetaBadge: PoolBeta {}
-    access(all) let BetaBadgeStoragePath: StoragePath
  
 
     /// InternalBalance
@@ -1595,22 +1593,6 @@ access(all) contract TidalProtocol {
             TidalProtocol.account.capabilities.unpublish(TidalProtocol.PoolPublicPath)
             TidalProtocol.account.capabilities.publish(cap, at: TidalProtocol.PoolPublicPath)
         }
-        access(EGovernance) fun grantBeta(to: auth(Storage) &Account) {
-            pre {
-                to.storage.type(at: TidalProtocol.BetaBadgeStoragePath) == nil:
-                    "BetaBadge already exists for this account"
-            }
-            to.storage.save(<-create BetaBadge(), to: TidalProtocol.BetaBadgeStoragePath)
-        }
-        access(EGovernance) fun revokeBeta(from: auth(Storage) &Account) {
-            pre {
-                from.storage.type(at: TidalProtocol.BetaBadgeStoragePath) != nil:
-                    "No BetaBadge to revoke"
-            }
-            let badge <- from.storage.load<@BetaBadge>(from: TidalProtocol.BetaBadgeStoragePath)
-                ?? panic("Missing BetaBadge")
-            destroy badge
-        }
     }
 
     /// Position
@@ -1970,14 +1952,14 @@ access(all) contract TidalProtocol {
     }
 
     access(all) fun openPosition_beta(
-        betaCap: Capability<&{PoolBeta}>,
+        betaCap: Capability<&{ClosedBeta.IBeta}>,
         collateral: @{FungibleToken.Vault},
         issuanceSink: {DeFiActions.Sink},
         repaymentSource: {DeFiActions.Source}?,
         pushToDrawDownSink: Bool
     ): Position {
         pre {
-            betaCap.check(): "Beta only: valid PoolBeta capability required"
+            betaCap.check(): "Beta only: valid IBeta capability required"
         }
         let pid = self._borrowPool().createPosition(
                 funds: <-collateral,
@@ -2074,8 +2056,6 @@ access(all) contract TidalProtocol {
         self.PoolStoragePath = StoragePath(identifier: "tidalProtocolPool_\(self.account.address)")!
         self.PoolFactoryPath = StoragePath(identifier: "tidalProtocolPoolFactory_\(self.account.address)")!
         self.PoolPublicPath = PublicPath(identifier: "tidalProtocolPool_\(self.account.address)")!
-
-        self.BetaBadgeStoragePath = StoragePath(identifier: "tidalProtocolBetaBadge_\(self.account.address)")!
 
         // save PoolFactory in storage
         self.account.storage.save(

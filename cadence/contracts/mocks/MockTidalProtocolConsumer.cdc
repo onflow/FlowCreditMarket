@@ -2,6 +2,7 @@ import "FungibleToken"
 
 import "DeFiActions"
 import "TidalProtocol"
+import "ClosedBeta"
 
 /// THIS CONTRACT IS NOT SAFE FOR PRODUCTION - FOR TEST USE ONLY
 /// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -39,7 +40,7 @@ access(all) contract MockTidalProtocolConsumer {
     ///
     access(all)
     fun createPositionWrapper_beta(
-        betaCap: Capability<&{TidalProtocol.PoolBeta}>,
+        betaCap: Capability<&{ClosedBeta.IBeta}>,
         collateral: @{FungibleToken.Vault},
         issuanceSink: {DeFiActions.Sink},
         repaymentSource: {DeFiActions.Source}?,

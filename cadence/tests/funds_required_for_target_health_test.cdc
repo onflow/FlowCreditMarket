@@ -68,13 +68,7 @@ fun setup() {
     setupMoetVault(userAccount, beFailed: false)
     mintFlow(to: userAccount, amount: positionFundingAmount)
 
-    let betaTxn = Test.Transaction(
-        code: Test.readFile("../tests/transactions/tidal-protocol/pool-management/03_grant_beta.cdc"),
-        authorizers: [protocolAccount.address, userAccount.address],
-        signers: [protocolAccount, userAccount],
-        arguments: []
-    )
-    let betaTxResult = Test.executeTransaction(betaTxn)
+    let betaTxResult = grantBeta(protocolAccount, userAccount)
 
     Test.expect(betaTxResult, Test.beSucceeded())
 

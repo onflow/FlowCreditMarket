@@ -65,13 +65,7 @@ access(all)
 fun testOpenPositionSuccess() {
     Test.reset(to: snapshot)
 
-    let betaTxn = Test.Transaction(
-        code: Test.readFile("../tests/transactions/tidal-protocol/pool-management/03_grant_beta.cdc"),
-        authorizers: [protocolAccount.address, testerAccount.address],
-        signers: [protocolAccount, testerAccount],
-        arguments: []
-    )
-    let betaTxResult = Test.executeTransaction(betaTxn)
+    let betaTxResult = grantBeta(protocolAccount, testerAccount)
 
     Test.expect(betaTxResult, Test.beSucceeded())
 

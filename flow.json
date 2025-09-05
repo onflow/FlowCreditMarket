@@ -1,5 +1,11 @@
 {
 	"contracts": {
+		"ClosedBeta": {
+			"source": "./cadence/contracts/ClosedBeta.cdc",
+			"aliases": {
+				"testing": "0000000000000007"
+			}
+		},
 		"DeFiActions": {
 			"source": "./DeFiActions/cadence/contracts/interfaces/DeFiActions.cdc",
 			"aliases": {

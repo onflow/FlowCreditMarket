@@ -1,21 +1,26 @@
-import "TidalProtocol"
+import "ClosedBeta"
 
 transaction() {
+
     prepare(
-        // Admin needs Capabilities to issue an entitlement-bearing capability
-        admin: auth(BorrowValue, Capabilities) &Account,
+        // Must be the SAME account that deployed `ClosedBeta`
+        admin: auth(Capabilities) &Account,
+        // The target must allow storage writes
         tester: auth(Storage) &Account
     ) {
-        // Issue a storage capability that carries the EGovernance entitlement
-        let govCap: Capability<auth(TidalProtocol.EGovernance) &TidalProtocol.PoolFactory> =
-            admin.capabilities.storage.issue<auth(TidalProtocol.EGovernance) &TidalProtocol.PoolFactory>(
-                TidalProtocol.PoolFactoryPath
+        // 1) Issue a capability to the stored AdminHandle with the Admin entitlement
+        let adminCap: Capability<auth(ClosedBeta.Admin) &ClosedBeta.AdminHandle> =
+            admin.capabilities.storage.issue<auth(ClosedBeta.Admin) &ClosedBeta.AdminHandle>(
+                ClosedBeta.AdminHandleStoragePath
             )
+        assert(adminCap.check(), message: "AdminHandle not found at AdminHandleStoragePath")
 
-        let govFactory = govCap.borrow()
-            ?? panic("Failed to borrow governance-capability to PoolFactory")
+        // 2) Borrow the entitled AdminHandle reference
+        let adminHandler: auth(ClosedBeta.Admin) &ClosedBeta.AdminHandle =
+            adminCap.borrow()
+            ?? panic("Failed to borrow entitled AdminHandle")
 
-        // Now you can call the entitlement-gated method
-        govFactory.grantBeta(to: tester)
+        // 3) Use the handler to perform the gated operation
+        adminHandler.grantBeta(to: tester)
     }
 }
