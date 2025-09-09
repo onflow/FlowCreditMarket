@@ -341,10 +341,6 @@ access(all) contract TidalProtocol {
 
             // Remaining headroom before hitting the cap
             let remaining: UFix64 = self.depositCapacityCap - self.depositCapacity
-            if remaining <= 0.0 {
-                self.depositCapacity = self.depositCapacityCap
-                return
-            }
 
             // Bound the multiplier BEFORE multiplying to prevent overflow:
             // choose the largest rate that still ensures rate*dt <= remaining
@@ -355,10 +351,11 @@ access(all) contract TidalProtocol {
 
             // Safe: growth <= remaining, so the addition cannot overflow
             let growth: UFix64 = effectiveRate * dt
-            self.depositCapacity = self.depositCapacity + growth
 
             // Defensive clamp (handles any rounding edge cases)
-            if self.depositCapacity > self.depositCapacityCap {
+            if self.depositCapacity < (self.depositCapacityCap - growth) {
+                self.depositCapacity = self.depositCapacity + growth
+            } else {
                 self.depositCapacity = self.depositCapacityCap
             }
         }
@@ -970,7 +967,6 @@ access(all) contract TidalProtocol {
             let uintDepositCollateralFactor = DeFiActionsMathUtils.toUInt128(self.collateralFactor[depositType]!)
             var requiredEffectiveCollateral = DeFiActionsMathUtils.mul(uintHealthChange, effectiveDebtAfterWithdrawal)
             requiredEffectiveCollateral = DeFiActionsMathUtils.div(requiredEffectiveCollateral, uintDepositCollateralFactor)
-            requiredEffectiveCollateral = DeFiActionsMathUtils.div(requiredEffectiveCollateral, uintWithdrawBorrowFactor)
 
             // The amount of the token to deposit, in units of the token.
             let collateralTokenCount = DeFiActionsMathUtils.div(requiredEffectiveCollateral, uintDepositPrice)
