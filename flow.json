@@ -1,11 +1,5 @@
 {
 	"contracts": {
-		"TidalProtocolClosedBeta": {
-			"source": "./cadence/contracts/TidalProtocolClosedBeta.cdc",
-			"aliases": {
-				"testing": "0000000000000007"
-			}
-		},
 		"DeFiActions": {
 			"source": "./DeFiActions/cadence/contracts/interfaces/DeFiActions.cdc",
 			"aliases": {
@@ -45,7 +39,7 @@
 		"MockTidalProtocolConsumer": {
 			"source": "./cadence/contracts/mocks/MockTidalProtocolConsumer.cdc",
 			"aliases": {
-				"testing": "0000000000000007"
+				"testing": "0000000000000008"
 			}
 		},
 		"MockYieldToken": {
@@ -162,7 +156,6 @@
 						}
 					]
 				},
-        "TidalProtocolClosedBeta",
 				"TidalProtocol"
 			]
 		}

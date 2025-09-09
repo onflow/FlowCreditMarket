@@ -78,13 +78,6 @@ fun deployContracts() {
     Test.expect(err, Test.beNil())
 
     err = Test.deployContract(
-        name: "TidalProtocolClosedBeta",
-        path: "../contracts/TidalProtocolClosedBeta.cdc",
-        arguments: []
-    )
-    Test.expect(err, Test.beNil())
-
-    err = Test.deployContract(
         name: "TidalProtocol",
         path: "../contracts/TidalProtocol.cdc",
         arguments: []

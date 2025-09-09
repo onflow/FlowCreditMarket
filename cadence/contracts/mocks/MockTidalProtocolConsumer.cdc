@@ -2,7 +2,6 @@ import "FungibleToken"
 
 import "DeFiActions"
 import "TidalProtocol"
-import "TidalProtocolClosedBeta"
 
 /// THIS CONTRACT IS NOT SAFE FOR PRODUCTION - FOR TEST USE ONLY
 /// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -24,36 +23,24 @@ access(all) contract MockTidalProtocolConsumer {
         repaymentSource: {DeFiActions.Source}?,
         pushToDrawDownSink: Bool
     ): @PositionWrapper {
-        panic("use createPositionWrapper_beta")
-        // return <- create PositionWrapper(
-        //     position: TidalProtocol.openPosition(
-        //         collateral: <-collateral,
-        //         issuanceSink: issuanceSink,
-        //         repaymentSource: repaymentSource,
-        //         pushToDrawDownSink: pushToDrawDownSink
-        //     )
-        // )
-    }
+        let poolCap = self.account.storage.load<Capability<auth(TidalProtocol.EParticipant, TidalProtocol.EPosition) &TidalProtocol.Pool>>(
+            from: TidalProtocol.PoolCapStoragePath
+        ) ?? panic("Missing pool capability")
 
-    /// Opens a TidalProtocol Position and returns a PositionWrapper containing that new position
-    /// Closed Beta version
-    ///
-    access(all)
-    fun createPositionWrapper_beta(
-        betaRef: &{TidalProtocolClosedBeta.IBeta},
-        collateral: @{FungibleToken.Vault},
-        issuanceSink: {DeFiActions.Sink},
-        repaymentSource: {DeFiActions.Source}?,
-        pushToDrawDownSink: Bool
-    ): @PositionWrapper {
-        return <- create PositionWrapper(
-            position: TidalProtocol.openPosition_beta(
-                betaRef: betaRef,
-                collateral: <-collateral,
+        let poolRef = poolCap.borrow() ?? panic("Invalid Pool Cap")
+
+        let pid = poolRef.createPosition(
+                funds: <-collateral,
                 issuanceSink: issuanceSink,
                 repaymentSource: repaymentSource,
                 pushToDrawDownSink: pushToDrawDownSink
             )
+        let position = TidalProtocol.Position(id: pid, pool: poolCap)
+        log("poolCap")
+        log(poolCap)
+        self.account.storage.save(poolCap, to: TidalProtocol.PoolCapStoragePath)
+        return <- create PositionWrapper(
+            position: position
         )
     }
 

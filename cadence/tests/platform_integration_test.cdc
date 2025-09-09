@@ -11,6 +11,7 @@ import "test_helpers.cdc"
  */
 
 access(all) let protocolAccount = Test.getAccount(0x0000000000000007)
+access(all) let protocolConsumerAccount = Test.getAccount(0x0000000000000008)
 
 access(all) var snapshot: UInt64 = 0
 
@@ -21,6 +22,10 @@ access(all) let flowVaultStoragePath = /storage/flowTokenVault
 access(all)
 fun setup() {
     deployContracts()
+    let betaTxResult = grantBeta(protocolAccount, protocolConsumerAccount)
+
+    Test.expect(betaTxResult, Test.beSucceeded())
+
     snapshot = getCurrentBlockHeight()
 }
 
@@ -64,10 +69,6 @@ fun testCreateUserPositionSucceeds() {
     let user = Test.createAccount()
     setupMoetVault(user, beFailed: false)
     mintFlow(to: user, amount: collateralAmount)
-
-    let betaTxResult = grantBeta(protocolAccount, user)
-
-    Test.expect(betaTxResult, Test.beSucceeded())
 
     // ensure user does not have a MOET balance
     var moetBalance = getBalance(address: user.address, vaultPublicPath: MOET.VaultPublicPath)!
@@ -119,10 +120,6 @@ fun testUndercollateralizedPositionRebalanceSucceeds() {
     let user = Test.createAccount()
     setupMoetVault(user, beFailed: false)
     mintFlow(to: user, amount: collateralAmount)
-
-    let betaTxResult = grantBeta(protocolAccount, user)
-
-    Test.expect(betaTxResult, Test.beSucceeded())
 
     // open the position & push to drawDownSink - forces MOET to downstream test sink which is user's MOET Vault
     let res = executeTransaction("./transactions/mock-tidal-protocol-consumer/create_wrapped_position.cdc",
@@ -187,10 +184,6 @@ fun testOvercollateralizedPositionRebalanceSucceeds() {
     let user = Test.createAccount()
     setupMoetVault(user, beFailed: false)
     mintFlow(to: user, amount: collateralAmount)
-
-    let betaTxResult = grantBeta(protocolAccount, user)
-
-    Test.expect(betaTxResult, Test.beSucceeded())
 
     // open the position & push to drawDownSink - forces MOET to downstream test sink which is user's MOET Vault
     let res = executeTransaction("./transactions/mock-tidal-protocol-consumer/create_wrapped_position.cdc",

@@ -6,7 +6,6 @@ import "FungibleTokenConnectors"
 import "MOET"
 import "MockTidalProtocolConsumer"
 import "TidalProtocol"
-import "TidalProtocolClosedBeta"
 
 /// TEST TRANSACTION - DO NOT USE IN PRODUCTION
 ///
@@ -23,8 +22,6 @@ transaction(amount: UFix64, vaultStoragePath: StoragePath, pushToDrawDownSink: B
     let source: {DeFiActions.Source}
     // the signer's account in which to store a PositionWrapper
     let account: auth(SaveValue) &Account
-
-    let betaRef: &{TidalProtocolClosedBeta.IBeta}
 
     prepare(signer: auth(BorrowValue, SaveValue, IssueStorageCapabilityController, PublishCapability, UnpublishCapability) &Account) {
         // configure a MOET Vault to receive the loaned amount
@@ -63,15 +60,11 @@ transaction(amount: UFix64, vaultStoragePath: StoragePath, pushToDrawDownSink: B
 
         // assign the signer's account enabling the execute block to save the wrapper
         self.account = signer
-        self.betaRef = signer.storage.borrow<&{TidalProtocolClosedBeta.IBeta}>(
-            from: TidalProtocolClosedBeta.BetaBadgeStoragePath
-        ) ?? panic("Beta badge missing on strategies account")
     }
 
     execute {
         // open a position & save in the Wrapper
-        let wrapper <- MockTidalProtocolConsumer.createPositionWrapper_beta(
-            betaRef: self.betaRef,
+        let wrapper <- MockTidalProtocolConsumer.createPositionWrapper(
             collateral: <-self.collateral,
             issuanceSink: self.sink,
             repaymentSource: self.source,

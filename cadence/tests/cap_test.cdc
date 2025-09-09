@@ -46,7 +46,7 @@ fun testPositionCreationFail() {
         protocolAccount
     )
     Test.expect(txResult, Test.beFailed())
-} 
+}
 
 access(all)
 fun testPositionCreationSuccess() {
@@ -62,18 +62,6 @@ fun testPositionCreationSuccess() {
 } 
 
 access(all)
-fun testOpenPositionSuccess() {
-    Test.reset(to: snapshot)
-
-    let betaTxResult = grantBeta(protocolAccount, testerAccount)
-
-    Test.expect(betaTxResult, Test.beSucceeded())
-
-    let openPositionResult = _executeTransaction("../tests/transactions/tidal-protocol/pool-management/04_open_position_beta.cdc", [], testerAccount)
-    Test.expect(openPositionResult, Test.beSucceeded())
-}
-
-access(all)
 fun testNegativeCap() {
     Test.reset(to: snapshot)
 
@@ -81,20 +69,3 @@ fun testNegativeCap() {
     Test.expect(negativeResult, Test.beFailed())
 }
 
-access(all)
-fun testNegativePool() {
-    Test.reset(to: snapshot)
-
-    let negativeBetaTxn = Test.Transaction(
-        code: Test.readFile("../tests/transactions/tidal-protocol/pool-management/06_negative_pool_check.cdc"),
-        authorizers: [protocolAccount.address, testerAccount.address],
-        signers: [protocolAccount, testerAccount],
-        arguments: []
-    )
-    let negativeBetaTxResult = Test.executeTransaction(negativeBetaTxn)
-
-    Test.expect(negativeBetaTxResult, Test.beFailed())
-
-    let openPositionResult = _executeTransaction("../tests/transactions/tidal-protocol/pool-management/04_open_position_beta.cdc", [], testerAccount)
-    Test.expect(openPositionResult, Test.beFailed())
-}

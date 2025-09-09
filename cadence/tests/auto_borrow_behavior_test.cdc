@@ -6,6 +6,7 @@ import "TidalProtocol"
 import "test_helpers.cdc"
 
 access(all) let protocolAccount = Test.getAccount(0x0000000000000007)
+access(all) let protocolConsumerAccount = Test.getAccount(0x0000000000000008)
 access(all) let flowTokenIdentifier = "A.0000000000000003.FlowToken.Vault"
 access(all) let moetTokenIdentifier = "A.0000000000000007.MOET.Vault"
 access(all) let flowVaultStoragePath = /storage/flowTokenVault
@@ -13,6 +14,10 @@ access(all) let flowVaultStoragePath = /storage/flowTokenVault
 access(all)
 fun setup() {
     deployContracts()
+
+    let betaTxResult = grantBeta(protocolAccount, protocolConsumerAccount)
+
+    Test.expect(betaTxResult, Test.beSucceeded())
 }
 
 access(all)
@@ -40,10 +45,6 @@ fun testAutoBorrowBehaviorWithTargetHealth() {
     let user = Test.createAccount()
     setupMoetVault(user, beFailed: false)
     mintFlow(to: user, amount: 1_000.0)
-
-    let betaTxResult = grantBeta(protocolAccount, user)
-
-    Test.expect(betaTxResult, Test.beSucceeded())
 
     // Capture MOET balance before opening the position for later comparison (no MOET should be minted)
     let moetVaultBalanceBefore = getBalance(address: user.address, vaultPublicPath: MOET.VaultPublicPath) ?? 0.0
@@ -105,10 +106,6 @@ fun testNoAutoBorrowWhenPushToDrawDownSinkFalse() {
     let user = Test.createAccount()
     setupMoetVault(user, beFailed: false)
     mintFlow(to: user, amount: 1_000.0)
-
-    let betaTxResult = grantBeta(protocolAccount, user)
-
-    Test.expect(betaTxResult, Test.beSucceeded())
 
     // Capture MOET balance before opening the position for later comparison (no MOET should be minted)
     let moetVaultBalanceBefore = getBalance(address: user.address, vaultPublicPath: MOET.VaultPublicPath) ?? 0.0
