@@ -1164,7 +1164,10 @@ access(all) contract TidalProtocol {
             let payout <- seizeReserveRef.withdraw(amount: quote.seizeAmount)
 
             let actualNewHF = self.positionHealth(pid: pid)
-            assert(actualNewHF >= self.liquidationTargetHF, message: "Post-liquidation HF below target")
+            // Ensure realized HF is not materially below quoted HF (allow tiny rounding tolerance)
+            let expectedHF = quote.newHF
+            let hfTolerance: UInt128 = 10_000_000_000_000_000_000 // 1e19 ≈ 0.00001 in e24 scale
+            assert(actualNewHF + hfTolerance >= expectedHF, message: "Post-liquidation HF below expected")
 
             emit LiquidationExecuted(pid: pid, poolUUID: self.uuid, debtType: debtType.identifier, repayAmount: quote.requiredRepay, seizeType: seizeType.identifier, seizeAmount: quote.seizeAmount, newHF: actualNewHF)
 

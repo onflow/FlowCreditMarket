@@ -75,10 +75,9 @@ access(all) contract MockDexSwapper {
         }
 
         access(all) fun swapBack(quote: {DeFiActions.Quote}?, residual: @{FungibleToken.Vault}): @{FungibleToken.Vault} {
-            // Not needed in tests; burn residual and return empty inType vault
+            // Not needed in tests; burn residual and panic to surface misuse
             Burner.burn(<-residual)
-            return <- DeFiActionsUtils.getEmptyVault(self.inType())
-            // panic("MockSwapper.swapBack() not implemented")
+            panic("MockSwapper.swapBack() not implemented")
         }
 
         access(all) fun getComponentInfo(): DeFiActions.ComponentInfo {
