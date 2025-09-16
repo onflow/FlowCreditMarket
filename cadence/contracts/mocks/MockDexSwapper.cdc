@@ -46,13 +46,23 @@ access(all) contract MockDexSwapper {
         access(all) view fun outType(): Type { return self.outVault }
 
         access(all) fun quoteIn(forDesired: UFix64, reverse: Bool): {DeFiActions.Quote} {
-            let inAmt = reverse ? forDesired / self.priceRatio : forDesired / self.priceRatio
-            return BasicQuote(inType: reverse ? self.outType() : self.inType(), outType: reverse ? self.inType() : self.outType(), inAmount: inAmt, outAmount: forDesired)
+            let inAmt = reverse ? forDesired * self.priceRatio : forDesired / self.priceRatio
+            return BasicQuote(
+                inType: reverse ? self.outType() : self.inType(),
+                outType: reverse ? self.inType() : self.outType(),
+                inAmount: inAmt,
+                outAmount: forDesired
+            )
         }
 
         access(all) fun quoteOut(forProvided: UFix64, reverse: Bool): {DeFiActions.Quote} {
             let outAmt = reverse ? forProvided / self.priceRatio : forProvided * self.priceRatio
-            return BasicQuote(inType: reverse ? self.outType() : self.inType(), outType: reverse ? self.inType() : self.outType(), inAmount: forProvided, outAmount: outAmt)
+            return BasicQuote(
+                inType: reverse ? self.outType() : self.inType(),
+                outType: reverse ? self.inType() : self.outType(),
+                inAmount: forProvided,
+                outAmount: outAmt
+            )
         }
 
         access(all) fun swap(quote: {DeFiActions.Quote}?, inVault: @{FungibleToken.Vault}): @{FungibleToken.Vault} {
@@ -68,6 +78,7 @@ access(all) contract MockDexSwapper {
             // Not needed in tests; burn residual and return empty inType vault
             Burner.burn(<-residual)
             return <- DeFiActionsUtils.getEmptyVault(self.inType())
+            // panic("MockSwapper.swapBack() not implemented")
         }
 
         access(all) fun getComponentInfo(): DeFiActions.ComponentInfo {

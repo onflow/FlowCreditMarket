@@ -404,7 +404,7 @@ access(all) contract TidalProtocol {
     access(all) struct RiskParams {
         access(all) let collateralFactor: UInt128
         access(all) let borrowFactor: UInt128
-        access(all) let liquidationBonus: UInt128  // New: e24, e.g. 5% = 5e22
+        access(all) let liquidationBonus: UInt128  // e24, e.g. 5% = 5e22
 
         init(cf: UInt128, bf: UInt128, lb: UInt128) {
             self.collateralFactor = cf
@@ -643,6 +643,14 @@ access(all) contract TidalProtocol {
             // Vaults will be added when tokens are first deposited
         }
 
+        access(self) fun _assertLiquidationsActive() {
+            assert(!self.liquidationsPaused, message: "Liquidations paused")
+            if self.lastUnpausedAt != nil {
+                let now = UInt64(getCurrentBlock().timestamp)
+                assert(now >= self.lastUnpausedAt! + self.liquidationWarmupSec, message: "Liquidations in warm-up period")
+            }
+        }
+
         ///////////////
         // GETTERS
         ///////////////
@@ -679,7 +687,7 @@ access(all) contract TidalProtocol {
                 "dexOracleDeviationBps": self.dexOracleDeviationBps,
                 "allowedSwappers": allowed,
                 "dexMaxSlippageBps": self.dexMaxSlippageBps,
-                "dexMaxRouteHops": self.dexMaxRouteHops
+                "dexMaxRouteHops": self.dexMaxRouteHops // informational; enforcement is left to swapper implementations
             }
         }
 
@@ -830,8 +838,8 @@ access(all) contract TidalProtocol {
         /// Quote liquidation required repay and seize amounts to bring HF to liquidationTargetHF using a single seizeType
         access(all) fun quoteLiquidation(pid: UInt64, debtType: Type, seizeType: Type): TidalProtocol.LiquidationQuote {
             pre {
-                self.globalLedger[debtType] != nil: "Invalid debt type"
-                self.globalLedger[seizeType] != nil: "Invalid seize type"
+                self.globalLedger[debtType] != nil: "Invalid debt type \(debtType.identifier)"
+                self.globalLedger[seizeType] != nil: "Invalid seize type \(seizeType.identifier)"
             }
             let view = self.buildPositionView(pid: pid)
             let health = TidalProtocol.healthFactor(view: view)
@@ -1109,15 +1117,11 @@ access(all) contract TidalProtocol {
             from: @{FungibleToken.Vault}
         ): @LiquidationResult {
             pre {
-                self.globalLedger[debtType] != nil: "Invalid debt type"
-                self.globalLedger[seizeType] != nil: "Invalid seize type"
+                self.globalLedger[debtType] != nil: "Invalid debt type \(debtType.identifier)"
+                self.globalLedger[seizeType] != nil: "Invalid seize type \(seizeType.identifier)"
             }
             // Pause/warm-up checks
-            assert(!self.liquidationsPaused, message: "Liquidations paused")
-            if self.lastUnpausedAt != nil {
-                let now = UInt64(getCurrentBlock().timestamp)
-                assert(now >= self.lastUnpausedAt! + self.liquidationWarmupSec, message: "Liquidations in warm-up period")
-            }
+            self._assertLiquidationsActive()
 
             // Quote required repay and seize
             let quote = self.quoteLiquidation(pid: pid, debtType: debtType, seizeType: seizeType)
@@ -1160,6 +1164,7 @@ access(all) contract TidalProtocol {
             let payout <- seizeReserveRef.withdraw(amount: quote.seizeAmount)
 
             let actualNewHF = self.positionHealth(pid: pid)
+            assert(actualNewHF >= self.liquidationTargetHF, message: "Post-liquidation HF below target")
 
             emit LiquidationExecuted(pid: pid, poolUUID: self.uuid, debtType: debtType.identifier, repayAmount: quote.requiredRepay, seizeType: seizeType.identifier, seizeAmount: quote.seizeAmount, newHF: actualNewHF)
 
@@ -1181,10 +1186,7 @@ access(all) contract TidalProtocol {
                 self.globalLedger[seizeType] != nil: "Invalid seize type"
                 !self.liquidationsPaused: "Liquidations paused"
             }
-            if self.lastUnpausedAt != nil {
-                let now = UInt64(getCurrentBlock().timestamp)
-                assert(now >= self.lastUnpausedAt! + self.liquidationWarmupSec, message: "Liquidations in warm-up period")
-            }
+            self._assertLiquidationsActive()
 
             // Ensure reserve vaults exist for both tokens
             if self.reserves[seizeType] == nil { self.reserves[seizeType] <-! DeFiActionsUtils.getEmptyVault(seizeType) }
@@ -1193,6 +1195,7 @@ access(all) contract TidalProtocol {
             // Validate position is liquidatable
             let health = self.positionHealth(pid: pid)
             assert(health < DeFiActionsMathUtils.e24, message: "Position not liquidatable")
+            assert(self.isLiquidatable(pid: pid), message: "Position \(pid) is not liquidatable")
 
             // Internal quote to determine required seize (capped by max)
             let internalQuote = self.quoteLiquidation(pid: pid, debtType: debtType, seizeType: seizeType)
@@ -1202,8 +1205,8 @@ access(all) contract TidalProtocol {
 
             // Allowlist/type checks
             assert(self.allowedSwapperTypes[swapper.getType()] == true, message: "Swapper not allowlisted")
-            assert(swapper.inType() == seizeType, message: "Swapper must accept seizeType")
-            assert(swapper.outType() == debtType, message: "Swapper must output debtType")
+            assert(swapper.inType() == seizeType, message: "Swapper must accept seizeType \(seizeType.identifier)")
+            assert(swapper.outType() == debtType, message: "Swapper must output debtType \(debtType.identifier)")
 
             // Oracle vs DEX price deviation guard
             let Pc = self.priceOracle.price(ofToken: seizeType)!
@@ -1223,9 +1226,11 @@ access(all) contract TidalProtocol {
 
             // Slippage guard if quote provided
             var slipBps: UInt16 = 0
-            if quote != nil && dexQuote.outAmount > 0.0 {
-                let diff: UFix64 = outDebt.balance > dexQuote.outAmount ? outDebt.balance - dexQuote.outAmount : dexQuote.outAmount - outDebt.balance
-                let frac: UFix64 = diff / dexQuote.outAmount
+            // Slippage vs expected from oracle prices
+            let expectedOutFromOracle = requiredSeize * (Pd / Pc)
+            if expectedOutFromOracle > 0.0 {
+                let diff: UFix64 = outDebt.balance > expectedOutFromOracle ? outDebt.balance - expectedOutFromOracle : expectedOutFromOracle - outDebt.balance
+                let frac: UFix64 = diff / expectedOutFromOracle
                 let bpsU: UFix64 = frac * 10000.0
                 slipBps = UInt16(bpsU)
                 assert(UInt64(slipBps) <= self.dexMaxSlippageBps, message: "Swap slippage too high")
@@ -1233,7 +1238,10 @@ access(all) contract TidalProtocol {
 
             // Repay debt using swap output
             let repaid = self.internalRepay(pid: pid, debtType: debtType, from: <-outDebt)
-            assert(repaid >= minRepayAmount, message: "Insufficient repay after swap")
+            assert(repaid >= minRepayAmount, message: "Insufficient repay after swap - required \(minRepayAmount) but repaid \(repaid)")
+            // Optional safety: ensure improved health meets target
+            let postHF = self.positionHealth(pid: pid)
+            assert(postHF >= self.liquidationTargetHF, message: "Post-liquidation HF below target")
 
             emit LiquidationExecutedViaDex(
                 pid: pid,
@@ -1270,7 +1278,7 @@ access(all) contract TidalProtocol {
             }
             let toDeposit <- from
             let amount = toDeposit.balance
-            let reserveRef = (&self.reserves[debtType] as auth(FungibleToken.Withdraw) &{FungibleToken.Vault}?)!
+            let reserveRef = (&self.reserves[debtType] as &{FungibleToken.Vault}?)!
             reserveRef.deposit(from: <-toDeposit)
             let position = self._borrowPosition(pid: pid)
             let debtState = self._borrowUpdatedTokenState(type: debtType)
@@ -2824,7 +2832,7 @@ access(all) contract TidalProtocol {
         let factory = self.account.storage.borrow<&PoolFactory>(from: self.PoolFactoryPath)!
     }
 
-    access(all) resource LiquidationResult {
+    access(all) resource LiquidationResult: Burner.Burnable {
         access(all) var seized: @{FungibleToken.Vault}?
         access(all) var remainder: @{FungibleToken.Vault}?
 
@@ -2841,6 +2849,21 @@ access(all) contract TidalProtocol {
         access(all) fun takeRemainder(): @{FungibleToken.Vault} {
             let r <- self.remainder <- nil
             return <- r!
+        }
+
+        access(contract) fun burnCallback() {
+            let s <- self.seized <- nil
+            let r <- self.remainder <- nil
+            if s != nil {
+                Burner.burn(<-s)
+            } else {
+                destroy s
+            }
+            if r != nil {
+                Burner.burn(<-r)
+            } else {
+                destroy r
+            }
         }
     }
 
