@@ -53,6 +53,12 @@
 			"aliases": {
 				"testing": "0000000000000007"
 			}
+		},
+		"TidalProtocolPAL": {
+			"source": "./cadence/contracts/TidalProtocolPAL.cdc",
+			"aliases": {
+				"testing": "0000000000000007"
+			}
 		}
 	},
 	"dependencies": {
@@ -150,6 +156,7 @@
 						}
 					]
 				},
+				"TidalProtocolPAL",
 				"TidalProtocol"
 			]
 		}
