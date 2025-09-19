@@ -3,7 +3,7 @@ import "DeFiActions"
 import "DeFiActionsUtils"
 import "TidalProtocol"
 import "MOET"
-import "TestHelpers"
+import "DummyConnectors"
 
 transaction {
     prepare(admin: auth(BorrowValue, IssueStorageCapabilityController) &Account) {
@@ -18,7 +18,7 @@ transaction {
         let zero1 <- DeFiActionsUtils.getEmptyVault(Type<@MOET.Vault>())
         let pid = pool.createPosition(
             funds: <- zero1,
-            issuanceSink: TestHelpers.NoopSink(),
+            issuanceSink: DummyConnectors.DummySink(),
             repaymentSource: nil,
             pushToDrawDownSink: false
         )

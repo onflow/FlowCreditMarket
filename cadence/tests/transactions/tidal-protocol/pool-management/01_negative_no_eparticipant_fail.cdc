@@ -3,7 +3,7 @@ import "DeFiActions"
 import "DeFiActionsUtils"
 import "TidalProtocol"
 import "MOET"
-import "TestHelpers"
+import "DummyConnectors"
 
 /// Tries to call Pool.createPosition using a plain &Pool ref (no EParticipant).
 /// This should fail at CHECKING with an access/entitlement error.
@@ -20,7 +20,7 @@ transaction {
         let zero <- DeFiActionsUtils.getEmptyVault(Type<@MOET.Vault>())
         let _ = pool.createPosition(
             funds: <- zero,
-            issuanceSink: TestHelpers.NoopSink(),
+            issuanceSink: DummyConnectors.DummySink(),
             repaymentSource: nil,
             pushToDrawDownSink: false
         )

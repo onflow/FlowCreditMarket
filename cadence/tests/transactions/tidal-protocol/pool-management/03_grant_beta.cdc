@@ -3,9 +3,7 @@ import "TidalProtocol"
 transaction() {
 
     prepare(
-        // Must be the SAME account that deployed `TidalProtocolClosedBeta`
         admin: auth(Capabilities, Storage) &Account,
-        // The target must allow storage writes
         tester: auth(Storage) &Account
     ) {
         let poolCap: Capability<auth(TidalProtocol.EParticipant, TidalProtocol.EPosition) &TidalProtocol.Pool> =

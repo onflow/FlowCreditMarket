@@ -1934,7 +1934,7 @@ access(all) contract TidalProtocol {
         /// Returns a new Sink for the given token type that will accept deposits of that token and update the
         /// position's collateral and/or debt accordingly. Note that calling this method multiple times will create
         /// multiple sinks, each of which will continue to work regardless of how many other sinks have been created.
-        access(EParticipant) fun createSink(type: Type): {DeFiActions.Sink} {
+        access(all) fun createSink(type: Type): {DeFiActions.Sink} {
             // create enhanced sink with pushToDrawDownSink option
             return self.createSinkWithOptions(type: type, pushToDrawDownSink: false)
         }
@@ -1942,7 +1942,7 @@ access(all) contract TidalProtocol {
         /// token and update the position's collateral and/or debt accordingly. Note that calling this method multiple
         /// times will create multiple sinks, each of which will continue to work regardless of how many other sinks
         /// have been created.
-        access(EParticipant) fun createSinkWithOptions(type: Type, pushToDrawDownSink: Bool): {DeFiActions.Sink} {
+        access(all) fun createSinkWithOptions(type: Type, pushToDrawDownSink: Bool): {DeFiActions.Sink} {
             let pool = self.pool.borrow()!
             return PositionSink(id: self.id, pool: self.pool, type: type, pushToDrawDownSink: pushToDrawDownSink)
         }

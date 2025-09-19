@@ -108,8 +108,8 @@ fun deployContracts() {
     Test.expect(err, Test.beNil())
 
     err = Test.deployContract(
-        name: "TestHelpers",
-        path: "../contracts/mocks/TestHelpers.cdc",
+        name: "DummyConnectors",
+        path: "../contracts/mocks/DummyConnectors.cdc",
         arguments: []
     )
     Test.expect(err, Test.beNil())

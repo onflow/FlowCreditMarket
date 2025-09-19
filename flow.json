@@ -18,6 +18,12 @@
 				"testing": "0000000000000006"
 			}
 		},
+		"DummyConnectors": {
+			"source": "./cadence/contracts/mocks/DummyConnectors.cdc",
+			"aliases": {
+				"testing": "0000000000000007"
+			}
+		},
 		"FungibleTokenConnectors": {
 			"source": "./DeFiActions/cadence/contracts/connectors/FungibleTokenConnectors.cdc",
 			"aliases": {
@@ -44,12 +50,6 @@
 		},
 		"MockYieldToken": {
 			"source": "./cadence/contracts/mocks/MockYieldToken.cdc",
-			"aliases": {
-				"testing": "0000000000000007"
-			}
-		},
-		"TestHelpers": {
-			"source": "./cadence/contracts/mocks/TestHelpers.cdc",
 			"aliases": {
 				"testing": "0000000000000007"
 			}
