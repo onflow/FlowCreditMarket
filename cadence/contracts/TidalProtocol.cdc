@@ -11,6 +11,11 @@ import "DeFiActionsMathUtils"
 
 access(all) contract TidalProtocol {
 
+    /// Design notes: Fixed-point and 128-bit usage
+    /// - Interest indices and rates are maintained in 128-bit fixed-point to avoid precision loss during compounding.
+    /// - External-facing amounts remain UFix64; promotions to 128-bit occur only for internal math that multiplies by
+    ///   indices/rates. This strikes a balance between precision and ergonomics while keeping on-chain math safe.
+
     /// The canonical StoragePath where the primary TidalProtocol Pool is stored
     access(all) let PoolStoragePath: StoragePath
     /// The canonical StoragePath where the PoolFactory resource is stored
