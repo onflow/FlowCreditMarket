@@ -73,21 +73,9 @@ fun deployContracts() {
     )
     Test.expect(err, Test.beNil())
 
-    // Seed a Pool capability with EParticipant+EPosition entitlements in the protocol account's storage
-    // so tests that use MockTidalProtocolConsumer can create positions via the Pool before any per-file setup.
-    let protocolAccount = Test.getAccount(0x0000000000000007)
-    let pubRes = _executeTransaction(
-        "../transactions/tidal-protocol/beta/publish_beta_cap.cdc",
-        [protocolAccount.address],
-        protocolAccount
-    )
-    Test.expect(pubRes, Test.beSucceeded())
-    let claimRes = _executeTransaction(
-        "../transactions/tidal-protocol/beta/claim_and_save_beta_cap.cdc",
-        [protocolAccount.address],
-        protocolAccount
-    )
-    Test.expect(claimRes, Test.beSucceeded())
+    // NOTE: Do not publish beta capability here; some tests create the Pool later and
+    // publishing before pool creation will fail. Tests that need the cap should call
+    // grantPoolCapToConsumer() after creating the pool.
 
     // Deploy MockTidalProtocolConsumer
     err = Test.deployContract(
