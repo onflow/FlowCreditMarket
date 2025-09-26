@@ -20,7 +20,7 @@ jobs:
 
       - name: Install Flow CLI v2.7.2 (matches local)
         run: |
-          go install github.com/onflow/flow-cli/cmd/flow@v2.7.2
+          go install github.com/onflow/flow-cli/v2/cmd/flow@v2.7.2
           echo "$HOME/go/bin" >> $GITHUB_PATH
           flow version
 
