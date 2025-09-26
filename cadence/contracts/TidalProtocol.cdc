@@ -965,26 +965,55 @@ access(all) contract TidalProtocol {
                 return TidalProtocol.LiquidationQuote(requiredRepay: 0.0, seizeType: seizeType, seizeAmount: 0.0, newHF: effColl / effDebt)
             }
 
-            // Derived formula with positive denominator: u = (t * effDebt - effColl) / (t - (1 + LB) * CF)
+            return self._solveLiquidationRepaySeize(
+                effColl: effColl,
+                effDebt: effDebt,
+                target: target,
+                debtSnap: debtSnap,
+                seizeSnap: seizeSnap,
+                trueDebt: trueDebt,
+                trueCollateralSeize: trueCollateralSeize,
+                health: health,
+                seizeType: seizeType
+            )
+        }
+
+        // Pure helper for solving liquidation repay/seize amounts given snapshots and effective totals
+        access(self) fun _solveLiquidationRepaySeize(
+            effColl: UInt128,
+            effDebt: UInt128,
+            target: UInt128,
+            debtSnap: TidalProtocol.TokenSnapshot,
+            seizeSnap: TidalProtocol.TokenSnapshot,
+            trueDebt: UInt128,
+            trueCollateralSeize: UInt128,
+            health: UInt128,
+            seizeType: Type
+        ): TidalProtocol.LiquidationQuote {
+            let Pd = debtSnap.price
+            let Pc = seizeSnap.price
+            let BF = debtSnap.risk.borrowFactor
+            let CF = seizeSnap.risk.collateralFactor
+            let LB = seizeSnap.risk.liquidationBonus
+
+            if effDebt == UInt128(0) || (effColl / effDebt) >= target {
+                return TidalProtocol.LiquidationQuote(requiredRepay: 0.0, seizeType: seizeType, seizeAmount: 0.0, newHF: effColl / effDebt)
+            }
+
             let num = DeFiActionsMathUtils.mul(effDebt, target) - effColl
             let denomFactor = target - DeFiActionsMathUtils.mul((DeFiActionsMathUtils.e24 + LB), CF)
             if denomFactor <= UInt128(0) {
-                // Impossible target, return 0
                 return TidalProtocol.LiquidationQuote(requiredRepay: 0.0, seizeType: seizeType, seizeAmount: 0.0, newHF: health)
             }
             var repayTrueU128 = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(num, BF), DeFiActionsMathUtils.mul(Pd, denomFactor))
-            if repayTrueU128 > trueDebt {
-                repayTrueU128 = trueDebt
-            }
+            if repayTrueU128 > trueDebt { repayTrueU128 = trueDebt }
             let u = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(repayTrueU128, Pd), BF)
             var seizeTrueU128 = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(u, (DeFiActionsMathUtils.e24 + LB)), Pc)
             if seizeTrueU128 > trueCollateralSeize {
                 seizeTrueU128 = trueCollateralSeize
                 let uAllowed = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(seizeTrueU128, Pc), (DeFiActionsMathUtils.e24 + LB))
                 repayTrueU128 = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(uAllowed, BF), Pd)
-                if repayTrueU128 > trueDebt {
-                    repayTrueU128 = trueDebt
-                }
+                if repayTrueU128 > trueDebt { repayTrueU128 = trueDebt }
             }
             let repayExact = DeFiActionsMathUtils.toUFix64RoundUp(repayTrueU128)
             let seizeExact = DeFiActionsMathUtils.toUFix64RoundUp(seizeTrueU128)
@@ -994,12 +1023,7 @@ access(all) contract TidalProtocol {
             let newEffDebt = effDebt > repayEff ? effDebt - repayEff : UInt128(0)
             let newHF = newEffDebt == UInt128(0) ? UInt128.max : DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(newEffColl, DeFiActionsMathUtils.e24), newEffDebt)
 
-            // Prevent liquidation if it would worsen HF (deep insolvency case).
-            // Enhanced fallback: search for the repay/seize pair (under protocol pricing relation
-            // and available-collateral/debt caps) that maximizes HF. We discretize the search to keep costs bounded.
             if newHF < health {
-                // Compute the maximum repay allowed by available seize collateral (Rcap), preserving R<->S pricing relation.
-                // uAllowed = seizeTrue * Pc / (1 + LB)
                 let uAllowedMax = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(trueCollateralSeize, Pc), (DeFiActionsMathUtils.e24 + LB))
                 var repayCapBySeize = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(uAllowedMax, BF), Pd)
                 if repayCapBySeize > trueDebt { repayCapBySeize = trueDebt }
@@ -1008,25 +1032,20 @@ access(all) contract TidalProtocol {
                 var bestRepayTrue: UInt128 = 0
                 var bestSeizeTrue: UInt128 = 0
 
-                // If nothing can be repaid or seized, abort with no quote
                 if repayCapBySeize == UInt128(0) || trueCollateralSeize == UInt128(0) {
                     return TidalProtocol.LiquidationQuote(requiredRepay: 0.0, seizeType: seizeType, seizeAmount: 0.0, newHF: health)
                 }
 
-                // Discrete bounded search over repay in [1..repayCapBySeize]
-                // Use up to 16 steps to balance precision and cost
                 let stepsU: UInt128 = UInt128(16)
                 var step: UInt128 = repayCapBySeize / stepsU
                 if step == UInt128(0) { step = UInt128(1) }
 
                 var r: UInt128 = step
                 while r <= repayCapBySeize {
-                    // Compute S for this R under pricing relation, capped by available collateral
                     let uForR = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(r, Pd), BF)
                     var sForR = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(uForR, (DeFiActionsMathUtils.e24 + LB)), Pc)
                     if sForR > trueCollateralSeize { sForR = trueCollateralSeize }
 
-                    // Compute resulting HF
                     let repayEffC = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(r, Pd), BF)
                     let seizeEffC = DeFiActionsMathUtils.mul(sForR, DeFiActionsMathUtils.mul(Pc, CF))
                     let newEffCollC = effColl > seizeEffC ? effColl - seizeEffC : UInt128(0)
@@ -1039,13 +1058,11 @@ access(all) contract TidalProtocol {
                         bestSeizeTrue = sForR
                     }
 
-                    // Advance; ensure we always reach the cap
                     let next = r + step
                     if next > repayCapBySeize { break }
                     r = next
                 }
 
-                // Also evaluate at the cap explicitly (in case step didn't land exactly)
                 let rCap = repayCapBySeize
                 let uForR2 = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(rCap, Pd), BF)
                 var sForR2 = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(uForR2, (DeFiActionsMathUtils.e24 + LB)), Pc)
@@ -1068,7 +1085,6 @@ access(all) contract TidalProtocol {
                     return TidalProtocol.LiquidationQuote(requiredRepay: repayExactBest, seizeType: seizeType, seizeAmount: seizeExactBest, newHF: bestHF)
                 }
 
-                // No improving pair found
                 return TidalProtocol.LiquidationQuote(requiredRepay: 0.0, seizeType: seizeType, seizeAmount: 0.0, newHF: health)
             }
 
@@ -1097,7 +1113,7 @@ access(all) contract TidalProtocol {
             let balanceSheet = self._getUpdatedBalanceSheet(pid: pid)
             let position = self._borrowPosition(pid: pid)
 
-            let adjusted = self.computeAdjustedBalancesAfterWithdrawal(
+            let adjusted = self._computeAdjustedBalancesAfterWithdrawal(
                 balanceSheet: balanceSheet,
                 position: position,
                 withdrawType: withdrawType,
@@ -1230,7 +1246,7 @@ access(all) contract TidalProtocol {
             assert(deviationBps <= self.dexOracleDeviationBps, message: "DEX price deviates too high")
 
             // Seize collateral and swap
-            let seized <- self.internalSeize(pid: pid, tokenType: seizeType, amount: requiredSeize)
+            let seized <- self._internalSeize(pid: pid, tokenType: seizeType, amount: requiredSeize)
             let outDebt <- swapper.swap(quote: dexQuote, inVault: <-seized)
             assert(outDebt.getType() == debtType, message: "Swapper returned wrong out type")
 
@@ -1266,7 +1282,7 @@ access(all) contract TidalProtocol {
         }
 
         // Internal helpers for DEX liquidation path (resource-scoped)
-        access(self) fun internalSeize(pid: UInt64, tokenType: Type, amount: UFix64): @{FungibleToken.Vault} {
+        access(self) fun _internalSeize(pid: UInt64, tokenType: Type, amount: UFix64): @{FungibleToken.Vault} {
             let position = self._borrowPosition(pid: pid)
             let tokenState = self._borrowUpdatedTokenState(type: tokenType)
             let seizeUint = DeFiActionsMathUtils.toUInt128(amount)
@@ -1281,7 +1297,7 @@ access(all) contract TidalProtocol {
             return <- reserveRef.withdraw(amount: amount)
         }
 
-        access(self) fun internalRepay(pid: UInt64, debtType: Type, from: @{FungibleToken.Vault}): UFix64 {
+        access(self) fun _internalRepay(pid: UInt64, debtType: Type, from: @{FungibleToken.Vault}): UFix64 {
             pre { from.getType() == debtType: "Vault type mismatch for repay" }
             if self.reserves[debtType] == nil {
                 self.reserves[debtType] <-! DeFiActionsUtils.getEmptyVault(debtType)
@@ -1303,10 +1319,10 @@ access(all) contract TidalProtocol {
         /// Convenience helper that infers the debt type from the Vault passed in
         access(self) fun internalRepayInferred(pid: UInt64, from: @{FungibleToken.Vault}): UFix64 {
             let inferredType = from.getType()
-            return self.internalRepay(pid: pid, debtType: inferredType, from: <-from)
+            return self._internalRepay(pid: pid, debtType: inferredType, from: <-from)
         }
 
-        access(self) fun computeAdjustedBalancesAfterWithdrawal(
+        access(self) fun _computeAdjustedBalancesAfterWithdrawal(
             balanceSheet: BalanceSheet,
             position: &InternalPosition,
             withdrawType: Type,
@@ -2620,7 +2636,7 @@ access(all) contract TidalProtocol {
         access(all) fun getComponentInfo(): DeFiActions.ComponentInfo {
             return DeFiActions.ComponentInfo(
                 type: self.getType(),
-                id: self.id(),
+                id: self.uniqueID?.id,
                 innerComponents: []
             )
         }
@@ -2688,7 +2704,7 @@ access(all) contract TidalProtocol {
         access(all) fun getComponentInfo(): DeFiActions.ComponentInfo {
             return DeFiActions.ComponentInfo(
                 type: self.getType(),
-                id: self.id(),
+                id: self.uniqueID?.id,
                 innerComponents: []
             )
         }
