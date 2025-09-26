@@ -73,6 +73,10 @@ fun deployContracts() {
     )
     Test.expect(err, Test.beNil())
 
+    // NOTE: Do not publish beta capability here; some tests create the Pool later and
+    // publishing before pool creation will fail. Tests that need the cap should call
+    // grantPoolCapToConsumer() after creating the pool.
+
     // Deploy MockTidalProtocolConsumer
     err = Test.deployContract(
         name: "MockTidalProtocolConsumer",
@@ -309,6 +313,29 @@ fun withdrawReserve(
     Test.expect(txRes, beFailed ? Test.beFailed() : Test.beSucceeded())
 }
 
+/* --- Capability Helpers --- */
+
+// Grants the Pool capability with EParticipant and EPosition entitlements to the MockTidalProtocolConsumer account (0x8)
+// Must be called AFTER the pool is created and stored, otherwise publishing will fail the capability check.
+access(all)
+fun grantPoolCapToConsumer() {
+    let protocolAccount = Test.getAccount(0x0000000000000007)
+    let consumerAccount = Test.getAccount(0x0000000000000008)
+
+    let publishRes = _executeTransaction(
+        "../transactions/tidal-protocol/beta/publish_beta_cap.cdc",
+        [consumerAccount.address],
+        protocolAccount
+    )
+    Test.expect(publishRes, Test.beSucceeded())
+
+    let claimRes = _executeTransaction(
+        "../transactions/tidal-protocol/beta/claim_and_save_beta_cap.cdc",
+        [protocolAccount.address],
+        consumerAccount
+    )
+    Test.expect(claimRes, Test.beSucceeded())
+}
 /* --- Assertion Helpers --- */
 
 access(all) fun equalWithinVariance(_ expected: AnyStruct, _ actual: AnyStruct): Bool {

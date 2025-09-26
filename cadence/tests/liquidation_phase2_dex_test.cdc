@@ -16,6 +16,7 @@ fun setup() {
 
     setMockOraclePrice(signer: protocolAccount, forTokenIdentifier: Type<@FlowToken.Vault>().identifier, price: 1.0)
     createAndStorePool(signer: protocolAccount, defaultTokenIdentifier: Type<@MOET.Vault>().identifier, beFailed: false)
+    grantPoolCapToConsumer()
     addSupportedTokenSimpleInterestCurve(
         signer: protocolAccount,
         tokenTypeIdentifier: Type<@FlowToken.Vault>().identifier,
