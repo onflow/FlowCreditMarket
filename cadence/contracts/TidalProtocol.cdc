@@ -1,13 +1,11 @@
 import "Burner"
 import "FungibleToken"
 import "ViewResolver"
-import "MetadataViews"
-import "FungibleTokenMetadataViews"
 
 import "DeFiActionsUtils"
 import "DeFiActions"
 import "MOET"
-import "DeFiActionsMathUtils"
+import "TidalMath"
 
 access(all) contract TidalProtocol {
 
@@ -25,18 +23,18 @@ access(all) contract TidalProtocol {
     access(all) event Opened(pid: UInt64, poolUUID: UInt64)
     access(all) event Deposited(pid: UInt64, poolUUID: UInt64, type: String, amount: UFix64, depositedUUID: UInt64)
     access(all) event Withdrawn(pid: UInt64, poolUUID: UInt64, type: String, amount: UFix64, withdrawnUUID: UInt64)
-    access(all) event Rebalanced(pid: UInt64, poolUUID: UInt64, atHealth: UInt128, amount: UFix64, fromUnder: Bool)
+    access(all) event Rebalanced(pid: UInt64, poolUUID: UInt64, atHealth: UFix128, amount: UFix64, fromUnder: Bool)
     // Consolidated liquidation params update event including all updated values
     access(all) event LiquidationParamsUpdated(
         poolUUID: UInt64,
-        targetHF: UInt128,
+        targetHF: UFix128,
         warmupSec: UInt64,
         protocolFeeBps: UInt16
     )
     access(all) event LiquidationsPaused(poolUUID: UInt64)
     access(all) event LiquidationsUnpaused(poolUUID: UInt64, warmupEndsAt: UInt64)
-    access(all) event LiquidationExecuted(pid: UInt64, poolUUID: UInt64, debtType: String, repayAmount: UFix64, seizeType: String, seizeAmount: UFix64, newHF: UInt128)
-    access(all) event LiquidationExecutedViaDex(pid: UInt64, poolUUID: UInt64, seizeType: String, seized: UFix64, debtType: String, repaid: UFix64, slippageBps: UInt16, newHF: UInt128)
+    access(all) event LiquidationExecuted(pid: UInt64, poolUUID: UInt64, debtType: String, repayAmount: UFix64, seizeType: String, seizeAmount: UFix64, newHF: UFix128)
+    access(all) event LiquidationExecutedViaDex(pid: UInt64, poolUUID: UInt64, seizeType: String, seized: UFix64, debtType: String, repaid: UFix64, slippageBps: UInt16, newHF: UFix128)
 
     /* --- CONSTRUCTS & INTERNAL METHODS ---- */
 
@@ -59,10 +57,10 @@ access(all) contract TidalProtocol {
         /// to update the scaled balance when the user deposits or withdraws funds. The interest index
         /// is a number relatively close to 1.0, so the scaled balance will be roughly of the same order
         /// of magnitude as the actual balance (thus we can use UFix64 for the scaled balance).
-        access(all) var scaledBalance: UInt128
+        access(all) var scaledBalance: UFix128
 
         // Single initializer that can handle both cases
-        init(direction: BalanceDirection, scaledBalance: UInt128) {
+        init(direction: BalanceDirection, scaledBalance: UFix128) {
             self.direction = direction
             self.scaledBalance = scaledBalance
         }
@@ -71,7 +69,7 @@ access(all) contract TidalProtocol {
         /// provided TokenState. It's assumed the TokenState and InternalBalance relate to the same token Type, but
         /// since neither struct have values defining the associated token, callers should be sure to make the arguments
         /// do in fact relate to the same token Type.
-        access(contract) fun recordDeposit(amount: UInt128, tokenState: auth(EImplementation) &TokenState) {
+        access(contract) fun recordDeposit(amount: UFix128, tokenState: auth(EImplementation) &TokenState) {
             if self.direction == BalanceDirection.Credit {
                 // Depositing into a credit position just increases the balance.
 
@@ -85,7 +83,7 @@ access(all) contract TidalProtocol {
                 self.scaledBalance = self.scaledBalance + scaledDeposit
 
                 // Increase the total credit balance for the token
-                tokenState.updateCreditBalance(amount: Int256(amount))
+                tokenState.increaseCreditBalance(by: amount)
             } else {
                 // When depositing into a debit position, we first need to compute the true balance to see
                 // if this deposit will flip the position from debit to credit.
@@ -100,7 +98,7 @@ access(all) contract TidalProtocol {
                         interestIndex: tokenState.debitInterestIndex)
 
                     // Decrease the total debit balance for the token
-                    tokenState.updateDebitBalance(amount: -1 * Int256(amount))
+                    tokenState.decreaseDebitBalance(by: amount)
                 } else {
                     // The deposit is enough to clear the debt, so we switch to a credit position.
                     let updatedBalance = amount - trueBalance
@@ -110,8 +108,8 @@ access(all) contract TidalProtocol {
                         interestIndex: tokenState.creditInterestIndex)
 
                     // Increase the credit balance AND decrease the debit balance
-                    tokenState.updateCreditBalance(amount: Int256(updatedBalance))
-                    tokenState.updateDebitBalance(amount: -1 * Int256(trueBalance))
+                    tokenState.increaseCreditBalance(by: updatedBalance)
+                    tokenState.decreaseDebitBalance(by: trueBalance)
                 }
             }
         }
@@ -120,7 +118,7 @@ access(all) contract TidalProtocol {
         /// the provided TokenState. It's assumed the TokenState and InternalBalance relate to the same token Type, but
         /// since neither struct have values defining the associated token, callers should be sure to make the arguments
         /// do in fact relate to the same token Type.
-        access(all) fun recordWithdrawal(amount: UInt128, tokenState: &TokenState) {
+        access(all) fun recordWithdrawal(amount: UFix128, tokenState: &TokenState) {
             if self.direction == BalanceDirection.Debit {
                 // Withdrawing from a debit position just increases the debt amount.
 
@@ -134,7 +132,7 @@ access(all) contract TidalProtocol {
                 self.scaledBalance = self.scaledBalance + scaledWithdrawal
 
                 // Increase the total debit balance for the token
-                tokenState.updateDebitBalance(amount: Int256(amount))
+                tokenState.increaseDebitBalance(by: amount)
             } else {
                 // When withdrawing from a credit position, we first need to compute the true balance to see
                 // if this withdrawal will flip the position from credit to debit.
@@ -150,7 +148,7 @@ access(all) contract TidalProtocol {
                         interestIndex: tokenState.creditInterestIndex)
 
                     // Decrease the total credit balance for the token
-                    tokenState.updateCreditBalance(amount: -1 * Int256(amount))
+                    tokenState.decreaseCreditBalance(by: amount)
                 } else {
                     // The withdrawal is enough to push the position into debt, so we switch to a debit position.
                     let updatedBalance = amount - trueBalance
@@ -160,8 +158,8 @@ access(all) contract TidalProtocol {
                         interestIndex: tokenState.debitInterestIndex)
 
                     // Decrease the credit balance AND increase the debit balance
-                    tokenState.updateCreditBalance(amount: -1 * Int256(trueBalance))
-                    tokenState.updateDebitBalance(amount: Int256(updatedBalance))
+                    tokenState.decreaseCreditBalance(by: trueBalance)
+                    tokenState.increaseDebitBalance(by: updatedBalance)
                 }
             }
         }
@@ -173,13 +171,13 @@ access(all) contract TidalProtocol {
     /// current health
     access(all) struct BalanceSheet {
         /// A position's withdrawable value based on collateral deposits against the Pool's collateral and borrow factors
-        access(all) let effectiveCollateral: UInt128
+        access(all) let effectiveCollateral: UFix128
         /// A position's withdrawn value based on withdrawals against the Pool's collateral and borrow factors
-        access(all) let effectiveDebt: UInt128
+        access(all) let effectiveDebt: UFix128
         /// The health of the related position
-        access(all) let health: UInt128
+        access(all) let health: UFix128
 
-        init(effectiveCollateral: UInt128, effectiveDebt: UInt128) {
+        init(effectiveCollateral: UFix128, effectiveDebt: UFix128) {
             self.effectiveCollateral = effectiveCollateral
             self.effectiveDebt = effectiveDebt
             self.health = TidalProtocol.healthComputation(effectiveCollateral: effectiveCollateral, effectiveDebt: effectiveDebt)
@@ -188,13 +186,13 @@ access(all) contract TidalProtocol {
 
     /// Liquidation parameters view (global)
     access(all) struct LiquidationParamsView {
-        access(all) let targetHF: UInt128
+        access(all) let targetHF: UFix128
         access(all) let paused: Bool
         access(all) let warmupSec: UInt64
         access(all) let lastUnpausedAt: UInt64?
-        access(all) let triggerHF: UInt128
+        access(all) let triggerHF: UFix128
         access(all) let protocolFeeBps: UInt16
-        init(targetHF: UInt128, paused: Bool, warmupSec: UInt64, lastUnpausedAt: UInt64?, triggerHF: UInt128, protocolFeeBps: UInt16) {
+        init(targetHF: UFix128, paused: Bool, warmupSec: UInt64, lastUnpausedAt: UInt64?, triggerHF: UFix128, protocolFeeBps: UInt16) {
             self.targetHF = targetHF
             self.paused = paused
             self.warmupSec = warmupSec
@@ -209,8 +207,8 @@ access(all) contract TidalProtocol {
         access(all) let requiredRepay: UFix64
         access(all) let seizeType: Type
         access(all) let seizeAmount: UFix64
-        access(all) let newHF: UInt128
-        init(requiredRepay: UFix64, seizeType: Type, seizeAmount: UFix64, newHF: UInt128) {
+        access(all) let newHF: UFix128
+        init(requiredRepay: UFix64, seizeType: Type, seizeAmount: UFix64, newHF: UFix128) {
             self.requiredRepay = requiredRepay
             self.seizeType = seizeType
             self.seizeAmount = seizeAmount
@@ -229,11 +227,11 @@ access(all) contract TidalProtocol {
     /// An internal resource used to track deposits, withdrawals, balances, and queued deposits to an open position.
     access(all) resource InternalPosition {
         /// The target health of the position
-        access(EImplementation) var targetHealth: UInt128
+        access(EImplementation) var targetHealth: UFix128
         /// The minimum health of the position, below which a position is considered undercollateralized
-        access(EImplementation) var minHealth: UInt128
+        access(EImplementation) var minHealth: UFix128
         /// The maximum health of the position, above which a position is considered overcollateralized
-        access(EImplementation) var maxHealth: UInt128
+        access(EImplementation) var maxHealth: UFix128
         /// The balances of deposited and withdrawn token types
         access(mapping ImplementationUpdates) var balances: {Type: InternalBalance}
         /// Funds that have been deposited but must be asynchronously added to the Pool's reserves and recorded
@@ -249,9 +247,9 @@ access(all) contract TidalProtocol {
         init() {
             self.balances = {}
             self.queuedDeposits <- {}
-            self.targetHealth = DeFiActionsMathUtils.toUInt128(1.3)
-            self.minHealth = DeFiActionsMathUtils.toUInt128(1.1)
-            self.maxHealth = DeFiActionsMathUtils.toUInt128(1.5)
+            self.targetHealth = TidalMath.toUFix128(1.3)
+            self.minHealth = TidalMath.toUFix128(1.1)
+            self.maxHealth = TidalMath.toUFix128(1.5)
             self.drawDownSink = nil
             self.topUpSource = nil
         }
@@ -264,8 +262,8 @@ access(all) contract TidalProtocol {
         /// deposits or the operation will revert.
         access(EImplementation) fun setDrawDownSink(_ sink: {DeFiActions.Sink}?) {
             pre {
-                (sink?.getSinkType() ?? Type<@MOET.Vault>()) == Type<@MOET.Vault>():
-                "Invalid Sink provided - Sink \(sink.getType().identifier) must accept MOET"
+                sink == nil || sink!.getSinkType() == Type<@MOET.Vault>():
+                "Invalid Sink provided - Sink must accept MOET"
             }
             self.drawDownSink = sink
         }
@@ -280,9 +278,9 @@ access(all) contract TidalProtocol {
     ///
     /// A simple interface to calculate interest rate
     access(all) struct interface InterestCurve {
-        access(all) fun interestRate(creditBalance: UInt128, debitBalance: UInt128): UInt128 {
+        access(all) fun interestRate(creditBalance: UFix128, debitBalance: UFix128): UFix128 {
             post {
-                result <= UInt128(DeFiActionsMathUtils.e24): "Interest rate can't exceed 100%"
+                result <= TidalMath.one: "Interest rate can't exceed 100%"
             }
         }
     }
@@ -291,8 +289,8 @@ access(all) contract TidalProtocol {
     ///
     /// A simple implementation of the InterestCurve interface.
     access(all) struct SimpleInterestCurve: InterestCurve {
-        access(all) fun interestRate(creditBalance: UInt128, debitBalance: UInt128): UInt128 {
-            return 0 // TODO
+        access(all) fun interestRate(creditBalance: UFix128, debitBalance: UFix128): UFix128 {
+            return 0.0 as UFix128 // TODO: replace with proper curve
         }
     }
 
@@ -303,19 +301,19 @@ access(all) contract TidalProtocol {
         /// The timestamp at which the TokenState was last updated
         access(all) var lastUpdate: UFix64
         /// The total credit balance of the related Token across the whole Pool in which this TokenState resides
-        access(all) var totalCreditBalance: UInt128
+        access(all) var totalCreditBalance: UFix128
         /// The total debit balance of the related Token across the whole Pool in which this TokenState resides
-        access(all) var totalDebitBalance: UInt128
+        access(all) var totalDebitBalance: UFix128
         /// The index of the credit interest for the related token. Interest on a token is stored as an "index" which
         /// can be thought of as "how many actual tokens does 1 unit of scaled balance represent right now?"
-        access(all) var creditInterestIndex: UInt128
+        access(all) var creditInterestIndex: UFix128
         /// The index of the debit interest for the related token. Interest on a token is stored as an "index" which
         /// can be thought of as "how many actual tokens does 1 unit of scaled balance represent right now?"
-        access(all) var debitInterestIndex: UInt128
+        access(all) var debitInterestIndex: UFix128
         /// The interest rate for credit of the associated token
-        access(all) var currentCreditRate: UInt128
+        access(all) var currentCreditRate: UFix128
         /// The interest rate for debit of the associated token
-        access(all) var currentDebitRate: UInt128
+        access(all) var currentDebitRate: UFix128
         /// The interest curve implementation used to calculate interest rate
         access(all) var interestCurve: {InterestCurve}
         /// The rate at which depositCapacity can increase over time
@@ -327,29 +325,40 @@ access(all) contract TidalProtocol {
 
         init(interestCurve: {InterestCurve}, depositRate: UFix64, depositCapacityCap: UFix64) {
             self.lastUpdate = getCurrentBlock().timestamp
-            self.totalCreditBalance = 0
-            self.totalDebitBalance = 0
-            self.creditInterestIndex = DeFiActionsMathUtils.e24
-            self.debitInterestIndex = DeFiActionsMathUtils.e24
-            self.currentCreditRate = UInt128(DeFiActionsMathUtils.e24)
-            self.currentDebitRate = UInt128(DeFiActionsMathUtils.e24)
+            self.totalCreditBalance = 0.0 as UFix128
+            self.totalDebitBalance = 0.0 as UFix128
+            self.creditInterestIndex = TidalMath.one
+            self.debitInterestIndex = TidalMath.one
+            self.currentCreditRate = TidalMath.one
+            self.currentDebitRate = TidalMath.one
             self.interestCurve = interestCurve
             self.depositRate = depositRate
             self.depositCapacity = depositCapacityCap
             self.depositCapacityCap = depositCapacityCap
         }
 
-        /// Updates the totalCreditBalance by the provided amount
-        access(all) fun updateCreditBalance(amount: Int256) {
-            // temporary cast the credit balance to a signed value so we can add/subtract
-            let adjustedBalance = Int256(self.totalCreditBalance) + amount
-            self.totalCreditBalance = adjustedBalance > 0 ? UInt128(adjustedBalance) : 0
+        access(all) fun increaseCreditBalance(by amount: UFix128) {
+            self.totalCreditBalance = self.totalCreditBalance + amount
         }
 
-        access(all) fun updateDebitBalance(amount: Int256) {
-            // temporary cast the debit balance to a signed value so we can add/subtract
-            let adjustedBalance = Int256(self.totalDebitBalance) + amount
-            self.totalDebitBalance = adjustedBalance > 0 ? UInt128(adjustedBalance) : 0
+        access(all) fun decreaseCreditBalance(by amount: UFix128) {
+            if amount >= self.totalCreditBalance {
+                self.totalCreditBalance = 0.0 as UFix128
+            } else {
+                self.totalCreditBalance = self.totalCreditBalance - amount
+            }
+        }
+
+        access(all) fun increaseDebitBalance(by amount: UFix128) {
+            self.totalDebitBalance = self.totalDebitBalance + amount
+        }
+
+        access(all) fun decreaseDebitBalance(by amount: UFix128) {
+            if amount >= self.totalDebitBalance {
+                self.totalDebitBalance = 0.0 as UFix128
+            } else {
+                self.totalDebitBalance = self.totalDebitBalance - amount
+            }
         }
 
         // Enhanced updateInterestIndices with deposit capacity update
@@ -420,28 +429,28 @@ access(all) contract TidalProtocol {
 
         access(all) fun updateInterestRates() {
             // If there's no credit balance, we can't calculate a meaningful credit rate
-            // so we'll just set both rates to zero and return early
-            if self.totalCreditBalance <= 0 {
-                self.currentCreditRate = UInt128(DeFiActionsMathUtils.e24)  // 1.0 in fixed point (no interest)
-                self.currentDebitRate = UInt128(DeFiActionsMathUtils.e24)   // 1.0 in fixed point (no interest)
+            // so we'll just set both rates to one (no interest) and return early
+            if self.totalCreditBalance <= 0.0 as UFix128 {
+                self.currentCreditRate = TidalMath.one  // 1.0 in fixed point (no interest)
+                self.currentDebitRate = TidalMath.one   // 1.0 in fixed point (no interest)
                 return
             }
 
             let debitRate = self.interestCurve.interestRate(creditBalance: self.totalCreditBalance, debitBalance: self.totalDebitBalance)
-            let debitIncome = DeFiActionsMathUtils.mul(self.totalDebitBalance, DeFiActionsMathUtils.e24) + UInt128(debitRate)
+            let debitIncome = self.totalDebitBalance + debitRate
 
             // Calculate insurance amount (0.1% of credit balance)
-            let insuranceRate = DeFiActionsMathUtils.toUInt128(0.001)
-            let insuranceAmount = DeFiActionsMathUtils.mul(self.totalCreditBalance, insuranceRate)
+            let insuranceRate = TidalMath.toUFix128(0.001)
+            let insuranceAmount = TidalMath.mul(self.totalCreditBalance, insuranceRate)
 
             // Calculate credit rate, ensuring we don't have underflows
-            var creditRate: UInt128 = 0
+            var creditRate: UFix128 = 0.0 as UFix128
             if debitIncome >= insuranceAmount {
-                creditRate = ((debitIncome - insuranceAmount) / self.totalCreditBalance) - DeFiActionsMathUtils.e24
+                creditRate = ((debitIncome - insuranceAmount) / self.totalCreditBalance) - TidalMath.one
             } else {
                 // If debit income doesn't cover insurance, we have a negative credit rate
                 // but since we can't represent negative rates in our model, we'll use 0
-                creditRate = 0
+                creditRate = 0.0 as UFix128
             }
 
             self.currentCreditRate = TidalProtocol.perSecondInterestRate(yearlyRate: creditRate)
@@ -452,11 +461,11 @@ access(all) contract TidalProtocol {
     // ----- Phase 0 Refactor: Pure Value Types & Helpers ------------------------
 
     access(all) struct RiskParams {
-        access(all) let collateralFactor: UInt128
-        access(all) let borrowFactor: UInt128
-        access(all) let liquidationBonus: UInt128  // e24, e.g. 5% = 5e22
+        access(all) let collateralFactor: UFix128
+        access(all) let borrowFactor: UFix128
+        access(all) let liquidationBonus: UFix128  // bonus expressed as fractional rate, e.g. 0.05 for 5%
 
-        init(cf: UInt128, bf: UInt128, lb: UInt128) {
+        init(cf: UFix128, bf: UFix128, lb: UFix128) {
             self.collateralFactor = cf
             self.borrowFactor = bf
             self.liquidationBonus = lb
@@ -465,11 +474,11 @@ access(all) contract TidalProtocol {
 
     /// Immutable snapshot of token-level data required for math
     access(all) struct TokenSnapshot {
-        access(all) let price: UInt128
-        access(all) let creditIndex: UInt128
-        access(all) let debitIndex: UInt128
+        access(all) let price: UFix128
+        access(all) let creditIndex: UFix128
+        access(all) let debitIndex: UFix128
         access(all) let risk: RiskParams
-        init(price: UInt128, credit: UInt128, debit: UInt128, risk: RiskParams) {
+        init(price: UFix128, credit: UFix128, debit: UFix128, risk: RiskParams) {
             self.price = price
             self.creditIndex = credit
             self.debitIndex = debit
@@ -482,13 +491,13 @@ access(all) contract TidalProtocol {
         access(all) let balances: {Type: InternalBalance}
         access(all) let snapshots: {Type: TokenSnapshot}
         access(all) let defaultToken: Type
-        access(all) let minHealth: UInt128
-        access(all) let maxHealth: UInt128
+        access(all) let minHealth: UFix128
+        access(all) let maxHealth: UFix128
         init(balances: {Type: InternalBalance},
              snapshots: {Type: TokenSnapshot},
              def: Type,
-             min: UInt128,
-             max: UInt128) {
+             min: UFix128,
+             max: UFix128) {
             self.balances = balances
             self.snapshots = snapshots
             self.defaultToken = def
@@ -499,24 +508,18 @@ access(all) contract TidalProtocol {
 
     // PURE HELPERS -------------------------------------------------------------
 
-    access(all) view fun effectiveCollateral(credit: UInt128, snap: TokenSnapshot): UInt128 {
-        return DeFiActionsMathUtils.mul(
-            DeFiActionsMathUtils.mul(credit, snap.price),
-            snap.risk.collateralFactor
-        )
+    access(all) view fun effectiveCollateral(credit: UFix128, snap: TokenSnapshot): UFix128 {
+        return (credit * snap.price) * snap.risk.collateralFactor
     }
 
-    access(all) view fun effectiveDebt(debit: UInt128, snap: TokenSnapshot): UInt128 {
-        return DeFiActionsMathUtils.div(
-            DeFiActionsMathUtils.mul(debit, snap.price),
-            snap.risk.borrowFactor
-        )
+    access(all) view fun effectiveDebt(debit: UFix128, snap: TokenSnapshot): UFix128 {
+        return (debit * snap.price) / snap.risk.borrowFactor
     }
 
     /// Computes health = totalEffectiveCollateral / totalEffectiveDebt (∞ when debt == 0)
-    access(all) view fun healthFactor(view: PositionView): UInt128 {
-        var effectiveCollateralTotal: UInt128 = 0
-        var effectiveDebtTotal: UInt128 = 0
+    access(all) view fun healthFactor(view: PositionView): UFix128 {
+        var effectiveCollateralTotal: UFix128 = 0.0 as UFix128
+        var effectiveDebtTotal: UFix128 = 0.0 as UFix128
         for tokenType in view.balances.keys {
             let balance = view.balances[tokenType]!
             let snap = view.snapshots[tokenType]!
@@ -545,15 +548,15 @@ access(all) contract TidalProtocol {
         view: PositionView,
         withdrawSnap: TokenSnapshot,
         withdrawBal: InternalBalance?,
-        targetHealth: UInt128
-    ): UInt128 {
+        targetHealth: UFix128
+    ): UFix128 {
         let preHealth = TidalProtocol.healthFactor(view: view)
         if preHealth <= targetHealth {
-            return 0
+            return 0.0 as UFix128
         }
 
-        var effectiveCollateralTotal: UInt128 = 0
-        var effectiveDebtTotal: UInt128 = 0
+        var effectiveCollateralTotal: UFix128 = 0.0 as UFix128
+        var effectiveDebtTotal: UFix128 = 0.0 as UFix128
         for tokenType in view.balances.keys {
             let balance = view.balances[tokenType]!
             let snap = view.snapshots[tokenType]!
@@ -578,12 +581,9 @@ access(all) contract TidalProtocol {
         if withdrawBal == nil || withdrawBal!.direction == BalanceDirection.Debit {
             // withdrawing increases debt
             let numerator = effectiveCollateralTotal
-            let denominatorTarget = DeFiActionsMathUtils.div(numerator, targetHealth)
-            let deltaDebt = denominatorTarget > effectiveDebtTotal ? denominatorTarget - effectiveDebtTotal : UInt128(0)
-            let tokens = DeFiActionsMathUtils.div(
-                DeFiActionsMathUtils.mul(deltaDebt, borrowFactor),
-                withdrawSnap.price
-            )
+            let denominatorTarget = numerator / targetHealth
+            let deltaDebt = denominatorTarget > effectiveDebtTotal ? denominatorTarget - effectiveDebtTotal : TidalMath.zero
+            let tokens = (deltaDebt * borrowFactor) / withdrawSnap.price
             return tokens
         } else {
             // withdrawing reduces collateral
@@ -592,15 +592,12 @@ access(all) contract TidalProtocol {
                 interestIndex: withdrawSnap.creditIndex
             )
             let maxPossible = trueBalance
-            let requiredCollateral = DeFiActionsMathUtils.mul(effectiveDebtTotal, targetHealth)
+            let requiredCollateral = effectiveDebtTotal * targetHealth
             if effectiveCollateralTotal <= requiredCollateral {
-                return 0
+                return 0.0 as UFix128
             }
             let deltaCollateralEffective = effectiveCollateralTotal - requiredCollateral
-            let deltaTokens = DeFiActionsMathUtils.div(
-                DeFiActionsMathUtils.div(deltaCollateralEffective, collateralFactor),
-                withdrawSnap.price
-            )
+            let deltaTokens = (deltaCollateralEffective / collateralFactor) / withdrawSnap.price
             return deltaTokens > maxPossible ? maxPossible : deltaTokens
         }
     }
@@ -643,7 +640,7 @@ access(all) contract TidalProtocol {
         /// to detect when the interest indices need to be updated in InternalPositions.
         access(EImplementation) var version: UInt64
         /// Liquidation target health and controls (global)
-        access(self) var liquidationTargetHF: UInt128   // e24 fixed-point, e.g., 1.05e24
+        access(self) var liquidationTargetHF: UFix128   // e24 fixed-point, e.g., 1.05e24
         access(self) var liquidationsPaused: Bool
         access(self) var liquidationWarmupSec: UInt64
         access(self) var lastUnpausedAt: UInt64?
@@ -678,7 +675,7 @@ access(all) contract TidalProtocol {
             self.nextPositionID = 0
             self.positionsNeedingUpdates = []
             self.positionsProcessedPerCallback = 100
-            self.liquidationTargetHF = DeFiActionsMathUtils.e24 + 50_000_000_000_000_000_000_000
+            self.liquidationTargetHF = TidalMath.toUFix128(1.05)
             self.liquidationsPaused = false
             self.liquidationWarmupSec = 300
             self.lastUnpausedAt = nil
@@ -722,7 +719,7 @@ access(all) contract TidalProtocol {
                 paused: self.liquidationsPaused,
                 warmupSec: self.liquidationWarmupSec,
                 lastUnpausedAt: self.lastUnpausedAt,
-                triggerHF: DeFiActionsMathUtils.e24, // 1.0e24
+                triggerHF: TidalMath.one, // 1.0e24
                 protocolFeeBps: self.protocolLiquidationFeeBps
             )
         }
@@ -744,7 +741,7 @@ access(all) contract TidalProtocol {
         /// Returns true if the position is under the global liquidation trigger (health < 1.0)
         access(all) fun isLiquidatable(pid: UInt64): Bool {
             let health = self.positionHealth(pid: pid)
-            return health < DeFiActionsMathUtils.e24
+            return health < TidalMath.one
         }
 
         /// Returns the current reserve balance for the specified token type.
@@ -783,13 +780,13 @@ access(all) contract TidalProtocol {
             // Build a TokenSnapshot for the requested withdraw type (may not exist in view.snapshots)
             let tokenState = self._borrowUpdatedTokenState(type: type)
             let snap = TidalProtocol.TokenSnapshot(
-                price: DeFiActionsMathUtils.toUInt128(self.priceOracle.price(ofToken: type)!),
+                price: TidalMath.toUFix128(self.priceOracle.price(ofToken: type)!),
                 credit: tokenState.creditInterestIndex,
                 debit: tokenState.debitInterestIndex,
                 risk: TidalProtocol.RiskParams(
-                    cf: DeFiActionsMathUtils.toUInt128(self.collateralFactor[type]!),
-                    bf: DeFiActionsMathUtils.toUInt128(self.borrowFactor[type]!),
-                    lb: DeFiActionsMathUtils.e24 + 50_000_000_000_000_000_000_000
+                    cf: TidalMath.toUFix128(self.collateralFactor[type]!),
+                    bf: TidalMath.toUFix128(self.borrowFactor[type]!),
+                    lb: TidalMath.toUFix128(self.liquidationBonus[type]!)
                 )
             )
 
@@ -800,39 +797,39 @@ access(all) contract TidalProtocol {
                 withdrawBal: withdrawBal,
                 targetHealth: view.minHealth
             )
-            return DeFiActionsMathUtils.toUFix64Round(uintMax)
+            return TidalMath.toUFix64Round(uintMax)
         }
 
         /// Returns the health of the given position, which is the ratio of the position's effective collateral to its
         /// debt as denominated in the Pool's default token. "Effective collateral" means the value of each credit balance
         /// times the liquidation threshold for that token. i.e. the maximum borrowable amount
-        access(all) fun positionHealth(pid: UInt64): UInt128 {
+        access(all) fun positionHealth(pid: UInt64): UFix128 {
             let position = self._borrowPosition(pid: pid)
 
             // Get the position's collateral and debt values in terms of the default token.
-            var effectiveCollateral: UInt128 = 0
-            var effectiveDebt: UInt128 = 0
+            var effectiveCollateral: UFix128 = 0.0 as UFix128
+            var effectiveDebt: UFix128 = 0.0 as UFix128
 
             for type in position.balances.keys {
                 let balance = position.balances[type]!
                 let tokenState = self._borrowUpdatedTokenState(type: type)
 
-                let uintCollateralFactor = DeFiActionsMathUtils.toUInt128(self.collateralFactor[type]!)
-                let uintBorrowFactor = DeFiActionsMathUtils.toUInt128(self.borrowFactor[type]!)
-                let uintPrice = DeFiActionsMathUtils.toUInt128(self.priceOracle.price(ofToken: type)!)
+                let uintCollateralFactor = TidalMath.toUFix128(self.collateralFactor[type]!)
+                let uintBorrowFactor = TidalMath.toUFix128(self.borrowFactor[type]!)
+                let uintPrice = TidalMath.toUFix128(self.priceOracle.price(ofToken: type)!)
                 if balance.direction == BalanceDirection.Credit {
                     let trueBalance = TidalProtocol.scaledBalanceToTrueBalance(balance.scaledBalance,
                         interestIndex: tokenState.creditInterestIndex)
 
-                    let value = DeFiActionsMathUtils.mul(uintPrice, trueBalance)
-                    let effectiveCollateralValue = DeFiActionsMathUtils.mul(value, uintCollateralFactor)
+                    let value = uintPrice * trueBalance
+                    let effectiveCollateralValue = value * uintCollateralFactor
                     effectiveCollateral = effectiveCollateral + effectiveCollateralValue
                 } else {
                     let trueBalance = TidalProtocol.scaledBalanceToTrueBalance(balance.scaledBalance,
                         interestIndex: tokenState.debitInterestIndex)
 
-                    let value = DeFiActionsMathUtils.mul(uintPrice, trueBalance)
-                    let effectiveDebtValue = DeFiActionsMathUtils.div(value, uintBorrowFactor)
+                    let value = uintPrice * trueBalance
+                    let effectiveDebtValue = value / uintBorrowFactor
                     effectiveDebt = effectiveDebt + effectiveDebtValue
                 }
             }
@@ -844,7 +841,7 @@ access(all) contract TidalProtocol {
         /// Returns the quantity of funds of a specified token which would need to be deposited to bring the position to
         /// the provided target health. This function will return 0.0 if the position is already at or over that health
         /// value.
-        access(all) fun fundsRequiredForTargetHealth(pid: UInt64, type: Type, targetHealth: UInt128): UFix64 {
+        access(all) fun fundsRequiredForTargetHealth(pid: UInt64, type: Type, targetHealth: UFix128): UFix64 {
             return self.fundsRequiredForTargetHealthAfterWithdrawing(
                 pid: pid,
                 depositType: type,
@@ -870,7 +867,7 @@ access(all) contract TidalProtocol {
                 balances.append(PositionBalance(
                     vaultType: type,
                     direction: balance.direction,
-                    balance: DeFiActionsMathUtils.toUFix64Round(trueBalance)
+                    balance: TidalMath.toUFix64Round(trueBalance)
                 ))
             }
 
@@ -893,7 +890,7 @@ access(all) contract TidalProtocol {
             }
             let view = self.buildPositionView(pid: pid)
             let health = TidalProtocol.healthFactor(view: view)
-            if health >= DeFiActionsMathUtils.e24 {
+            if health >= TidalMath.one {
                 return TidalProtocol.LiquidationQuote(requiredRepay: 0.0, seizeType: seizeType, seizeAmount: 0.0, newHF: health)
             }
             // Build snapshots
@@ -906,13 +903,13 @@ access(all) contract TidalProtocol {
                 lbDebtUFix = lbDebtOpt!
             }
             let debtSnap = TidalProtocol.TokenSnapshot(
-                price: DeFiActionsMathUtils.toUInt128(self.priceOracle.price(ofToken: debtType)!),
+                price: TidalMath.toUFix128(self.priceOracle.price(ofToken: debtType)!),
                 credit: debtState.creditInterestIndex,
                 debit: debtState.debitInterestIndex,
                 risk: TidalProtocol.RiskParams(
-                    cf: DeFiActionsMathUtils.toUInt128(self.collateralFactor[debtType]!),
-                    bf: DeFiActionsMathUtils.toUInt128(self.borrowFactor[debtType]!),
-                    lb: DeFiActionsMathUtils.toUInt128(lbDebtUFix)
+                    cf: TidalMath.toUFix128(self.collateralFactor[debtType]!),
+                    bf: TidalMath.toUFix128(self.borrowFactor[debtType]!),
+                    lb: TidalMath.toUFix128(lbDebtUFix)
                 )
             )
             // Resolve per-token liquidation bonus (default 5%) for seizeType
@@ -922,38 +919,38 @@ access(all) contract TidalProtocol {
                 lbSeizeUFix = lbSeizeOpt!
             }
             let seizeSnap = TidalProtocol.TokenSnapshot(
-                price: DeFiActionsMathUtils.toUInt128(self.priceOracle.price(ofToken: seizeType)!),
+                price: TidalMath.toUFix128(self.priceOracle.price(ofToken: seizeType)!),
                 credit: seizeState.creditInterestIndex,
                 debit: seizeState.debitInterestIndex,
                 risk: TidalProtocol.RiskParams(
-                    cf: DeFiActionsMathUtils.toUInt128(self.collateralFactor[seizeType]!),
-                    bf: DeFiActionsMathUtils.toUInt128(self.borrowFactor[seizeType]!),
-                    lb: DeFiActionsMathUtils.toUInt128(lbSeizeUFix)
+                    cf: TidalMath.toUFix128(self.collateralFactor[seizeType]!),
+                    bf: TidalMath.toUFix128(self.borrowFactor[seizeType]!),
+                    lb: TidalMath.toUFix128(lbSeizeUFix)
                 )
             )
 
             // Recompute effective totals and capture available true collateral for seizeType
-            var effColl: UInt128 = 0
-            var effDebt: UInt128 = 0
-            var trueCollateralSeize: UInt128 = 0
-            var trueDebt: UInt128 = 0
+            var effColl: UFix128 = 0.0 as UFix128
+            var effDebt: UFix128 = 0.0 as UFix128
+            var trueCollateralSeize: UFix128 = 0.0 as UFix128
+            var trueDebt: UFix128 = 0.0 as UFix128
             for t in view.balances.keys {
                 let b = view.balances[t]!
                 let st = self._borrowUpdatedTokenState(type: t)
                 // Resolve per-token liquidation bonus (default 5%) for token t
-                var lbTUFix: UFix64 = 0.05
+            var lbTUFix: UFix64 = 0.05
                 let lbTOpt = self.liquidationBonus[t]
                 if lbTOpt != nil {
                     lbTUFix = lbTOpt!
                 }
                 let snap = TidalProtocol.TokenSnapshot(
-                    price: DeFiActionsMathUtils.toUInt128(self.priceOracle.price(ofToken: t)!),
+                    price: TidalMath.toUFix128(self.priceOracle.price(ofToken: t)!),
                     credit: st.creditInterestIndex,
                     debit: st.debitInterestIndex,
                     risk: TidalProtocol.RiskParams(
-                        cf: DeFiActionsMathUtils.toUInt128(self.collateralFactor[t]!),
-                        bf: DeFiActionsMathUtils.toUInt128(self.borrowFactor[t]!),
-                        lb: DeFiActionsMathUtils.toUInt128(lbTUFix)
+                        cf: TidalMath.toUFix128(self.collateralFactor[t]!),
+                        bf: TidalMath.toUFix128(self.borrowFactor[t]!),
+                        lb: TidalMath.toUFix128(lbTUFix)
                     )
                 )
                 if b.direction == BalanceDirection.Credit {
@@ -973,10 +970,10 @@ access(all) contract TidalProtocol {
 
             // Compute required effective collateral increase to reach targetHF
             let target = self.liquidationTargetHF
-            if effDebt == 0 { // no debt
-                return TidalProtocol.LiquidationQuote(requiredRepay: 0.0, seizeType: seizeType, seizeAmount: 0.0, newHF: UInt128.max)
+            if effDebt == 0.0 as UFix128 { // no debt
+                return TidalProtocol.LiquidationQuote(requiredRepay: 0.0, seizeType: seizeType, seizeAmount: 0.0, newHF: UFix128.max)
             }
-            let requiredEffColl = DeFiActionsMathUtils.mul(effDebt, target)
+            let requiredEffColl = TidalMath.mul(effDebt, target)
             if effColl >= requiredEffColl {
                 return TidalProtocol.LiquidationQuote(requiredRepay: 0.0, seizeType: seizeType, seizeAmount: 0.0, newHF: health)
             }
@@ -986,7 +983,7 @@ access(all) contract TidalProtocol {
             // effDebtNew = effDebt - (repayTrue * debtSnap.price / debtSnap.risk.borrowFactor)
             // target = effColl / effDebtNew  => effDebtNew = effColl / target
             // So reductionNeeded = effDebt - effColl/target
-            let effDebtNew = DeFiActionsMathUtils.div(effColl, target)
+            let effDebtNew = TidalMath.div(effColl, target)
             if effDebt <= effDebtNew {
                 return TidalProtocol.LiquidationQuote(requiredRepay: 0.0, seizeType: seizeType, seizeAmount: 0.0, newHF: target)
             }
@@ -1004,38 +1001,38 @@ access(all) contract TidalProtocol {
 
             // Reuse previously computed effective collateral and debt
 
-            if effDebt == 0 || effColl / effDebt >= target {
+            if effDebt == 0.0 as UFix128 || effColl / effDebt >= target {
                 return TidalProtocol.LiquidationQuote(requiredRepay: 0.0, seizeType: seizeType, seizeAmount: 0.0, newHF: effColl / effDebt)
             }
 
             // Derived formula with positive denominator: u = (t * effDebt - effColl) / (t - (1 + LB) * CF)
-            let num = DeFiActionsMathUtils.mul(effDebt, target) - effColl
-            let denomFactor = target - DeFiActionsMathUtils.mul((DeFiActionsMathUtils.e24 + LB), CF)
-            if denomFactor <= UInt128(0) {
+            let num = TidalMath.mul(effDebt, target) - effColl
+            let denomFactor = target - TidalMath.mul((TidalMath.one + LB), CF)
+            if denomFactor <= TidalMath.zero {
                 // Impossible target, return 0
                 return TidalProtocol.LiquidationQuote(requiredRepay: 0.0, seizeType: seizeType, seizeAmount: 0.0, newHF: health)
             }
-            var repayTrueU128 = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(num, BF), DeFiActionsMathUtils.mul(Pd, denomFactor))
+            var repayTrueU128 = TidalMath.div(TidalMath.mul(num, BF), TidalMath.mul(Pd, denomFactor))
             if repayTrueU128 > trueDebt {
                 repayTrueU128 = trueDebt
             }
-            let u = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(repayTrueU128, Pd), BF)
-            var seizeTrueU128 = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(u, (DeFiActionsMathUtils.e24 + LB)), Pc)
+            let u = TidalMath.div(TidalMath.mul(repayTrueU128, Pd), BF)
+            var seizeTrueU128 = TidalMath.div(TidalMath.mul(u, (TidalMath.one + LB)), Pc)
             if seizeTrueU128 > trueCollateralSeize {
                 seizeTrueU128 = trueCollateralSeize
-                let uAllowed = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(seizeTrueU128, Pc), (DeFiActionsMathUtils.e24 + LB))
-                repayTrueU128 = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(uAllowed, BF), Pd)
+                let uAllowed = TidalMath.div(TidalMath.mul(seizeTrueU128, Pc), (TidalMath.one + LB))
+                repayTrueU128 = TidalMath.div(TidalMath.mul(uAllowed, BF), Pd)
                 if repayTrueU128 > trueDebt {
                     repayTrueU128 = trueDebt
                 }
             }
-            let repayExact = DeFiActionsMathUtils.toUFix64RoundUp(repayTrueU128)
-            let seizeExact = DeFiActionsMathUtils.toUFix64RoundUp(seizeTrueU128)
-            let repayEff = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(repayTrueU128, Pd), BF)
-            let seizeEff = DeFiActionsMathUtils.mul(seizeTrueU128, DeFiActionsMathUtils.mul(Pc, CF))
-            let newEffColl = effColl > seizeEff ? effColl - seizeEff : UInt128(0)
-            let newEffDebt = effDebt > repayEff ? effDebt - repayEff : UInt128(0)
-            let newHF = newEffDebt == UInt128(0) ? UInt128.max : DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(newEffColl, DeFiActionsMathUtils.e24), newEffDebt)
+            let repayExact = TidalMath.toUFix64RoundUp(repayTrueU128)
+            let seizeExact = TidalMath.toUFix64RoundUp(seizeTrueU128)
+            let repayEff = TidalMath.div(TidalMath.mul(repayTrueU128, Pd), BF)
+            let seizeEff = TidalMath.mul(seizeTrueU128, TidalMath.mul(Pc, CF))
+            let newEffColl = effColl > seizeEff ? effColl - seizeEff : TidalMath.zero
+            let newEffDebt = effDebt > repayEff ? effDebt - repayEff : TidalMath.zero
+            let newHF = newEffDebt == TidalMath.zero ? UFix128.max : TidalMath.div(TidalMath.mul(newEffColl, TidalMath.one), newEffDebt)
 
             // Prevent liquidation if it would worsen HF (deep insolvency case).
             // Enhanced fallback: search for the repay/seize pair (under protocol pricing relation
@@ -1043,38 +1040,38 @@ access(all) contract TidalProtocol {
             if newHF < health {
                 // Compute the maximum repay allowed by available seize collateral (Rcap), preserving R<->S pricing relation.
                 // uAllowed = seizeTrue * Pc / (1 + LB)
-                let uAllowedMax = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(trueCollateralSeize, Pc), (DeFiActionsMathUtils.e24 + LB))
-                var repayCapBySeize = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(uAllowedMax, BF), Pd)
+                let uAllowedMax = TidalMath.div(TidalMath.mul(trueCollateralSeize, Pc), (TidalMath.one + LB))
+                var repayCapBySeize = TidalMath.div(TidalMath.mul(uAllowedMax, BF), Pd)
                 if repayCapBySeize > trueDebt { repayCapBySeize = trueDebt }
 
-                var bestHF: UInt128 = health
-                var bestRepayTrue: UInt128 = 0
-                var bestSeizeTrue: UInt128 = 0
+                var bestHF: UFix128 = health
+                var bestRepayTrue: UFix128 = 0.0 as UFix128
+                var bestSeizeTrue: UFix128 = 0.0 as UFix128
 
                 // If nothing can be repaid or seized, abort with no quote
-                if repayCapBySeize == UInt128(0) || trueCollateralSeize == UInt128(0) {
+                if repayCapBySeize == TidalMath.zero || trueCollateralSeize == TidalMath.zero {
                     return TidalProtocol.LiquidationQuote(requiredRepay: 0.0, seizeType: seizeType, seizeAmount: 0.0, newHF: health)
                 }
 
                 // Discrete bounded search over repay in [1..repayCapBySeize]
                 // Use up to 16 steps to balance precision and cost
-                let stepsU: UInt128 = UInt128(16)
-                var step: UInt128 = repayCapBySeize / stepsU
-                if step == UInt128(0) { step = UInt128(1) }
+                let stepsU: UFix128 = TidalMath.toUFix128(16.0)
+                var step: UFix128 = repayCapBySeize / stepsU
+                if step == TidalMath.zero { step = TidalMath.one }
 
-                var r: UInt128 = step
+                var r: UFix128 = step
                 while r <= repayCapBySeize {
                     // Compute S for this R under pricing relation, capped by available collateral
-                    let uForR = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(r, Pd), BF)
-                    var sForR = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(uForR, (DeFiActionsMathUtils.e24 + LB)), Pc)
+                    let uForR = TidalMath.div(TidalMath.mul(r, Pd), BF)
+                    var sForR = TidalMath.div(TidalMath.mul(uForR, (TidalMath.one + LB)), Pc)
                     if sForR > trueCollateralSeize { sForR = trueCollateralSeize }
 
                     // Compute resulting HF
-                    let repayEffC = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(r, Pd), BF)
-                    let seizeEffC = DeFiActionsMathUtils.mul(sForR, DeFiActionsMathUtils.mul(Pc, CF))
-                    let newEffCollC = effColl > seizeEffC ? effColl - seizeEffC : UInt128(0)
-                    let newEffDebtC = effDebt > repayEffC ? effDebt - repayEffC : UInt128(0)
-                    let newHFC = newEffDebtC == UInt128(0) ? UInt128.max : DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(newEffCollC, DeFiActionsMathUtils.e24), newEffDebtC)
+                    let repayEffC = TidalMath.div(TidalMath.mul(r, Pd), BF)
+                    let seizeEffC = TidalMath.mul(sForR, TidalMath.mul(Pc, CF))
+                    let newEffCollC = effColl > seizeEffC ? effColl - seizeEffC : TidalMath.zero
+                    let newEffDebtC = effDebt > repayEffC ? effDebt - repayEffC : TidalMath.zero
+                    let newHFC = newEffDebtC == TidalMath.zero ? UFix128.max : TidalMath.div(TidalMath.mul(newEffCollC, TidalMath.one), newEffDebtC)
 
                     if newHFC > bestHF {
                         bestHF = newHFC
@@ -1090,23 +1087,23 @@ access(all) contract TidalProtocol {
 
                 // Also evaluate at the cap explicitly (in case step didn't land exactly)
                 let rCap = repayCapBySeize
-                let uForR2 = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(rCap, Pd), BF)
-                var sForR2 = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(uForR2, (DeFiActionsMathUtils.e24 + LB)), Pc)
+                let uForR2 = TidalMath.div(TidalMath.mul(rCap, Pd), BF)
+                var sForR2 = TidalMath.div(TidalMath.mul(uForR2, (TidalMath.one + LB)), Pc)
                 if sForR2 > trueCollateralSeize { sForR2 = trueCollateralSeize }
-                let repayEffC2 = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(rCap, Pd), BF)
-                let seizeEffC2 = DeFiActionsMathUtils.mul(sForR2, DeFiActionsMathUtils.mul(Pc, CF))
-                let newEffCollC2 = effColl > seizeEffC2 ? effColl - seizeEffC2 : UInt128(0)
-                let newEffDebtC2 = effDebt > repayEffC2 ? effDebt - repayEffC2 : UInt128(0)
-                let newHFC2 = newEffDebtC2 == UInt128(0) ? UInt128.max : DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(newEffCollC2, DeFiActionsMathUtils.e24), newEffDebtC2)
+                let repayEffC2 = TidalMath.div(TidalMath.mul(rCap, Pd), BF)
+                let seizeEffC2 = TidalMath.mul(sForR2, TidalMath.mul(Pc, CF))
+                let newEffCollC2 = effColl > seizeEffC2 ? effColl - seizeEffC2 : TidalMath.zero
+                let newEffDebtC2 = effDebt > repayEffC2 ? effDebt - repayEffC2 : TidalMath.zero
+                let newHFC2 = newEffDebtC2 == TidalMath.zero ? UFix128.max : TidalMath.div(TidalMath.mul(newEffCollC2, TidalMath.one), newEffDebtC2)
                 if newHFC2 > bestHF {
                     bestHF = newHFC2
                     bestRepayTrue = rCap
                     bestSeizeTrue = sForR2
                 }
 
-                if bestHF > health && bestRepayTrue > UInt128(0) && bestSeizeTrue > UInt128(0) {
-                    let repayExactBest = DeFiActionsMathUtils.toUFix64RoundUp(bestRepayTrue)
-                    let seizeExactBest = DeFiActionsMathUtils.toUFix64RoundUp(bestSeizeTrue)
+                if bestHF > health && bestRepayTrue > TidalMath.zero && bestSeizeTrue > TidalMath.zero {
+                    let repayExactBest = TidalMath.toUFix64RoundUp(bestRepayTrue)
+                    let seizeExactBest = TidalMath.toUFix64RoundUp(bestSeizeTrue)
                     log("[LIQ][QUOTE][FALLBACK][SEARCH] repayExact=\(repayExactBest) seizeExact=\(seizeExactBest)")
                     return TidalProtocol.LiquidationQuote(requiredRepay: repayExactBest, seizeType: seizeType, seizeAmount: seizeExactBest, newHF: bestHF)
                 }
@@ -1115,7 +1112,7 @@ access(all) contract TidalProtocol {
                 return TidalProtocol.LiquidationQuote(requiredRepay: 0.0, seizeType: seizeType, seizeAmount: 0.0, newHF: health)
             }
 
-            log("[LIQ][QUOTE] repayExact=\(repayExact) seizeExact=\(seizeExact) trueCollateralSeize=\(DeFiActionsMathUtils.toUFix64Round(trueCollateralSeize))")
+            log("[LIQ][QUOTE] repayExact=\(repayExact) seizeExact=\(seizeExact) trueCollateralSeize=\(TidalMath.toUFix64Round(trueCollateralSeize))")
             return TidalProtocol.LiquidationQuote(requiredRepay: repayExact, seizeType: seizeType, seizeAmount: seizeExact, newHF: newHF)
         }
 
@@ -1126,7 +1123,7 @@ access(all) contract TidalProtocol {
         access(all) fun fundsRequiredForTargetHealthAfterWithdrawing(
             pid: UInt64,
             depositType: Type,
-            targetHealth: UInt128,
+            targetHealth: UFix128,
             withdrawType: Type,
             withdrawAmount: UFix64
         ): UFix64 {
@@ -1197,17 +1194,17 @@ access(all) contract TidalProtocol {
             // Reduce borrower's debt position by repayAmount
             let position = self._borrowPosition(pid: pid)
             let debtState = self._borrowUpdatedTokenState(type: debtType)
-            let repayUint = DeFiActionsMathUtils.toUInt128(quote.requiredRepay)
+            let repayUint = TidalMath.toUFix128(quote.requiredRepay)
             if position.balances[debtType] == nil {
-                position.balances[debtType] = InternalBalance(direction: BalanceDirection.Debit, scaledBalance: 0)
+                position.balances[debtType] = InternalBalance(direction: BalanceDirection.Debit, scaledBalance: 0.0 as UFix128)
             }
             position.balances[debtType]!.recordDeposit(amount: repayUint, tokenState: debtState)
 
             // Withdraw seized collateral from position and send to liquidator
             let seizeState = self._borrowUpdatedTokenState(type: seizeType)
-            let seizeUint = DeFiActionsMathUtils.toUInt128(quote.seizeAmount)
+            let seizeUint = TidalMath.toUFix128(quote.seizeAmount)
             if position.balances[seizeType] == nil {
-                position.balances[seizeType] = InternalBalance(direction: BalanceDirection.Credit, scaledBalance: 0)
+                position.balances[seizeType] = InternalBalance(direction: BalanceDirection.Credit, scaledBalance: 0.0 as UFix128)
             }
             position.balances[seizeType]!.recordWithdrawal(amount: seizeUint, tokenState: seizeState)
             let seizeReserveRef = (&self.reserves[seizeType] as auth(FungibleToken.Withdraw) &{FungibleToken.Vault}?)!
@@ -1216,7 +1213,7 @@ access(all) contract TidalProtocol {
             let actualNewHF = self.positionHealth(pid: pid)
             // Ensure realized HF is not materially below quoted HF (allow tiny rounding tolerance)
             let expectedHF = quote.newHF
-            let hfTolerance: UInt128 = 10_000_000_000_000_000_000 // 1e19 ≈ 0.00001 in e24 scale
+            let hfTolerance: UFix128 = TidalMath.toUFix128(0.00001)
             assert(actualNewHF + hfTolerance >= expectedHF, message: "Post-liquidation HF below expected")
 
             emit LiquidationExecuted(pid: pid, poolUUID: self.uuid, debtType: debtType.identifier, repayAmount: quote.requiredRepay, seizeType: seizeType.identifier, seizeAmount: quote.seizeAmount, newHF: actualNewHF)
@@ -1247,7 +1244,7 @@ access(all) contract TidalProtocol {
 
             // Validate position is liquidatable
             let health = self.positionHealth(pid: pid)
-            assert(health < DeFiActionsMathUtils.e24, message: "Position not liquidatable")
+            assert(health < TidalMath.one, message: "Position not liquidatable")
             assert(self.isLiquidatable(pid: pid), message: "Position \(pid) is not liquidatable")
 
             // Internal quote to determine required seize (capped by max)
@@ -1312,9 +1309,9 @@ access(all) contract TidalProtocol {
         access(self) fun internalSeize(pid: UInt64, tokenType: Type, amount: UFix64): @{FungibleToken.Vault} {
             let position = self._borrowPosition(pid: pid)
             let tokenState = self._borrowUpdatedTokenState(type: tokenType)
-            let seizeUint = DeFiActionsMathUtils.toUInt128(amount)
+            let seizeUint = TidalMath.toUFix128(amount)
             if position.balances[tokenType] == nil {
-                position.balances[tokenType] = InternalBalance(direction: BalanceDirection.Credit, scaledBalance: 0)
+                position.balances[tokenType] = InternalBalance(direction: BalanceDirection.Credit, scaledBalance: 0.0 as UFix128)
             }
             position.balances[tokenType]!.recordWithdrawal(amount: seizeUint, tokenState: tokenState)
             if self.reserves[tokenType] == nil {
@@ -1335,9 +1332,9 @@ access(all) contract TidalProtocol {
             reserveRef.deposit(from: <-toDeposit)
             let position = self._borrowPosition(pid: pid)
             let debtState = self._borrowUpdatedTokenState(type: debtType)
-            let repayUint = DeFiActionsMathUtils.toUInt128(amount)
+            let repayUint = TidalMath.toUFix128(amount)
             if position.balances[debtType] == nil {
-                position.balances[debtType] = InternalBalance(direction: BalanceDirection.Debit, scaledBalance: 0)
+                position.balances[debtType] = InternalBalance(direction: BalanceDirection.Debit, scaledBalance: 0.0 as UFix128)
             }
             position.balances[debtType]!.recordDeposit(amount: repayUint, tokenState: debtState)
             return amount
@@ -1358,16 +1355,16 @@ access(all) contract TidalProtocol {
             log("    [CONTRACT] effectiveCollateralAfterWithdrawal: \(effectiveCollateralAfterWithdrawal)")
             log("    [CONTRACT] effectiveDebtAfterWithdrawal: \(effectiveDebtAfterWithdrawal)")
 
-            let uintWithdrawAmount = DeFiActionsMathUtils.toUInt128(withdrawAmount)
-            let uintWithdrawPrice = DeFiActionsMathUtils.toUInt128(self.priceOracle.price(ofToken: withdrawType)!)
-            let uintWithdrawBorrowFactor = DeFiActionsMathUtils.toUInt128(self.borrowFactor[withdrawType]!)
+            let uintWithdrawAmount = TidalMath.toUFix128(withdrawAmount)
+            let uintWithdrawPrice = TidalMath.toUFix128(self.priceOracle.price(ofToken: withdrawType)!)
+            let uintWithdrawBorrowFactor = TidalMath.toUFix128(self.borrowFactor[withdrawType]!)
 
             let maybeBalance = position.balances[withdrawType]
                 if maybeBalance == nil || maybeBalance!.direction == BalanceDirection.Debit {
                     // If the position doesn't have any collateral for the withdrawn token, we can just compute how much
                     // additional effective debt the withdrawal will create.
                     effectiveDebtAfterWithdrawal = balanceSheet.effectiveDebt +
-                        DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(uintWithdrawAmount, uintWithdrawPrice), uintWithdrawBorrowFactor)
+                        TidalMath.div(TidalMath.mul(uintWithdrawAmount, uintWithdrawPrice), uintWithdrawBorrowFactor)
                 } else {
                     let withdrawTokenState = self._borrowUpdatedTokenState(type: withdrawType)
 
@@ -1377,18 +1374,18 @@ access(all) contract TidalProtocol {
                     let trueCollateral = TidalProtocol.scaledBalanceToTrueBalance(collateralBalance,
                         interestIndex: withdrawTokenState.creditInterestIndex
                     )
-                    let uintCollateralFactor = DeFiActionsMathUtils.toUInt128(self.collateralFactor[withdrawType]!)
+                    let uintCollateralFactor = TidalMath.toUFix128(self.collateralFactor[withdrawType]!)
                     if trueCollateral >= uintWithdrawAmount {
                         // This withdrawal will draw down collateral, but won't create debt, we just need to account
                         // for the collateral decrease.
                         effectiveCollateralAfterWithdrawal = balanceSheet.effectiveCollateral -
-                            DeFiActionsMathUtils.mul(DeFiActionsMathUtils.mul(uintWithdrawAmount, uintWithdrawPrice), uintCollateralFactor)
+                            TidalMath.mul(TidalMath.mul(uintWithdrawAmount, uintWithdrawPrice), uintCollateralFactor)
                     } else {
                         // The withdrawal will wipe out all of the collateral, and create some debt.
                         effectiveDebtAfterWithdrawal = balanceSheet.effectiveDebt +
-                            DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(uintWithdrawAmount - trueCollateral, uintWithdrawPrice), uintWithdrawBorrowFactor)
+                            TidalMath.div(TidalMath.mul(uintWithdrawAmount - trueCollateral, uintWithdrawPrice), uintWithdrawBorrowFactor)
                         effectiveCollateralAfterWithdrawal = balanceSheet.effectiveCollateral -
-                            DeFiActionsMathUtils.mul(DeFiActionsMathUtils.mul(trueCollateral, uintWithdrawPrice), uintCollateralFactor)
+                            TidalMath.mul(TidalMath.mul(trueCollateral, uintWithdrawPrice), uintCollateralFactor)
                     }
                 }
 
@@ -1400,9 +1397,9 @@ access(all) contract TidalProtocol {
             position: &InternalPosition,
             depositType: Type,
             withdrawType: Type,
-            effectiveCollateral: UInt128,
-            effectiveDebt: UInt128,
-            targetHealth: UInt128
+            effectiveCollateral: UFix128,
+            effectiveDebt: UFix128,
+            targetHealth: UFix128
         ): UFix64 {
             var effectiveCollateralAfterWithdrawal = effectiveCollateral
             var effectiveDebtAfterWithdrawal = effectiveDebt
@@ -1426,10 +1423,10 @@ access(all) contract TidalProtocol {
 
             // For situations where the required deposit will BOTH pay off debt and accumulate collateral, we keep
             // track of the number of tokens that went towards paying off debt.
-            var debtTokenCount: UInt128 = 0
-            let uintDepositPrice = DeFiActionsMathUtils.toUInt128(self.priceOracle.price(ofToken: depositType)!)
-            let uintDepositBorrowFactor = DeFiActionsMathUtils.toUInt128(self.borrowFactor[depositType]!)
-            let uintWithdrawBorrowFactor = DeFiActionsMathUtils.toUInt128(self.borrowFactor[withdrawType]!)
+            var debtTokenCount: UFix128 = 0.0 as UFix128
+            let uintDepositPrice = TidalMath.toUFix128(self.priceOracle.price(ofToken: depositType)!)
+            let uintDepositBorrowFactor = TidalMath.toUFix128(self.borrowFactor[depositType]!)
+            let uintWithdrawBorrowFactor = TidalMath.toUFix128(self.borrowFactor[withdrawType]!)
             let maybeBalance = position.balances[depositType]
             if maybeBalance?.direction == BalanceDirection.Debit {
                 // The user has a debt position in the given token, we start by looking at the health impact of paying off
@@ -1439,11 +1436,11 @@ access(all) contract TidalProtocol {
                 let trueDebt = TidalProtocol.scaledBalanceToTrueBalance(debtBalance,
                     interestIndex: depositTokenState.debitInterestIndex
                 )
-                let debtEffectiveValue = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(uintDepositPrice, trueDebt), uintDepositBorrowFactor)
+                let debtEffectiveValue = TidalMath.div(TidalMath.mul(uintDepositPrice, trueDebt), uintDepositBorrowFactor)
 
                 // Ensure we don't underflow - if debtEffectiveValue is greater than effectiveDebtAfterWithdrawal,
                 // it means we can pay off all debt
-                var effectiveDebtAfterPayment: UInt128 = 0
+                var effectiveDebtAfterPayment: UFix128 = 0.0 as UFix128
                 if debtEffectiveValue <= effectiveDebtAfterWithdrawal {
                     effectiveDebtAfterPayment = effectiveDebtAfterWithdrawal - debtEffectiveValue
                 }
@@ -1459,32 +1456,32 @@ access(all) contract TidalProtocol {
                     // We can reach the target health by paying off some or all of the debt. We can easily
                     // compute how many units of the token would be needed to reach the target health.
                     let healthChange = targetHealth - healthAfterWithdrawal
-                    let requiredEffectiveDebt = effectiveDebtAfterWithdrawal - DeFiActionsMathUtils.div(
+                    let requiredEffectiveDebt = effectiveDebtAfterWithdrawal - TidalMath.div(
                             effectiveCollateralAfterWithdrawal,
                             targetHealth
                         )
 
                     // The amount of the token to pay back, in units of the token.
-                    let paybackAmount = DeFiActionsMathUtils.div(
-                            DeFiActionsMathUtils.mul(requiredEffectiveDebt, uintDepositBorrowFactor),
+                    let paybackAmount = TidalMath.div(
+                            TidalMath.mul(requiredEffectiveDebt, uintDepositBorrowFactor),
                             uintDepositPrice
                         )
 
                     log("    [CONTRACT] paybackAmount: \(paybackAmount)")
 
-                    return DeFiActionsMathUtils.toUFix64RoundUp(paybackAmount)
+                    return TidalMath.toUFix64RoundUp(paybackAmount)
                 } else {
                     // We can pay off the entire debt, but we still need to deposit more to reach the target health.
                     // We have logic below that can determine the collateral deposition required to reach the target health
                     // from this new health position. Rather than copy that logic here, we fall through into it. But first
                     // we have to record the amount of tokens that went towards debt payback and adjust the effective
                     // debt to reflect that it has been paid off.
-                    debtTokenCount = DeFiActionsMathUtils.div(trueDebt, uintDepositPrice)
+                    debtTokenCount = TidalMath.div(trueDebt, uintDepositPrice)
                     // Ensure we don't underflow
                     if debtEffectiveValue <= effectiveDebtAfterWithdrawal {
                         effectiveDebtAfterWithdrawal = effectiveDebtAfterWithdrawal - debtEffectiveValue
                     } else {
-                        effectiveDebtAfterWithdrawal = 0
+                        effectiveDebtAfterWithdrawal = 0.0 as UFix128
                     }
                     healthAfterWithdrawal = potentialHealth
                 }
@@ -1499,24 +1496,24 @@ access(all) contract TidalProtocol {
             // multiply the required health change by the effective debt, and turn that into a token amount.
             let uintHealthChange = targetHealth - healthAfterWithdrawal
             // TODO: apply the same logic as below to the early return blocks above
-            let uintDepositCollateralFactor = DeFiActionsMathUtils.toUInt128(self.collateralFactor[depositType]!)
-            var requiredEffectiveCollateral = DeFiActionsMathUtils.mul(uintHealthChange, effectiveDebtAfterWithdrawal)
-            requiredEffectiveCollateral = DeFiActionsMathUtils.div(requiredEffectiveCollateral, uintDepositCollateralFactor)
+            let uintDepositCollateralFactor = TidalMath.toUFix128(self.collateralFactor[depositType]!)
+            var requiredEffectiveCollateral = TidalMath.mul(uintHealthChange, effectiveDebtAfterWithdrawal)
+            requiredEffectiveCollateral = TidalMath.div(requiredEffectiveCollateral, uintDepositCollateralFactor)
 
             // The amount of the token to deposit, in units of the token.
-            let collateralTokenCount = DeFiActionsMathUtils.div(requiredEffectiveCollateral, uintDepositPrice)
+            let collateralTokenCount = TidalMath.div(requiredEffectiveCollateral, uintDepositPrice)
             log("    [CONTRACT] requiredEffectiveCollateral: \(requiredEffectiveCollateral)")
             log("    [CONTRACT] collateralTokenCount: \(collateralTokenCount)")
             log("    [CONTRACT] debtTokenCount: \(debtTokenCount)")
             log("    [CONTRACT] collateralTokenCount + debtTokenCount: \(collateralTokenCount) + \(debtTokenCount) = \(collateralTokenCount + debtTokenCount)")
 
             // debtTokenCount is the number of tokens that went towards debt, zero if there was no debt.
-            return DeFiActionsMathUtils.toUFix64Round(collateralTokenCount + debtTokenCount)
+            return TidalMath.toUFix64Round(collateralTokenCount + debtTokenCount)
         }
 
         /// Returns the quantity of the specified token that could be withdrawn while still keeping the position's
         /// health at or above the provided target.
-        access(all) fun fundsAvailableAboveTargetHealth(pid: UInt64, type: Type, targetHealth: UInt128): UFix64 {
+        access(all) fun fundsAvailableAboveTargetHealth(pid: UInt64, type: Type, targetHealth: UFix128): UFix64 {
             return self.fundsAvailableAboveTargetHealthAfterDepositing(
                 pid: pid,
                 withdrawType: type,
@@ -1531,7 +1528,7 @@ access(all) contract TidalProtocol {
         access(all) fun fundsAvailableAboveTargetHealthAfterDepositing(
             pid: UInt64,
             withdrawType: Type,
-            targetHealth: UInt128,
+            targetHealth: UFix128,
             depositType: Type,
             depositAmount: UFix64
         ): UFix64 {
@@ -1577,15 +1574,15 @@ access(all) contract TidalProtocol {
                 return BalanceSheet(effectiveCollateral: effectiveCollateralAfterDeposit, effectiveDebt: effectiveDebtAfterDeposit)
             }
 
-            let uintDepositAmount = DeFiActionsMathUtils.toUInt128(depositAmount)
-            let uintDepositPrice = DeFiActionsMathUtils.toUInt128(self.priceOracle.price(ofToken: depositType)!)
-            let uintDepositBorrowFactor = DeFiActionsMathUtils.toUInt128(self.borrowFactor[depositType]!)
-            let uintDepositCollateralFactor = DeFiActionsMathUtils.toUInt128(self.collateralFactor[depositType]!)
+            let uintDepositAmount = TidalMath.toUFix128(depositAmount)
+            let uintDepositPrice = TidalMath.toUFix128(self.priceOracle.price(ofToken: depositType)!)
+            let uintDepositBorrowFactor = TidalMath.toUFix128(self.borrowFactor[depositType]!)
+            let uintDepositCollateralFactor = TidalMath.toUFix128(self.collateralFactor[depositType]!)
             let maybeBalance = position.balances[depositType]
                 if maybeBalance == nil || maybeBalance!.direction == BalanceDirection.Credit {
                     // If there's no debt for the deposit token, we can just compute how much additional effective collateral the deposit will create.
                     effectiveCollateralAfterDeposit = balanceSheet.effectiveCollateral +
-                        DeFiActionsMathUtils.mul(DeFiActionsMathUtils.mul(uintDepositAmount, uintDepositPrice), uintDepositCollateralFactor)
+                        TidalMath.mul(TidalMath.mul(uintDepositAmount, uintDepositPrice), uintDepositCollateralFactor)
                 } else {
                     let depositTokenState = self._borrowUpdatedTokenState(type: depositType)
 
@@ -1602,14 +1599,14 @@ access(all) contract TidalProtocol {
                         // just need to account for the debt decrease.
                         // TODO - validate if this should deal with withdrawType or depositType
                         effectiveDebtAfterDeposit = balanceSheet.effectiveDebt -
-                            DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(uintDepositAmount, uintDepositPrice), uintDepositBorrowFactor)
+                            TidalMath.div(TidalMath.mul(uintDepositAmount, uintDepositPrice), uintDepositBorrowFactor)
                     } else {
                         // The deposit will wipe out all of the debt, and create some collateral.
                         // TODO - validate if this should deal with withdrawType or depositType
                         effectiveDebtAfterDeposit = balanceSheet.effectiveDebt -
-                            DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(trueDebt, uintDepositPrice), uintDepositBorrowFactor)
+                            TidalMath.div(TidalMath.mul(trueDebt, uintDepositPrice), uintDepositBorrowFactor)
                         effectiveCollateralAfterDeposit = balanceSheet.effectiveCollateral +
-                            DeFiActionsMathUtils.mul(DeFiActionsMathUtils.mul(uintDepositAmount - trueDebt, uintDepositPrice), uintDepositCollateralFactor)
+                            TidalMath.mul(TidalMath.mul(uintDepositAmount - trueDebt, uintDepositPrice), uintDepositCollateralFactor)
                     }
                 }
 
@@ -1626,9 +1623,9 @@ access(all) contract TidalProtocol {
         access(self) fun computeAvailableWithdrawal(
             position: &InternalPosition,
             withdrawType: Type,
-            effectiveCollateral: UInt128,
-            effectiveDebt: UInt128,
-            targetHealth: UInt128 
+            effectiveCollateral: UFix128,
+            effectiveDebt: UFix128,
+            targetHealth: UFix128 
         ): UFix64 {
             var effectiveCollateralAfterDeposit = effectiveCollateral
             var effectiveDebtAfterDeposit = effectiveDebt
@@ -1646,11 +1643,11 @@ access(all) contract TidalProtocol {
 
             // For situations where the available withdrawal will BOTH draw down collateral and create debt, we keep
             // track of the number of tokens that are available from collateral
-            var collateralTokenCount: UInt128 = 0
+            var collateralTokenCount: UFix128 = 0.0 as UFix128
 
-            let uintWithdrawPrice = DeFiActionsMathUtils.toUInt128(self.priceOracle.price(ofToken: withdrawType)!)
-            let uintWithdrawCollateralFactor = DeFiActionsMathUtils.toUInt128(self.collateralFactor[withdrawType]!)
-            let uintWithdrawBorrowFactor = DeFiActionsMathUtils.toUInt128(self.borrowFactor[withdrawType]!)
+            let uintWithdrawPrice = TidalMath.toUFix128(self.priceOracle.price(ofToken: withdrawType)!)
+            let uintWithdrawCollateralFactor = TidalMath.toUFix128(self.collateralFactor[withdrawType]!)
+            let uintWithdrawBorrowFactor = TidalMath.toUFix128(self.borrowFactor[withdrawType]!)
 
             let maybeBalance = position.balances[withdrawType]
             if maybeBalance?.direction == BalanceDirection.Credit {
@@ -1661,7 +1658,7 @@ access(all) contract TidalProtocol {
                 let trueCredit = TidalProtocol.scaledBalanceToTrueBalance(creditBalance,
                     interestIndex: withdrawTokenState.creditInterestIndex
                 )
-                let collateralEffectiveValue = DeFiActionsMathUtils.mul(DeFiActionsMathUtils.mul(uintWithdrawPrice, trueCredit), uintWithdrawCollateralFactor)
+                let collateralEffectiveValue = TidalMath.mul(TidalMath.mul(uintWithdrawPrice, trueCredit), uintWithdrawCollateralFactor)
 
                 // Check what the new health would be if we took out all of this collateral
                 let potentialHealth = TidalProtocol.healthComputation(
@@ -1674,19 +1671,19 @@ access(all) contract TidalProtocol {
                 if potentialHealth <= targetHealth {
                     // We will hit the health target before using up all of the withdraw token credit. We can easily
                     // compute how many units of the token would bring the position down to the target health.
-                    // let availableHealth = healthAfterDeposit == UInt128.max ? UInt128.max : healthAfterDeposit - targetHealth
-                    // let availableEffectiveValue = (effectiveDebtAfterDeposit == 0 || availableHealth == UInt128.max)
+                    // let availableHealth = healthAfterDeposit == UFix128.max ? UFix128.max : healthAfterDeposit - targetHealth
+                    // let availableEffectiveValue = (effectiveDebtAfterDeposit == 0 || availableHealth == UFix128.max)
                     //     ? effectiveCollateralAfterDeposit
-                    //     : DeFiActionsMathUtils.mul(availableHealth, effectiveDebtAfterDeposit)
+                    //     : TidalMath.mul(availableHealth, effectiveDebtAfterDeposit)
 
-                    let availableEffectiveValue = effectiveCollateralAfterDeposit - DeFiActionsMathUtils.mul(targetHealth, effectiveDebtAfterDeposit)
+                    let availableEffectiveValue = effectiveCollateralAfterDeposit - TidalMath.mul(targetHealth, effectiveDebtAfterDeposit)
                     log("    [CONTRACT] availableEffectiveValue: \(availableEffectiveValue)")
 
                     // The amount of the token we can take using that amount of health
-                    let availableTokenCount = DeFiActionsMathUtils.div(DeFiActionsMathUtils.div(availableEffectiveValue, uintWithdrawCollateralFactor), uintWithdrawPrice)
+                    let availableTokenCount = TidalMath.div(TidalMath.div(availableEffectiveValue, uintWithdrawCollateralFactor), uintWithdrawPrice)
                     log("    [CONTRACT] availableTokenCount: \(availableTokenCount)")
 
-                    return DeFiActionsMathUtils.toUFix64RoundDown(availableTokenCount)
+                    return TidalMath.toUFix64RoundDown(availableTokenCount)
                 } else {
                     // We can flip this credit position into a debit position, before hitting the target health.
                     // We have logic below that can determine health changes for debit positions. We've copied it here
@@ -1697,12 +1694,12 @@ access(all) contract TidalProtocol {
                     log("    [CONTRACT] effectiveCollateralAfterDeposit: \(effectiveCollateralAfterDeposit)")
 
                     // We can calculate the available debt increase that would bring us to the target health
-                    var availableDebtIncrease = DeFiActionsMathUtils.div(effectiveCollateralAfterDeposit, targetHealth) - effectiveDebtAfterDeposit
-                    let availableTokens = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(availableDebtIncrease, uintWithdrawBorrowFactor), uintWithdrawPrice)
+                    var availableDebtIncrease = TidalMath.div(effectiveCollateralAfterDeposit, targetHealth) - effectiveDebtAfterDeposit
+                    let availableTokens = TidalMath.div(TidalMath.mul(availableDebtIncrease, uintWithdrawBorrowFactor), uintWithdrawPrice)
                     log("    [CONTRACT] availableDebtIncrease: \(availableDebtIncrease)")
                     log("    [CONTRACT] availableTokens: \(availableTokens)")
                     log("    [CONTRACT] availableTokens + collateralTokenCount: \(availableTokens + collateralTokenCount)")
-                    return DeFiActionsMathUtils.toUFix64RoundDown(availableTokens + collateralTokenCount)
+                    return TidalMath.toUFix64RoundDown(availableTokens + collateralTokenCount)
                 }
             }
 
@@ -1710,32 +1707,32 @@ access(all) contract TidalProtocol {
             // token, or we've accounted for the credit balance and adjusted the effective collateral above.
 
             // We can calculate the available debt increase that would bring us to the target health
-            var availableDebtIncrease = DeFiActionsMathUtils.div(effectiveCollateralAfterDeposit, targetHealth) - effectiveDebtAfterDeposit
-            let availableTokens = DeFiActionsMathUtils.div(DeFiActionsMathUtils.mul(availableDebtIncrease, uintWithdrawBorrowFactor), uintWithdrawPrice)
+            var availableDebtIncrease = TidalMath.div(effectiveCollateralAfterDeposit, targetHealth) - effectiveDebtAfterDeposit
+            let availableTokens = TidalMath.div(TidalMath.mul(availableDebtIncrease, uintWithdrawBorrowFactor), uintWithdrawPrice)
             log("    [CONTRACT] availableDebtIncrease: \(availableDebtIncrease)")
             log("    [CONTRACT] availableTokens: \(availableTokens)")
             log("    [CONTRACT] availableTokens + collateralTokenCount: \(availableTokens + collateralTokenCount)")
-            return DeFiActionsMathUtils.toUFix64RoundDown(availableTokens + collateralTokenCount)
+            return TidalMath.toUFix64RoundDown(availableTokens + collateralTokenCount)
         }
 
         /// Returns the position's health if the given amount of the specified token were deposited
-        access(all) fun healthAfterDeposit(pid: UInt64, type: Type, amount: UFix64): UInt128 {
+        access(all) fun healthAfterDeposit(pid: UInt64, type: Type, amount: UFix64): UFix128 {
             let balanceSheet = self._getUpdatedBalanceSheet(pid: pid)
             let position = self._borrowPosition(pid: pid)
             let tokenState = self._borrowUpdatedTokenState(type: type)
 
-            var effectiveCollateralIncrease: UInt128 = 0
-            var effectiveDebtDecrease: UInt128 = 0
+            var effectiveCollateralIncrease: UFix128 = 0.0 as UFix128
+            var effectiveDebtDecrease: UFix128 = 0.0 as UFix128
 
-            let uintAmount = DeFiActionsMathUtils.toUInt128(amount)
-            let uintPrice = DeFiActionsMathUtils.toUInt128(self.priceOracle.price(ofToken: type)!)
-            let uintCollateralFactor = DeFiActionsMathUtils.toUInt128(self.collateralFactor[type]!)
-            let uintBorrowFactor = DeFiActionsMathUtils.toUInt128(self.borrowFactor[type]!)
+            let uintAmount = TidalMath.toUFix128(amount)
+            let uintPrice = TidalMath.toUFix128(self.priceOracle.price(ofToken: type)!)
+            let uintCollateralFactor = TidalMath.toUFix128(self.collateralFactor[type]!)
+            let uintBorrowFactor = TidalMath.toUFix128(self.borrowFactor[type]!)
             if position.balances[type] == nil || position.balances[type]!.direction == BalanceDirection.Credit {
                 // Since the user has no debt in the given token, we can just compute how much
                 // additional collateral this deposit will create.
-                effectiveCollateralIncrease = DeFiActionsMathUtils.mul(
-                    DeFiActionsMathUtils.mul(uintAmount, uintPrice),
+                effectiveCollateralIncrease = TidalMath.mul(
+                    TidalMath.mul(uintAmount, uintPrice),
                     uintCollateralFactor
                 )
             } else {
@@ -1749,14 +1746,14 @@ access(all) contract TidalProtocol {
                 if trueDebt >= uintAmount {
                     // This deposit will wipe out some or all of the debt, but won't create new collateral, we
                     // just need to account for the debt decrease.
-                    effectiveDebtDecrease = DeFiActionsMathUtils.div(
-                        DeFiActionsMathUtils.mul(uintAmount, uintPrice),
+                    effectiveDebtDecrease = TidalMath.div(
+                        TidalMath.mul(uintAmount, uintPrice),
                         uintBorrowFactor
                     )
                 } else {
                     // This deposit will wipe out all of the debt, and create new collateral.
-                    effectiveCollateralIncrease = DeFiActionsMathUtils.mul(
-                        DeFiActionsMathUtils.mul(uintAmount - trueDebt, uintPrice),
+                    effectiveCollateralIncrease = TidalMath.mul(
+                        TidalMath.mul(uintAmount - trueDebt, uintPrice),
                         uintCollateralFactor
                     )
                 }
@@ -1772,23 +1769,23 @@ access(all) contract TidalProtocol {
         // using the top up source.
         // NOTE: This method can return health values below 1.0, which aren't actually allowed. This indicates
         // that the proposed withdrawal would fail (unless a top up source is available and used).
-        access(all) fun healthAfterWithdrawal(pid: UInt64, type: Type, amount: UFix64): UInt128 {
+        access(all) fun healthAfterWithdrawal(pid: UInt64, type: Type, amount: UFix64): UFix128 {
             let balanceSheet = self._getUpdatedBalanceSheet(pid: pid)
             let position = self._borrowPosition(pid: pid)
             let tokenState = self._borrowUpdatedTokenState(type: type)
 
-            var effectiveCollateralDecrease: UInt128 = 0
-            var effectiveDebtIncrease: UInt128 = 0
+            var effectiveCollateralDecrease: UFix128 = 0.0 as UFix128
+            var effectiveDebtIncrease: UFix128 = 0.0 as UFix128
 
-            let uintAmount = DeFiActionsMathUtils.toUInt128(amount)
-            let uintPrice = DeFiActionsMathUtils.toUInt128(self.priceOracle.price(ofToken: type)!)
-            let uintCollateralFactor = DeFiActionsMathUtils.toUInt128(self.collateralFactor[type]!)
-            let uintBorrowFactor = DeFiActionsMathUtils.toUInt128(self.borrowFactor[type]!)
+            let uintAmount = TidalMath.toUFix128(amount)
+            let uintPrice = TidalMath.toUFix128(self.priceOracle.price(ofToken: type)!)
+            let uintCollateralFactor = TidalMath.toUFix128(self.collateralFactor[type]!)
+            let uintBorrowFactor = TidalMath.toUFix128(self.borrowFactor[type]!)
             if position.balances[type] == nil || position.balances[type]!.direction == BalanceDirection.Debit {
                 // The user has no credit position in the given token, we can just compute how much
                 // additional effective debt this withdrawal will create.
-                effectiveDebtIncrease = DeFiActionsMathUtils.div(
-                    DeFiActionsMathUtils.mul(uintAmount, uintPrice),
+                effectiveDebtIncrease = TidalMath.div(
+                    TidalMath.mul(uintAmount, uintPrice),
                     uintBorrowFactor
                 )
             } else {
@@ -1803,18 +1800,18 @@ access(all) contract TidalProtocol {
                     // This withdrawal will draw down some collateral, but won't create new debt, we
                     // just need to account for the collateral decrease.
                     // effectiveCollateralDecrease = amount * self.priceOracle.price(ofToken: type)! * self.collateralFactor[type]!
-                    effectiveCollateralDecrease = DeFiActionsMathUtils.mul(
-                        DeFiActionsMathUtils.mul(uintAmount, uintPrice),
+                    effectiveCollateralDecrease = TidalMath.mul(
+                        TidalMath.mul(uintAmount, uintPrice),
                         uintCollateralFactor
                     )
                 } else {
                     // The withdrawal will wipe out all of the collateral, and create new debt.
-                    effectiveDebtIncrease = DeFiActionsMathUtils.div(
-                        DeFiActionsMathUtils.mul(uintAmount - trueCredit, uintPrice),
+                    effectiveDebtIncrease = TidalMath.div(
+                        TidalMath.mul(uintAmount - trueCredit, uintPrice),
                         uintBorrowFactor
                     )
-                    effectiveCollateralDecrease = DeFiActionsMathUtils.mul(
-                        DeFiActionsMathUtils.mul(trueCredit, uintPrice),
+                    effectiveCollateralDecrease = TidalMath.mul(
+                        TidalMath.mul(trueCredit, uintPrice),
                         uintCollateralFactor
                     )
                 }
@@ -1900,7 +1897,7 @@ access(all) contract TidalProtocol {
 
             // Deposit rate limiting
             let depositAmount = from.balance
-            let uintDepositAmount = DeFiActionsMathUtils.toUInt128(depositAmount)
+            let uintDepositAmount = TidalMath.toUFix128(depositAmount)
             let depositLimit = tokenState.depositLimit()
 
             if depositAmount > depositLimit {
@@ -1916,7 +1913,7 @@ access(all) contract TidalProtocol {
 
             // If this position doesn't currently have an entry for this token, create one.
             if position.balances[type] == nil {
-                position.balances[type] = InternalBalance(direction: BalanceDirection.Credit, scaledBalance: 0)
+                position.balances[type] = InternalBalance(direction: BalanceDirection.Credit, scaledBalance: 0.0 as UFix128)
             }
 
             // CHANGE: Create vault if it doesn't exist yet
@@ -2036,15 +2033,15 @@ access(all) contract TidalProtocol {
 
             // If this position doesn't currently have an entry for this token, create one.
             if position.balances[type] == nil {
-                position.balances[type] = InternalBalance(direction: BalanceDirection.Credit, scaledBalance: 0)
+                position.balances[type] = InternalBalance(direction: BalanceDirection.Credit, scaledBalance: 0.0 as UFix128)
             }
 
             let reserveVault = (&self.reserves[type] as auth(FungibleToken.Withdraw) &{FungibleToken.Vault}?)!
 
             // Reflect the withdrawal in the position's balance
-            let uintAmount = DeFiActionsMathUtils.toUInt128(amount)
+            let uintAmount = TidalMath.toUFix128(amount)
             position.balances[type]!.recordWithdrawal(amount: uintAmount, tokenState: tokenState)
-            if self.positionHealth(pid: pid) != 0 {
+            if self.positionHealth(pid: pid) != 0.0 as UFix128 {
                 // Ensure that this withdrawal doesn't cause the position to be overdrawn.
                 assert(position.minHealth <= self.positionHealth(pid: pid), message: "Position is overdrawn")
             }
@@ -2080,15 +2077,15 @@ access(all) contract TidalProtocol {
 
         /// Updates liquidation-related parameters (any nil values are ignored)
         access(EGovernance) fun setLiquidationParams(
-            targetHF: UInt128?,
+            targetHF: UFix128?,
             warmupSec: UInt64?,
             protocolFeeBps: UInt16?
         ) {
-            var newTarget: UInt128 = self.liquidationTargetHF
+            var newTarget: UFix128 = self.liquidationTargetHF
             var newWarmup: UInt64 = self.liquidationWarmupSec
             var newProtocolFee: UInt16 = self.protocolLiquidationFeeBps
             if targetHF != nil {
-                assert(targetHF! > DeFiActionsMathUtils.e24, message: "targetHF must be > 1.0")
+                assert(targetHF! > TidalMath.one, message: "targetHF must be > 1.0")
                 self.liquidationTargetHF = targetHF!
                 newTarget = targetHF!
             }
@@ -2248,10 +2245,10 @@ access(all) contract TidalProtocol {
 
                         let tokenState = self._borrowUpdatedTokenState(type: self.defaultToken)
                         if position.balances[self.defaultToken] == nil {
-                            position.balances[self.defaultToken] = InternalBalance(direction: BalanceDirection.Credit, scaledBalance: 0)
+                            position.balances[self.defaultToken] = InternalBalance(direction: BalanceDirection.Credit, scaledBalance: 0.0 as UFix128)
                         }
                         // record the withdrawal and mint the tokens
-                        let uintSinkAmount = DeFiActionsMathUtils.toUInt128(sinkAmount)
+                        let uintSinkAmount = TidalMath.toUFix128(sinkAmount)
                         position.balances[self.defaultToken]!.recordWithdrawal(amount: uintSinkAmount, tokenState: tokenState)
                         let sinkVault <- TidalProtocol._borrowMOETMinter().mintTokens(amount: sinkAmount)
 
@@ -2349,8 +2346,8 @@ access(all) contract TidalProtocol {
             let priceOracle = &self.priceOracle as &{DeFiActions.PriceOracle}
 
             // Get the position's collateral and debt values in terms of the default token.
-            var effectiveCollateral: UInt128 = 0
-            var effectiveDebt: UInt128 = 0
+            var effectiveCollateral: UFix128 = 0.0 as UFix128
+            var effectiveDebt: UFix128 = 0.0 as UFix128
 
             for type in position.balances.keys {
                 let balance = position.balances[type]!
@@ -2359,20 +2356,20 @@ access(all) contract TidalProtocol {
                     let trueBalance = TidalProtocol.scaledBalanceToTrueBalance(balance.scaledBalance,
                         interestIndex: tokenState.creditInterestIndex)
 
-                    let convertedPrice = DeFiActionsMathUtils.toUInt128(priceOracle.price(ofToken: type)!)
-                    let value = DeFiActionsMathUtils.mul(convertedPrice, trueBalance)
+                    let convertedPrice = TidalMath.toUFix128(priceOracle.price(ofToken: type)!)
+                    let value = TidalMath.mul(convertedPrice, trueBalance)
 
-                    let convertedCollateralFactor = DeFiActionsMathUtils.toUInt128(self.collateralFactor[type]!)
-                    effectiveCollateral = effectiveCollateral + DeFiActionsMathUtils.mul(value, convertedCollateralFactor)
+                    let convertedCollateralFactor = TidalMath.toUFix128(self.collateralFactor[type]!)
+                    effectiveCollateral = effectiveCollateral + TidalMath.mul(value, convertedCollateralFactor)
                 } else {
                     let trueBalance = TidalProtocol.scaledBalanceToTrueBalance(balance.scaledBalance,
                         interestIndex: tokenState.debitInterestIndex)
 
-                    let convertedPrice = DeFiActionsMathUtils.toUInt128(priceOracle.price(ofToken: type)!)
-                    let value = DeFiActionsMathUtils.mul(convertedPrice, trueBalance)
+                    let convertedPrice = TidalMath.toUFix128(priceOracle.price(ofToken: type)!)
+                    let value = TidalMath.mul(convertedPrice, trueBalance)
 
-                    let convertedBorrowFactor = DeFiActionsMathUtils.toUInt128(self.borrowFactor[type]!)
-                    effectiveDebt = effectiveDebt + DeFiActionsMathUtils.div(value, convertedBorrowFactor)
+                    let convertedBorrowFactor = TidalMath.toUFix128(self.borrowFactor[type]!)
+                    effectiveDebt = effectiveDebt + TidalMath.div(value, convertedBorrowFactor)
                 }
             }
 
@@ -2402,13 +2399,13 @@ access(all) contract TidalProtocol {
             for t in position.balances.keys {
                 let tokenState = self._borrowUpdatedTokenState(type: t)
                 snaps[t] = TidalProtocol.TokenSnapshot(
-                    price: DeFiActionsMathUtils.toUInt128(self.priceOracle.price(ofToken: t)!),
+                    price: TidalMath.toUFix128(self.priceOracle.price(ofToken: t)!),
                     credit: tokenState.creditInterestIndex,
                     debit: tokenState.debitInterestIndex,
                     risk: TidalProtocol.RiskParams(
-                        cf: DeFiActionsMathUtils.toUInt128(self.collateralFactor[t]!),
-                        bf: DeFiActionsMathUtils.toUInt128(self.borrowFactor[t]!),
-                        lb: DeFiActionsMathUtils.e24 + 50_000_000_000_000_000_000_000
+                        cf: TidalMath.toUFix128(self.collateralFactor[t]!),
+                        bf: TidalMath.toUFix128(self.borrowFactor[t]!),
+                        lb: TidalMath.toUFix128(self.liquidationBonus[t]!)
                     )
                 )
             }
@@ -2479,33 +2476,33 @@ access(all) contract TidalProtocol {
             return pool.availableBalance(pid: self.id, type: type, pullFromTopUpSource: pullFromTopUpSource)
         }
         /// Returns the current health of the position
-        access(all) fun getHealth(): UInt128 {
+        access(all) fun getHealth(): UFix128 {
             let pool = self.pool.borrow()!
             return pool.positionHealth(pid: self.id)
         }
         /// Returns the Position's target health
-        access(all) fun getTargetHealth(): UFix64 {
-            return 0.0 // TODO
+        access(all) fun getTargetHealth(): UFix128 {
+            return TidalMath.zero // TODO
         }
         /// Sets the target health of the Position
-        access(all) fun setTargetHealth(targetHealth: UFix64) {
+        access(all) fun setTargetHealth(targetHealth: UFix128) {
             // TODO
         }
         /// Returns the minimum health of the Position
-        access(all) fun getMinHealth(): UFix64 {
-            return 0.0 // TODO
+        access(all) fun getMinHealth(): UFix128 {
+            return TidalMath.zero // TODO
         }
         /// Sets the minimum health of the Position
-        access(all) fun setMinHealth(minHealth: UFix64) {
+        access(all) fun setMinHealth(minHealth: UFix128) {
             // TODO
         }
         /// Returns the maximum health of the Position
-        access(all) fun getMaxHealth(): UFix64 {
+        access(all) fun getMaxHealth(): UFix128 {
             // TODO
-            return 0.0
+            return TidalMath.zero
         }
         /// Sets the maximum health of the position
-        access(all) fun setMaxHealth(maxHealth: UFix64) {
+        access(all) fun setMaxHealth(maxHealth: UFix128) {
             // TODO
         }
         /// Returns the maximum amount of the given token type that could be deposited into this position
@@ -2756,9 +2753,9 @@ access(all) contract TidalProtocol {
         /// The available balance of the Pool's default token Type
         access(all) let defaultTokenAvailableBalance: UFix64
         /// The current health of the related position
-        access(all) let health: UInt128
+        access(all) let health: UFix128
 
-        init(balances: [PositionBalance], poolDefaultToken: Type, defaultTokenAvailableBalance: UFix64, health: UInt128) {
+        init(balances: [PositionBalance], poolDefaultToken: Type, defaultTokenAvailableBalance: UFix64, health: UFix128) {
             self.balances = balances
             self.poolDefaultToken = poolDefaultToken
             self.defaultTokenAvailableBalance = defaultTokenAvailableBalance
@@ -2769,67 +2766,63 @@ access(all) contract TidalProtocol {
     /* --- PUBLIC METHODS ---- */
     /// Returns a health value computed from the provided effective collateral and debt values where health is a ratio
     /// of effective collateral over effective debt
-    access(all) view fun healthComputation(effectiveCollateral: UInt128, effectiveDebt: UInt128): UInt128 {
-        if effectiveCollateral == 0 {
-            return 0
-        } else if effectiveDebt == 0 || DeFiActionsMathUtils.div(effectiveDebt, effectiveCollateral) == 0 {
+    access(all) view fun healthComputation(effectiveCollateral: UFix128, effectiveDebt: UFix128): UFix128 {
+        if effectiveCollateral == 0.0 as UFix128 {
+            return 0.0 as UFix128
+        } else if effectiveDebt == 0.0 as UFix128 || TidalMath.div(effectiveDebt, effectiveCollateral) == 0.0 as UFix128 {
             // If debt is so small relative to collateral that division rounds to zero,
             // the health is essentially infinite
-            return UInt128.max
+            return UFix128.max
         }
-        return DeFiActionsMathUtils.div(effectiveCollateral, effectiveDebt)
+        return TidalMath.div(effectiveCollateral, effectiveDebt)
     }
 
-    // Converts a yearly interest rate to a per-second multiplication factor (stored in a UInt128 as a fixed point
+    // Converts a yearly interest rate to a per-second multiplication factor (stored in a UFix128 as a fixed point
     // number with 18 decimal places). The input to this function will be just the relative annual interest rate
     // (e.g. 0.05 for 5% interest), and the result will be the per-second multiplier (e.g. 1.000000000001).
-    access(all) view fun perSecondInterestRate(yearlyRate: UInt128): UInt128 {
-        let secondsInYearE24 = DeFiActionsMathUtils.mul(31_536_000, DeFiActionsMathUtils.e24)
-        let perSecondScaledValue = DeFiActionsMathUtils.div(UInt128(yearlyRate), secondsInYearE24)
-        assert(perSecondScaledValue < UInt128.max, message: "Per-second interest rate \(perSecondScaledValue) is too high")
-        return UInt128(perSecondScaledValue + DeFiActionsMathUtils.e24)
+    access(all) view fun perSecondInterestRate(yearlyRate: UFix128): UFix128 {
+        let secondsInYearE24 = TidalMath.mul(31_536_000.0 as UFix128, TidalMath.one)
+        let perSecondScaledValue = TidalMath.div(yearlyRate, secondsInYearE24)
+        assert(perSecondScaledValue < UFix128.max, message: "Per-second interest rate \(perSecondScaledValue) is too high")
+        return perSecondScaledValue + TidalMath.one
     }
 
     /// Returns the compounded interest index reflecting the passage of time
     /// The result is: newIndex = oldIndex * perSecondRate ^ seconds
-    access(all) view fun compoundInterestIndex(oldIndex: UInt128, perSecondRate: UInt128, elapsedSeconds: UFix64): UInt128 {
+    access(all) view fun compoundInterestIndex(oldIndex: UFix128, perSecondRate: UFix128, elapsedSeconds: UFix64): UFix128 {
+        // For UFix128, we use repeated multiplication per second conservatively for now.
+        // TODO: consider faster exponentiation if/when UFix128 bit ops are supported.
         var result = oldIndex
-        var current = UInt128(perSecondRate)
-        var secondsCounter = UInt128(elapsedSeconds)
-
-        while secondsCounter > 0 {
-            if secondsCounter & 1 == 1 {
-                result = DeFiActionsMathUtils.mul(result, current)
-            }
-            current = DeFiActionsMathUtils.mul(current, current)
-            secondsCounter = secondsCounter >> 1
+        var i: UFix64 = 0.0
+        while i < elapsedSeconds {
+            result = TidalMath.mul(result, perSecondRate)
+            i = i + 1.0
         }
-
         return result
     }
 
     /// Transforms the provided `scaledBalance` to a true balance (or actual balance) where the true balance is the
     /// scaledBalance + accrued interest and the scaled balance is the amount a borrower has actually interacted with
     /// (via deposits or withdrawals)
-    access(all) view fun scaledBalanceToTrueBalance(_ scaled: UInt128, interestIndex: UInt128): UInt128 {
+    access(all) view fun scaledBalanceToTrueBalance(_ scaled: UFix128, interestIndex: UFix128): UFix128 {
         // The interest index is a fixed point number with 18 decimal places. To maintain precision,
         // we multiply the scaled balance by the interest index and then divide by 10^18 to get the
         // true balance with proper decimal alignment.
-        return DeFiActionsMathUtils.div(
-            DeFiActionsMathUtils.mul(scaled, interestIndex),
-            DeFiActionsMathUtils.e24
+        return TidalMath.div(
+            TidalMath.mul(scaled, interestIndex),
+            TidalMath.one
         )
     }
 
     /// Transforms the provided `trueBalance` to a scaled balance where the scaled balance is the amount a borrower has
     /// actually interacted with (via deposits or withdrawals) and the true balance is the amount with respect to
     /// accrued interest
-    access(all) view fun trueBalanceToScaledBalance(_ trueBalance: UInt128, interestIndex: UInt128): UInt128 {
+    access(all) view fun trueBalanceToScaledBalance(_ trueBalance: UFix128, interestIndex: UFix128): UFix128 {
         // The interest index is a fixed point number with 18 decimal places. To maintain precision,
         // we multiply the true balance by 10^18 and then divide by the interest index to get the
         // scaled balance with proper decimal alignment.
-        return DeFiActionsMathUtils.div(
-            DeFiActionsMathUtils.mul(trueBalance, DeFiActionsMathUtils.e24),
+        return TidalMath.div(
+            TidalMath.mul(trueBalance, TidalMath.one),
             interestIndex
         )
     }
