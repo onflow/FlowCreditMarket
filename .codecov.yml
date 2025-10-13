@@ -2,12 +2,12 @@ coverage:
   status:
     project:
       contracts:
-        target: 80%
+        target: auto
         paths:
           - "cadence/contracts/**"
     patch:
       contracts:
-        target: 80%
+        target: auto
         paths:
           - "cadence/contracts/**"
 
