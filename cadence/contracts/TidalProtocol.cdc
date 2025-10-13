@@ -2905,14 +2905,18 @@ access(all) contract TidalProtocol {
     /// Returns a health value computed from the provided effective collateral and debt values where health is a ratio
     /// of effective collateral over effective debt
     access(all) view fun healthComputation(effectiveCollateral: UFix128, effectiveDebt: UFix128): UFix128 {
-        if effectiveCollateral == 0.0 as UFix128 {
-            return 0.0 as UFix128
-        } else if effectiveDebt == 0.0 as UFix128 || TidalMath.div(effectiveDebt, effectiveCollateral) == 0.0 as UFix128 {
-            // If debt is so small relative to collateral that division rounds to zero,
-            // the health is essentially infinite
+        if effectiveDebt == 0.0 as UFix128 {
+            // Handles X/0 (infinite) including 0/0 (safe empty position)
             return UFix128.max
+        } else if effectiveCollateral == 0.0 as UFix128 {
+            // 0/Y where Y > 0 is 0 health (unsafe)
+            return 0.0 as UFix128
+        } else if TidalMath.div(effectiveDebt, effectiveCollateral) == 0.0 as UFix128 {
+            // Negligible debt relative to collateral: treat as infinite
+            return UFix128.max
+        } else {
+            return TidalMath.div(effectiveCollateral, effectiveDebt)
         }
-        return TidalMath.div(effectiveCollateral, effectiveDebt)
     }
 
     // Converts a yearly interest rate to a per-second multiplication factor (stored in a UFix128 as a fixed point
