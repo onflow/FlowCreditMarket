@@ -44,6 +44,17 @@ access(all) contract TidalProtocol {
 
     access(all) entitlement EParticipant
 
+    /* --- NUMERIC TYPES POLICY ---
+        - External/public APIs (Vault amounts, deposits/withdrawals, events) use UFix64.
+        - Internal accounting and risk math use UFix128: scaled/true balances, interest indices/rates,
+          health factor, and prices once converted.
+        Rationale:
+        - Interest indices and rates are modeled as 18-decimal fixed-point in TidalMath and stored as UFix128.
+        - Operating in the UFix128 domain minimizes rounding error in true↔scaled conversions and
+          health/price computations.
+        - We convert at boundaries via TidalMath.toUFix128/toUFix64.
+    */
+
 
     /// InternalBalance
     ///
@@ -55,8 +66,9 @@ access(all) contract TidalProtocol {
         /// actual balance divided by the current interest index for the associated token. This means we don't
         /// need to update the balance of a position as time passes, even as interest rates change. We only need
         /// to update the scaled balance when the user deposits or withdraws funds. The interest index
-        /// is a number relatively close to 1.0, so the scaled balance will be roughly of the same order
-        /// of magnitude as the actual balance (thus we can use UFix64 for the scaled balance).
+        /// is a number relatively close to 1.0, so the scaled balance will be roughly of the same order of
+        /// magnitude as the actual balance. We store the scaled balance as UFix128 to align with UFix128
+        /// interest indices and to reduce rounding during true↔scaled conversions.
         access(all) var scaledBalance: UFix128
 
         // Single initializer that can handle both cases
@@ -69,6 +81,8 @@ access(all) contract TidalProtocol {
         /// provided TokenState. It's assumed the TokenState and InternalBalance relate to the same token Type, but
         /// since neither struct have values defining the associated token, callers should be sure to make the arguments
         /// do in fact relate to the same token Type.
+        /// amount is expressed in UFix128 (true token units) to operate in the internal UFix128 domain; public
+        /// deposit APIs accept UFix64 and are converted at the boundary.
         access(contract) fun recordDeposit(amount: UFix128, tokenState: auth(EImplementation) &TokenState) {
             if self.direction == BalanceDirection.Credit {
                 // Depositing into a credit position just increases the balance.
@@ -118,6 +132,8 @@ access(all) contract TidalProtocol {
         /// the provided TokenState. It's assumed the TokenState and InternalBalance relate to the same token Type, but
         /// since neither struct have values defining the associated token, callers should be sure to make the arguments
         /// do in fact relate to the same token Type.
+        /// amount is expressed in UFix128 for the same rationale as deposits; public withdraw APIs are UFix64 and are
+        /// converted at the boundary.
         access(all) fun recordWithdrawal(amount: UFix128, tokenState: &TokenState) {
             if self.direction == BalanceDirection.Debit {
                 // Withdrawing from a debit position just increases the debt amount.
@@ -304,15 +320,17 @@ access(all) contract TidalProtocol {
         access(all) var totalCreditBalance: UFix128
         /// The total debit balance of the related Token across the whole Pool in which this TokenState resides
         access(all) var totalDebitBalance: UFix128
-        /// The index of the credit interest for the related token. Interest on a token is stored as an "index" which
-        /// can be thought of as "how many actual tokens does 1 unit of scaled balance represent right now?"
+        /// The index of the credit interest for the related token. Interest indices are 18-decimal fixed-point values
+        /// (see TidalMath) and are stored as UFix128 to maintain precision when converting between scaled and true
+        /// balances and when compounding.
         access(all) var creditInterestIndex: UFix128
-        /// The index of the debit interest for the related token. Interest on a token is stored as an "index" which
-        /// can be thought of as "how many actual tokens does 1 unit of scaled balance represent right now?"
+        /// The index of the debit interest for the related token. Same rationale as creditInterestIndex: UFix128 keeps
+        /// the internal interest math and conversions precise and consistent.
         access(all) var debitInterestIndex: UFix128
-        /// The interest rate for credit of the associated token
+        /// The interest rate for credit of the associated token, stored as UFix128 to match index precision and avoid
+        /// cumulative rounding during compounding.
         access(all) var currentCreditRate: UFix128
-        /// The interest rate for debit of the associated token
+        /// The interest rate for debit of the associated token. Also UFix128 for consistency with indices/rates math.
         access(all) var currentDebitRate: UFix128
         /// The interest curve implementation used to calculate interest rate
         access(all) var interestCurve: {InterestCurve}
