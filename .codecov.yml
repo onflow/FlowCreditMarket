@@ -1,0 +1,14 @@
+coverage:
+  status:
+    project:
+      contracts:
+        target: 80%
+        paths:
+          - "cadence/contracts/**"
+    patch:
+      contracts:
+        target: 80%
+        paths:
+          - "cadence/contracts/**"
+
+
