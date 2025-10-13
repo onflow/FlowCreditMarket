@@ -4,6 +4,7 @@ import "MOET"
 import "test_helpers.cdc"
 
 access(all) let protocolAccount = Test.getAccount(0x0000000000000007)
+access(all) let flowTokenIdentifier = "A.0000000000000003.FlowToken.Vault"
 
 access(all)
 fun setup() {
@@ -29,6 +30,16 @@ fun test_setGovernanceParams_and_exercise_paths() {
     let user = Test.createAccount()
     setupMoetVault(user, beFailed: false)
     mintMoet(signer: protocolAccount, to: user.address, amount: 10.0, beFailed: false)
+
+    // Enable FLOW token support in pool
+    addSupportedTokenSimpleInterestCurve(
+        signer: protocolAccount,
+        tokenTypeIdentifier: flowTokenIdentifier,
+        collateralFactor: 0.8,
+        borrowFactor: 1.0,
+        depositRate: 1_000_000.0,
+        depositCapacityCap: 1_000_000.0
+    )
 
     // Open minimal position and deposit to ensure token has credit balance
     grantPoolCapToConsumer()
