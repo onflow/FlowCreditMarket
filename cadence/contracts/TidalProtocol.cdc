@@ -2905,15 +2905,9 @@ access(all) contract TidalProtocol {
     /// Returns the compounded interest index reflecting the passage of time
     /// The result is: newIndex = oldIndex * perSecondRate ^ seconds
     access(all) view fun compoundInterestIndex(oldIndex: UFix128, perSecondRate: UFix128, elapsedSeconds: UFix64): UFix128 {
-        // For UFix128, we use repeated multiplication per second conservatively for now.
-        // TODO: consider faster exponentiation if/when UFix128 bit ops are supported.
-        var result = oldIndex
-        var i: UFix64 = 0.0
-        while i < elapsedSeconds {
-            result = result * perSecondRate
-            i = i + 1.0
-        }
-        return result
+        // Exponentiation by squaring on UFix128 for performance and precision
+        let pow = TidalMath.powUFix128(perSecondRate, elapsedSeconds)
+        return oldIndex * pow
     }
 
     /// Transforms the provided `scaledBalance` to a true balance (or actual balance) where the true balance is the

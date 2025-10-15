@@ -15,7 +15,26 @@ access(all) contract TidalMath {
         access(all) case RoundEven
     }
 
-    // mul removed: use the built-in * operator directly
+    /// Fast exponentiation for UFix128 with a non-negative integer exponent (seconds)
+    /// Uses exponentiation-by-squaring with truncation at each multiply (fixed-point semantics)
+    access(all) view fun powUFix128(_ base: UFix128, _ expSeconds: UFix64): UFix128 {
+        if expSeconds == 0.0 { return self.one }
+        if base == self.one { return self.one }
+        var result: UFix128 = self.one
+        var b: UFix128 = base
+        var e: UFix64 = expSeconds
+        // Floor the seconds to an integer count
+        var remaining: UInt64 = UInt64(e)
+        while remaining > 0 {
+            if remaining % UInt64(2) == UInt64(1) {
+                result = result * b
+            }
+            b = b * b
+            remaining = remaining / UInt64(2)
+        }
+        return result
+    }
+
 
     access(all) view fun div(_ x: UFix128, _ y: UFix128): UFix128 {
         pre {
