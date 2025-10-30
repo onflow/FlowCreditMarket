@@ -375,14 +375,14 @@ The pattern above demonstrates Functional-Core / Imperative-Shell, command–que
 | --- | --- | --- | --- | --- |
 | P0 | Health / withdraw slice ✅ | Targets core, error-prone calcs like health (current: verbose loops in `positionHealth`). | Extract views and pure helpers; implement queries/commands for withdraw/health. | Replace `computeAvailableWithdrawal` and `positionHealth` with new funcs around line 800-1000. Add tests in `cadence/tests/position_health_test.cdc`. |
 | P1 | Finish deposit · accrual · liquidation commands + helpers | Covers mutations with side effects (e.g., accrual mixes time/compounding). | Add pure funcs like `requiredTopUp`; implement commands with pre/post. | Update `depositAndPush`, `updateInterestIndices`, `liquidatePosition` sections (lines 500-700); new helpers in utils section. |
-| P2 | Pure rate-limit & deposit-capacity maths | Simplifies rate updates (current: edges in `updateInterestRates`). | Pure funcs for rates/capacity; integrate into commands. | Refactor `updateInterestRates` (lines 300-350); add to `FlowVaultsMath.cdc` if separate. |
+| P2 | Pure rate-limit & deposit-capacity maths | Simplifies rate updates (current: edges in `updateInterestRates`). | Pure funcs for rates/capacity; integrate into commands. | Refactor `updateInterestRates` (lines 300-350); add to `FlowALPMath.cdc` if separate. |
 | P3 | Pure queue / async update processing | Addresses gas/scalability in queues (current: `positionsNeedingUpdates`). | Pure queue logic; batch processing in commands. | Update `processQueuedDeposits` and async funcs (lines 1200+); add batch limits. |
 | P4 | Governance resource + capability rotation | Mitigates risks like mid-block changes (current: basic `EGovernance`). | New resource with rotation; snapshot params. | Add `Governance` resource (new section ~line 200); update setters like `setCollateralFactor`. |
 | P5 | Fuzz harness, invariant dashboard, formal specs | Ensures robustness (current: no formal invariants). | Implement fuzz tests; document invariants. | New files in `cadence/tests/fuzz/`; add specs in comments or external docs. |
 
 ### 2 Design Highlights
 • **Value-only types**: `RiskParams`, `TokenSnapshot`, `PositionView`, `PoolSnapshot`, `DepositQueueEntry`  
-• **Pure helpers (FlowVaultsMath.cdc)**: `effectiveCollateral`, `effectiveDebt`, `healthFactor`, `maxBorrow`, `maxWithdraw`, `requiredTopUp`, `liquidationQuote`, `updateIndex`, `nextDepositCapacity`  
+• **Pure helpers (FlowALPMath.cdc)**: `effectiveCollateral`, `effectiveDebt`, `healthFactor`, `maxBorrow`, `maxWithdraw`, `requiredTopUp`, `liquidationQuote`, `updateIndex`, `nextDepositCapacity`  
 • **Queries**: build snapshots once, delegate to helpers  
 • **Commands**: `applyDeposit`, `applyWithdraw`, `applyBorrow`, `applyRepay`, `applyAccrual`, `applyLiquidation`, `processQueuedDeposits`, `asyncUpdate`  
 • **Governance**: new `Governance` resource + `RiskConfig`, `rotatePoolCap()`
@@ -423,7 +423,7 @@ _End of exhaustive plan.  Each phase will be implemented in dedicated PRs, accom
 The current `FlowALP.cdc` (over 2000 lines) has monolithic functions that mix pure math (e.g., health calculations) with side effects (e.g., vault mutations, events), leading to hard-to-test code, duplication, and risks like overflows or invalid states. This refactor applies functional-core/imperative-shell principles to separate concerns, improve testability, enforce invariants, and address pain points like complex accrual logic and governance risks. It will make the contract more maintainable, secure, and scalable for features like multi-token positions and async updates.
 
 ### How Will Changes Be Made?
-- **Core Pattern**: Extract immutable view structs (e.g., `PositionView`) and pure helpers (e.g., `healthFactor`) into a new `FlowVaultsMath.cdc` or inline utils. Commands (e.g., `applyWithdraw`) will build views, call pure funcs for validation, then perform mutations with pre/post conditions.
+- **Core Pattern**: Extract immutable view structs (e.g., `PositionView`) and pure helpers (e.g., `healthFactor`) into a new `FlowALPMath.cdc` or inline utils. Commands (e.g., `applyWithdraw`) will build views, call pure funcs for validation, then perform mutations with pre/post conditions.
 - **Phased Implementation**: Each phase in dedicated PRs to `cadence/contracts/FlowALP.cdc`, with tests in `cadence/tests/`. Use entitlements (e.g., `EImplementation`) for safe mutations. Profile gas and add SafeUInt256 for safety.
 - **Testing**: Add unit tests for pure funcs, scenarios for commands, and fuzzing for invariants.
 - **Migration**: For live deployment, add upgrade scripts to rotate capabilities without disrupting positions.
