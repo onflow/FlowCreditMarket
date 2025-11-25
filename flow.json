@@ -69,6 +69,24 @@
       "aliases": {
         "testing": "0000000000000007"
       }
+    },
+    "FlowALPSchedulerRegistry": {
+      "source": "./cadence/contracts/FlowALPSchedulerRegistry.cdc",
+      "aliases": {
+        "testing": "0000000000000007"
+      }
+    },
+    "FlowALPSchedulerProofs": {
+      "source": "./cadence/contracts/FlowALPSchedulerProofs.cdc",
+      "aliases": {
+        "testing": "0000000000000007"
+      }
+    },
+    "FlowALPLiquidationScheduler": {
+      "source": "./cadence/contracts/FlowALPLiquidationScheduler.cdc",
+      "aliases": {
+        "testing": "0000000000000007"
+      }
     }
   },
   "dependencies": {
@@ -134,6 +152,15 @@
         "mainnet": "1d7e57aa55817448",
         "testnet": "631e88ae7f1d7c20"
       }
+    },
+    "FlowTransactionScheduler": {
+      "source": "mainnet://e467b9dd11fa00df.FlowTransactionScheduler",
+      "hash": "312885f5fa3bc70327dfb59edc5da6d30b826002c322db8c566ddf17099310ac",
+      "aliases": {
+        "emulator": "f8d6e0586b0a20c7",
+        "mainnet": "e467b9dd11fa00df",
+        "testnet": "8c5303eaa26202d6"
+      }
     }
   },
   "networks": {
@@ -182,7 +209,10 @@
             }
           ]
         },
-        "FlowALP"
+        "FlowALP",
+        "FlowALPSchedulerRegistry",
+        "FlowALPSchedulerProofs",
+        "FlowALPLiquidationScheduler"
       ]
     },
     "testnet": {
