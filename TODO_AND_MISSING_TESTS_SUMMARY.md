@@ -58,7 +58,7 @@ Based on `FlowCreditMarket_TestPlan.md`, all planned tests have been implemented
    - Token-specific thresholds
 
 2. **Advanced Position Management**
-   - Tide resource creation/management
+   - YieldVault resource creation/management
    - Position tracking and metadata
    - IRR calculations
 

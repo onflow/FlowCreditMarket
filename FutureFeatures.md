@@ -65,14 +65,14 @@ E-2: Pull from source on shortfall
 ### 4. ✅ Advanced Position Management
 
 **Features to Implement:**
-- Tide resource in user's account
+- YieldVault resource in user's account
 - Position tracking and metadata
 - IRR calculations
 - Trade history export
 
 **Tests to Add:**
 ```
-- Create Tide resource
+- Create YieldVault resource
 - Track position metrics
 - Calculate returns
 - Export trade data
@@ -176,7 +176,7 @@ E-2: Pull from source on shortfall
 ## Implementation Priority
 
 1. **Immediate (Tracer Bullet)**: Focus on sink/source integration and basic oracle
-2. **Next (Limited Beta)**: Multi-token support, Tide resources, automated rebalancing
+2. **Next (Limited Beta)**: Multi-token support, YielVault resources, automated rebalancing
 3. **Later (Open Beta)**: Production oracles, advanced interest curves
 4. **Future**: Liquidations, flash loans, governance
 
@@ -190,7 +190,7 @@ cadence/tests/
 │   └── basic_oracle_test.cdc   # Basic oracle tests
 ├── limited_beta/               # Limited beta phase
 │   ├── multi_token_test.cdc    # Multi-token tests
-│   ├── tide_resource_test.cdc  # Tide resource tests
+│   ├── yield_vault_resource_test.cdc  # YieldVault resource tests
 │   ├── rebalancing_test.cdc    # Auto-rebalance tests
 │   └── access_control_test.cdc # Access limit tests
 ├── open_beta/                  # Open beta phase

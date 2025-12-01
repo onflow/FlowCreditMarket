@@ -9,16 +9,16 @@
 ## Tracer Bullet
 
 ### Frontend & User Experience
-- ✅ Frontend connects to Flow wallet, allows a user to create and view the details of at least one Tide. It will support a single collateral type (a crypto, not a stable), and a single investment type (i.e. yield token).
-- 👌 Multiple Tides per account.
-- ✅ Frontend provides accurate details about the Tide, compiled using event data. (i.e. a backend). For this milestone, the details can be minimal (i.e. number of trades), just to show that we are tracking on-chain events.
-- ✅ Frontend constructs a transaction that "glues together" FlowCreditMarket with DefiActions to create the Tide. Signed and submitted by Flow Wallet.
+- ✅ Frontend connects to Flow wallet, allows a user to create and view the details of at least one YieldVault. It will support a single collateral type (a crypto, not a stable), and a single investment type (i.e. yield token).
+- 👌 Multiple YieldVaults per account.
+- ✅ Frontend provides accurate details about the YieldVault, compiled using event data. (i.e. a backend). For this milestone, the details can be minimal (i.e. number of trades), just to show that we are tracking on-chain events.
+- ✅ Frontend constructs a transaction that "glues together" FlowCreditMarket with DefiActions to create the YieldVault. Signed and submitted by Flow Wallet.
 - ✅ Frontend adds the initial collateral tokens to the position during setup and triggers a rebalance to kick off the initial purchase of yield tokens.
-- 👌 Frontend allows deposit/withdrawal to adjust the size of a Tide.
+- 👌 Frontend allows deposit/withdrawal to adjust the size of a YieldVault.
 
 ### Smart Contract Integration
-- ✅ The Tide set up by frontend takes tokens pushed out of FlowCreditMarket (via a sink) and swaps them into a dummy yield bearing token. Uses a dummy Swapper interface that just magically swaps tokens without an AMM.
-- ✅ The Tide set up by the frontend provides tokens requested by FlowCreditMarket (via a source) that are swapped out of the yield bearing token. Same dummy Swapper interface as above.
+- ✅ The YieldVault set up by frontend takes tokens pushed out of FlowCreditMarket (via a sink) and swaps them into a dummy yield bearing token. Uses a dummy Swapper interface that just magically swaps tokens without an AMM.
+- ✅ The YieldVault set up by the frontend provides tokens requested by FlowCreditMarket (via a source) that are swapped out of the yield bearing token. Same dummy Swapper interface as above.
 - ✅ Collateral is a crypto (possibly FLOW), native USDA used as source and sink, investment is a crypto.
 - 👌 Use a real AMM deployed in the test environment.
 
@@ -29,8 +29,8 @@
 - 💛 We will manually increase the price of the yield token, and trigger the autobalancer. Yield tokens should be swapped into collateral tokens and deposited into the position. When we manually trigger a rebalance, the investment position should increase to reflect the extra collateral.
 
 ### User Operations
-- ✅ The user can delete the tide and get back their crypto.
-- ❌ Wrap the Tide into a neat package inside the user's account.
+- ✅ The user can delete the yield vault and get back their crypto.
+- ❌ Wrap the YieldVault into a neat package inside the user's account.
 
 ### Development & Testing
 - ✅ The tracer bullet can run on emulator or testnet, with a soft preference for emulator (to keep eyes off of our secret sauce until we're ready to announce).
@@ -42,12 +42,12 @@
 ## Limited Beta
 
 ### Frontend & User Experience
-- ✅ Frontend connects to Flow wallet, allows the user to create and view any number of Tides.
-- ✅ Frontend provides accurate details about each Tide, including:
+- ✅ Frontend connects to Flow wallet, allows the user to create and view any number of YieldVaults.
+- ✅ Frontend provides accurate details about each YieldVault, including:
   - Number of trades
   - List of trades (exportable as CSV for taxes)
   - IRR for the lifetime of the position, in absolute terms and annualized
-- ✅ Frontend allows deposit, withdrawal, and deletion of any Tide.
+- ✅ Frontend allows deposit, withdrawal, and deletion of any YieldVault.
 
 ### Asset Support
 - ✅ Supports 2 collateral types: FLOW, USD. Supports at 2 yield tokens (local to Flow).
@@ -55,13 +55,13 @@
 - 👌 Support up to three bridged yield tokens.
 
 ### Smart Contract Architecture
-- ✅ A Tide resource will be created in the user's account to encapsulate whatever objects are needed to manage the Tide.
+- ✅ A YieldVault resource will be created in the user's account to encapsulate whatever objects are needed to manage the YieldVault.
 
 ### Oracles & Automation
 - ✅ All oracles are accurate and transparent.
 - 💛 All oracles should be operated by non-FF entities.
-- ✅ All Tides will rebalance periodically as the price of the collateral tokens change.
-- ✅ All Tides will accumulate additional collateral as the price of the investment changes.
+- ✅ All YieldVaults will rebalance periodically as the price of the collateral tokens change.
+- ✅ All YieldVaults will accumulate additional collateral as the price of the investment changes.
 - 💛 Rebalancing/accumulation uses the protocol scheduled callback mechanism (if available).
 - 👌 Rebalances/accumulation are triggered manually by a daemon process.
 
