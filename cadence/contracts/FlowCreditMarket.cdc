@@ -1800,7 +1800,7 @@ access(all) contract FlowCreditMarket {
                     effectiveDebtDecrease = FlowCreditMarketMath.div(amountU * price, borrowFactor)
                 } else {
                     // This deposit will wipe out all of the debt, and create new collateral.
-                    effectiveDebtDecrease = FlowALPMath.div(trueDebt * price, borrowFactor)
+                    effectiveDebtDecrease = FlowCreditMarketMath.div(trueDebt * price, borrowFactor)
                     effectiveCollateralIncrease = ((amountU - trueDebt) * price) * collateralFactor
                 }
             }
@@ -1958,7 +1958,7 @@ access(all) contract FlowCreditMarket {
             // This only records the portion of the deposit that was accepted, not any queued portions,
             // as the queued deposits will be processed later (by this function being called again), and therefore
             // will be recorded at that time.
-            position.balances[type]!.recordDeposit(amount: FlowALPMath.toUFix128(from.balance), tokenState: tokenState)
+            position.balances[type]!.recordDeposit(amount: FlowCreditMarketMath.toUFix128(from.balance), tokenState: tokenState)
 
             // Add the money to the reserves
             reserveVault.deposit(from: <-from)
