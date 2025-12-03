@@ -25,11 +25,14 @@ fun setup() {
         depositRate: 1_000_000.0,
         depositCapacityCap: 1_000_000.0
     )
+
+    // Set up MOET reserves so that rebalancing can withdraw MOET when needed
+    setupMoetReserves(protocolAccount: protocolAccount, moetAmount: 10_000.0)
 }
 
 access(all)
 fun test_liquidation_via_dex() {
-    let pid: UInt64 = 0
+    let pid: UInt64 = 1
 
     // user setup
     let user = Test.createAccount()

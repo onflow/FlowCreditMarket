@@ -18,14 +18,7 @@ fun setup() {
     let betaTxResult = grantBeta(protocolAccount, protocolConsumerAccount)
 
     Test.expect(betaTxResult, Test.beSucceeded())
-}
 
-access(all)
-fun testAutoBorrowBehaviorWithTargetHealth() {
-    // Test that verifies the auto-borrowing behavior when pushToDrawDownSink=true
-    // Expected: When depositing 1000 Flow with collateralFactor=0.8 and targetHealth=1.3,
-    // the system should automatically borrow ~615.38 MOET
-    
     let initialPrice = 1.0
     setMockOraclePrice(signer: protocolAccount, forTokenIdentifier: flowTokenIdentifier, price: initialPrice)
     setMockOraclePrice(signer: protocolAccount, forTokenIdentifier: moetTokenIdentifier, price: initialPrice)
@@ -41,6 +34,17 @@ fun testAutoBorrowBehaviorWithTargetHealth() {
         depositRate: 1_000_000.0,
         depositCapacityCap: 1_000_000.0
     )
+
+    // Set up MOET reserves so that rebalancing can withdraw MOET when needed
+    setupMoetReserves(protocolAccount: protocolAccount, moetAmount: 10_000.0)
+}
+
+access(all)
+fun testAutoBorrowBehaviorWithTargetHealth() {
+    // Test that verifies the auto-borrowing behavior when pushToDrawDownSink=true
+    // Expected: When depositing 1000 Flow with collateralFactor=0.8 and targetHealth=1.3,
+    // the system should automatically borrow ~615.38 MOET
+    let pid: UInt64 = 1
 
     let user = Test.createAccount()
     setupMoetVault(user, beFailed: false)
@@ -58,7 +62,7 @@ fun testAutoBorrowBehaviorWithTargetHealth() {
     Test.expect(openRes, Test.beSucceeded())
 
     // Get position details
-    let details = getPositionDetails(pid: 0, beFailed: false)
+    let details = getPositionDetails(pid: pid, beFailed: false)
     
     // Calculate expected auto-borrow amount:
     // Effective collateral = 1000 * 1.0 * 0.8 = 800
@@ -85,7 +89,7 @@ fun testAutoBorrowBehaviorWithTargetHealth() {
         message: "Expected MOET debt to be approximately \(expectedDebt), but got \(moetBalance)")
     
     // Verify position health is at target
-    let health = getPositionHealth(pid: 0, beFailed: false)
+    let health = getPositionHealth(pid: pid, beFailed: false)
     Test.assert(equalWithinVariance(intTargetHealth, health),
         message: "Expected health to be \(intTargetHealth), but got \(health)")
 
@@ -99,6 +103,7 @@ access(all)
 fun testNoAutoBorrowWhenPushToDrawDownSinkFalse() {
     // Test that no auto-borrowing occurs when pushToDrawDownSink=false
     // This validates that users can create positions without automatic leverage
+    let pid: UInt64 = 2
     
     // Note: Pool already exists from previous test, no need to recreate
     let initialPrice = 1.0
@@ -119,7 +124,7 @@ fun testNoAutoBorrowWhenPushToDrawDownSinkFalse() {
     Test.expect(openRes, Test.beSucceeded())
 
     // Get position details
-    let details = getPositionDetails(pid: 1, beFailed: false)
+    let details = getPositionDetails(pid: pid, beFailed: false)
     
     // Verify no MOET was borrowed
     var hasMoetBalance = false

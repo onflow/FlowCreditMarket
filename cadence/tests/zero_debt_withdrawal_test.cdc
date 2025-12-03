@@ -38,6 +38,9 @@ fun testZeroDebtFullWithdrawalAvailable() {
         depositCapacityCap: 1_000_000.0
     )
 
+    // Set up MOET reserves so that rebalancing can withdraw MOET when needed
+    setupMoetReserves(protocolAccount: protocolAccount, moetAmount: 10_000.0)
+
     // 3. user setup
     let user = Test.createAccount()
     setupMoetVault(user, beFailed: false)
@@ -52,7 +55,7 @@ fun testZeroDebtFullWithdrawalAvailable() {
     Test.expect(openRes, Test.beSucceeded())
 
     // Position id is 0 (first position)
-    let pid: UInt64 = 0
+    let pid: UInt64 = 1
 
     // 5. Ensure no debt: health should be exactly 1.0
     let health = getPositionHealth(pid: pid, beFailed: false)

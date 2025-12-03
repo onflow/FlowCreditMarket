@@ -35,13 +35,16 @@ fun setup() {
         depositCapacityCap: 1_000_000.0
     )
 
+    // Set up MOET reserves so that rebalancing can withdraw MOET when needed
+    setupMoetReserves(protocolAccount: protocolAccount, moetAmount: 10_000.0)
+
     snapshot = getCurrentBlockHeight()
 }
 
 access(all)
 fun test_liquidation_phase1_quote_and_execute() {
     safeReset()
-    let pid: UInt64 = 0
+    let pid: UInt64 = 1
 
     // user setup
     let user = Test.createAccount()
@@ -70,7 +73,7 @@ fun test_liquidation_phase1_quote_and_execute() {
     // quote liquidation
     let quoteRes = _executeScript(
         "../scripts/flow-credit-market/quote_liquidation.cdc",
-        [0 as UInt64, Type<@MOET.Vault>().identifier, flowTokenIdentifier]
+        [pid, Type<@MOET.Vault>().identifier, flowTokenIdentifier]
     )
     Test.expect(quoteRes, Test.beSucceeded())
     let quote = quoteRes.returnValue as! FlowCreditMarket.LiquidationQuote
@@ -115,7 +118,7 @@ fun test_liquidation_phase1_quote_and_execute() {
 access(all)
 fun test_liquidation_insolvency() {
     safeReset()
-    let pid: UInt64 = 0
+    let pid: UInt64 = 1
 
     let user = Test.createAccount()
     setupMoetVault(user, beFailed: false)
@@ -171,7 +174,7 @@ fun test_liquidation_insolvency() {
 access(all)
 fun test_multi_liquidation() {
     safeReset()
-    let pid: UInt64 = 0
+    let pid: UInt64 = 1
 
     let user = Test.createAccount()
     setupMoetVault(user, beFailed: false)
@@ -242,7 +245,7 @@ fun test_multi_liquidation() {
 access(all)
 fun test_liquidation_overpay_attempt() {
     safeReset()
-    let pid: UInt64 = 0
+    let pid: UInt64 = 1
 
     let user = Test.createAccount()
     setupMoetVault(user, beFailed: false)
@@ -259,7 +262,7 @@ fun test_liquidation_overpay_attempt() {
 
     let quoteRes = _executeScript(
         "../scripts/flow-credit-market/quote_liquidation.cdc",
-        [0 as UInt64, Type<@MOET.Vault>().identifier, flowTokenIdentifier]
+        [pid, Type<@MOET.Vault>().identifier, flowTokenIdentifier]
     )
     let quote = quoteRes.returnValue as! FlowCreditMarket.LiquidationQuote
     if quote.requiredRepay == 0.0 {
@@ -292,7 +295,7 @@ fun test_liquidation_overpay_attempt() {
 access(all)
 fun test_liquidation_slippage_failure() {
     safeReset()
-    let pid: UInt64 = 0
+    let pid: UInt64 = 1
 
     // Setup similar to first test
     let user = Test.createAccount()
@@ -338,7 +341,7 @@ fun test_liquidation_slippage_failure() {
 access(all)
 fun test_liquidation_healthy_zero_quote() {
     safeReset()
-    let pid: UInt64 = 0
+    let pid: UInt64 = 1
 
     let user = Test.createAccount()
     setupMoetVault(user, beFailed: false)

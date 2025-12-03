@@ -1,5 +1,6 @@
 import Test
 import "FlowCreditMarket"
+import "MOET"
 
 /* --- Global test constants --- */
 
@@ -362,6 +363,41 @@ fun grantPoolCapToConsumer() {
     // Use in-repo grant transaction that issues EParticipant+EPosition and saves to PoolCapStoragePath
     let grantRes = grantBeta(protocolAccount, consumerAccount)
     Test.expect(grantRes, Test.beSucceeded())
+}
+
+/* --- Reserve Setup Helpers --- */
+
+// Sets up MOET reserves in the pool by creating a position and depositing MOET
+// This ensures that MOET reserves exist for tests that need to withdraw MOET during rebalancing
+// Must be called AFTER the pool is created and stored
+access(all)
+fun setupMoetReserves(protocolAccount: Test.TestAccount, moetAmount: UFix64) {
+    // Check pool exists
+    let existsRes = _executeScript("../scripts/flow-credit-market/pool_exists.cdc", [protocolAccount.address])
+    Test.expect(existsRes, Test.beSucceeded())
+    if !(existsRes.returnValue as! Bool) {
+        return
+    }
+
+    // Create a test account for the MOET position
+    let moetProvider = Test.createAccount()
+    setupMoetVault(moetProvider, beFailed: false)
+    mintMoet(signer: protocolAccount, to: moetProvider.address, amount: moetAmount, beFailed: false)
+
+    // Set MOET price to 1.0 (default token, so price should be 1.0)
+    setMockOraclePrice(signer: protocolAccount, forTokenIdentifier: defaultTokenIdentifier, price: 1.0)
+
+    // Grant pool cap to consumer if not already granted
+    grantPoolCapToConsumer()
+
+    // Create a position with MOET (this will deposit MOET into reserves)
+    // Use pushToDrawDownSink: false to avoid rebalancing issues during setup
+    let createRes = _executeTransaction(
+        "./transactions/mock-flow-credit-market-consumer/create_wrapped_position.cdc",
+        [moetAmount, MOET.VaultStoragePath, false],
+        moetProvider
+    )
+    Test.expect(createRes, Test.beSucceeded())
 }
 /* --- Assertion Helpers --- */
 
