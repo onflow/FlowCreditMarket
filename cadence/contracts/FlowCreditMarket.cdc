@@ -2075,6 +2075,10 @@ access(all) contract FlowCreditMarket {
                 position.balances[type] = InternalBalance(direction: BalanceDirection.Credit, scaledBalance: 0.0 as UFix128)
             }
 
+            // Create reserve vault if it doesn't exist yet (needed for rebalancing when withdrawing sinkType that hasn't been deposited)
+            if self.reserves[type] == nil {
+                self.reserves[type] <-! DeFiActionsUtils.getEmptyVault(type)
+            }
             let reserveVault = (&self.reserves[type] as auth(FungibleToken.Withdraw) &{FungibleToken.Vault}?)!
 
             // Reflect the withdrawal in the position's balance
@@ -2331,26 +2335,21 @@ access(all) contract FlowCreditMarket {
                     let sinkCapacity = drawDownSink.minimumCapacity()
                     let sinkAmount = (idealWithdrawal > sinkCapacity) ? sinkCapacity : idealWithdrawal
 
-                    if sinkAmount > 0.0 && sinkType == self.defaultToken { // second conditional included for sake of tracer bullet
-                        // BUG: Calling through to withdrawAndPull results in an insufficient funds from the position's
-                        //      topUpSource. These funds should come from the protocol or reserves, not from the user's
-                        //      funds. To unblock here, we just mint MOET when a position is overcollateralized
-                        // let sinkVault <- self.withdrawAndPull(
-                        //     pid: pid,
-                        //     type: sinkType,
-                        //     amount: sinkAmount,
-                        //     pullFromTopUpSource: false
-                        // )
-
+                    if sinkAmount > 0.0 && sinkType == self.defaultToken {
+                        // Check if reserve vault exists and has enough balance before attempting withdrawal
+                        let reserveBalance = self.reserveBalance(type: sinkType)
+                        let actualSinkAmount = sinkAmount > reserveBalance ? reserveBalance : sinkAmount
+                        let reserveRef = (&self.reserves[sinkType] as auth(FungibleToken.Withdraw) &{FungibleToken.Vault}?)!
+                        let sinkVault <- reserveRef.withdraw(amount: actualSinkAmount)
+                        
                         let tokenState = self._borrowUpdatedTokenState(type: self.defaultToken)
                         if position.balances[self.defaultToken] == nil {
                             position.balances[self.defaultToken] = InternalBalance(direction: BalanceDirection.Credit, scaledBalance: 0.0 as UFix128)
                         }
-                        // record the withdrawal and mint the tokens
+                        // record the withdrawal
                         let uintSinkAmount = FlowCreditMarketMath.toUFix128(sinkAmount)
                         position.balances[self.defaultToken]!.recordWithdrawal(amount: uintSinkAmount, tokenState: tokenState)
-                        let sinkVault <- FlowCreditMarket._borrowMOETMinter().mintTokens(amount: sinkAmount)
-
+                        
                         emit Rebalanced(pid: pid, poolUUID: self.uuid, atHealth: balanceSheet.health, amount: sinkVault.balance, fromUnder: false)
 
                         // Push what we can into the sink, and redeposit the rest

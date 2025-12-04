@@ -13,6 +13,8 @@ fun setup() {
 // -----------------------------------------------------------------------------
 access(all)
 fun test_setGovernanceParams_and_exercise_paths() {
+    let pid: UInt64 = 0
+
     // Create pool
     createAndStorePool(signer: protocolAccount, defaultTokenIdentifier: defaultTokenIdentifier, beFailed: false)
 
@@ -40,7 +42,7 @@ fun test_setGovernanceParams_and_exercise_paths() {
     Test.expect(openRes, Test.beSucceeded())
 
     // Trigger availableBalance which walks interest paths and ensures indices/rates get updated
-    let _ = getAvailableBalance(pid: 0, vaultIdentifier: defaultTokenIdentifier, pullFromTopUpSource: false, beFailed: false)
+    let _ = getAvailableBalance(pid: pid, vaultIdentifier: defaultTokenIdentifier, pullFromTopUpSource: false, beFailed: false)
 
     // 2) Exercise depositLimitFraction and queue branch
     // Set fraction small so a single deposit exceeds the per-deposit limit
@@ -65,7 +67,7 @@ fun test_setGovernanceParams_and_exercise_paths() {
     Test.expect(poolExistsRes, Test.beSucceeded())
 
     // Use Position details to verify health is populated
-    let posDetails = getPositionDetails(pid: 0, beFailed: false)
+    let posDetails = getPositionDetails(pid: pid, beFailed: false)
     Test.assert(posDetails.health > 0.0 as UFix128)
 }
 
