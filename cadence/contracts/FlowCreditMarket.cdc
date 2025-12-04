@@ -257,6 +257,8 @@ access(all) contract FlowCreditMarket {
         access(mapping ImplementationUpdates) var balances: {Type: InternalBalance}
         /// Funds that have been deposited but must be asynchronously added to the Pool's reserves and recorded
         access(mapping ImplementationUpdates) var queuedDeposits: @{Type: {FungibleToken.Vault}}
+        /// Non-resource tracking of queued deposit amounts (for script-accessible queries)
+        access(mapping ImplementationUpdates) var queuedDepositAmounts: {Type: UFix64}
         /// A DeFiActions Sink that if non-nil will enable the Pool to push overflown value automatically when the
         /// position exceeds its maximum health based on the value of deposited collateral versus withdrawals
         access(mapping ImplementationUpdates) var drawDownSink: {DeFiActions.Sink}?
@@ -268,6 +270,7 @@ access(all) contract FlowCreditMarket {
         init() {
             self.balances = {}
             self.queuedDeposits <- {}
+            self.queuedDepositAmounts = {}
             self.targetHealth = FlowCreditMarketMath.toUFix128(1.3)
             self.minHealth = FlowCreditMarketMath.toUFix128(1.1)
             self.maxHealth = FlowCreditMarketMath.toUFix128(1.5)
@@ -929,6 +932,17 @@ access(all) contract FlowCreditMarket {
                 defaultTokenAvailableBalance: defaultTokenAvailable,
                 health: health
             )
+        }
+
+        /// Returns the queued deposit balances for a given position
+        access(all) fun getQueuedDeposits(pid: UInt64): {Type: UFix64} {
+            let position = self._borrowPosition(pid: pid)
+            // Return a copy to avoid returning an auth reference
+            let result: {Type: UFix64} = {}
+            for type in position.queuedDepositAmounts.keys {
+                result[type] = position.queuedDepositAmounts[type]!
+            }
+            return result
         }
 
         /// Quote liquidation required repay and seize amounts to bring HF to liquidationTargetHF using a single seizeType
@@ -1934,12 +1948,15 @@ access(all) contract FlowCreditMarket {
 
             if depositAmount > depositLimit {
                 // The deposit is too big, so we need to queue the excess
-                let queuedDeposit <- from.withdraw(amount: depositAmount - depositLimit)
+                let queuedAmount = depositAmount - depositLimit
+                let queuedDeposit <- from.withdraw(amount: queuedAmount)
 
                 if position.queuedDeposits[type] == nil {
                     position.queuedDeposits[type] <-! queuedDeposit
+                    position.queuedDepositAmounts[type] = queuedAmount
                 } else {
                     position.queuedDeposits[type]!.deposit(from: <-queuedDeposit)
+                    position.queuedDepositAmounts[type] = position.queuedDepositAmounts[type]! + queuedAmount
                 }
             }
 
@@ -2394,6 +2411,8 @@ access(all) contract FlowCreditMarket {
                 if maxDeposit >= queuedAmount {
                     // We can deposit all of the queued deposit, so just do it and remove it from the queue
                     self.depositAndPush(pid: pid, from: <-queuedVault, pushToDrawDownSink: false)
+                    // Remove tracking since queue is now empty for this type
+                    position.queuedDepositAmounts.remove(key: depositType)
                 } else {
                     // We can only deposit part of the queued deposit, so do that and leave the rest in the queue
                     // for the next time we run.
@@ -2401,6 +2420,7 @@ access(all) contract FlowCreditMarket {
                     self.depositAndPush(pid: pid, from: <-depositVault, pushToDrawDownSink: false)
 
                     // We need to update the queued vault to reflect the amount we used up
+                    position.queuedDepositAmounts[depositType] = queuedVault.balance
                     position.queuedDeposits[depositType] <-! queuedVault
                 }
             }
