@@ -1,6 +1,6 @@
-import "FlowCreditMarket"
-import "MOET"
-import "FlowToken"
+import FlowALP from 0x6b00ff876c299c61
+import MOET from 0x6b00ff876c299c61
+import FlowToken from 0x1654653399040a61
 
 /// Check position balances including debt
 ///
@@ -11,9 +11,9 @@ import "FlowToken"
 ///
 access(all)
 fun main(pid: UInt64): {String: AnyStruct} {
-    let protocolAddress = Type<@FlowCreditMarket.Pool>().address!
+    let protocolAddress = Type<@FlowALP.Pool>().address!
     let pool = getAccount(protocolAddress)
-        .capabilities.borrow<&FlowCreditMarket.Pool>(FlowCreditMarket.PoolPublicPath)
+        .capabilities.borrow<&FlowALP.Pool>(FlowALP.PoolPublicPath)
         ?? panic("Could not borrow Pool")
 
     let details = pool.getPositionDetails(pid: pid)
@@ -27,11 +27,11 @@ fun main(pid: UInt64): {String: AnyStruct} {
     for balance in details.balances {
         if balance.vaultType == Type<@FlowToken.Vault>() {
             flowBalance = balance.balance
-            flowDirection = balance.direction == FlowCreditMarket.BalanceDirection.Credit ? "Credit (Collateral)" : "Debit (Debt)"
+            flowDirection = balance.direction == FlowALP.BalanceDirection.Credit ? "Credit (Collateral)" : "Debit (Debt)"
         }
         if balance.vaultType == Type<@MOET.Vault>() {
             moetBalance = balance.balance
-            moetDirection = balance.direction == FlowCreditMarket.BalanceDirection.Credit ? "Credit (Collateral)" : "Debit (Debt)"
+            moetDirection = balance.direction == FlowALP.BalanceDirection.Credit ? "Credit (Collateral)" : "Debit (Debt)"
         }
     }
 
@@ -42,6 +42,6 @@ fun main(pid: UInt64): {String: AnyStruct} {
         "moetBalance": moetBalance,
         "moetDirection": moetDirection,
         "health": details.health,
-        "defaultTokenAvailable": details.defaultTokenAvailableBalance
+        "defaultTokenAvailableBalance": details.defaultTokenAvailableBalance
     }
 }
