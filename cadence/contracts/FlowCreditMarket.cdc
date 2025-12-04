@@ -327,6 +327,187 @@ access(all) contract FlowCreditMarket {
         }
     }
 
+    /// AdaptiveCurveIRM
+    ///
+    /// An adaptive interest rate model that automatically adjusts rates based on market utilization.
+    /// Ported from Morpho Blue's AdaptiveCurveIRM (https://github.com/morpho-org/morpho-blue-irm)
+    ///
+    /// Key parameters:
+    /// - Target utilization: 90%
+    /// - Curve steepness: 4x
+    /// - Adjustment speed: 50/year
+    /// - Initial rate at target: 4% APR
+    /// - Min rate at target: 0.1% APR
+    /// - Max rate at target: 200% APR
+    ///
+    /// Note: The adaptive state (rateAtTarget, lastUpdate) is stored in TokenState,
+    /// not in this struct, since structs are value types in Cadence.
+    access(all) struct AdaptiveCurveIRM: InterestCurve {
+        /// Constants (per year)
+        access(all) let TARGET_UTILIZATION: UFix128
+        access(all) let CURVE_STEEPNESS: UFix128
+        access(all) let ADJUSTMENT_SPEED: UFix128
+        access(all) let INITIAL_RATE_AT_TARGET: UFix128
+        access(all) let MIN_RATE_AT_TARGET: UFix128
+        access(all) let MAX_RATE_AT_TARGET: UFix128
+
+        init() {
+            // Target utilization = 90%
+            self.TARGET_UTILIZATION = 0.9
+
+            // Curve steepness = 4
+            self.CURVE_STEEPNESS = 4.0
+
+            // Adjustment speed = 50/year (per second)
+            self.ADJUSTMENT_SPEED = 50.0 / 365.0 / 24.0 / 3600.0
+
+            // Initial rate at target = 4% APR
+            self.INITIAL_RATE_AT_TARGET = 0.04
+
+            // Min rate at target = 0.1% APR
+            self.MIN_RATE_AT_TARGET = 0.001
+
+            // Max rate at target = 200% APR
+            self.MAX_RATE_AT_TARGET = 2.0
+        }
+
+        /// Calculates the interest rate based on credit and debit balances
+        /// Returns the yearly interest rate (not per-second)
+        /// This is called by TokenState.updateInterestRates() which handles state updates
+        access(all) fun interestRate(creditBalance: UFix128, debitBalance: UFix128): UFix128 {
+            // This basic implementation returns a fixed rate
+            // The full adaptive logic with state management is handled in TokenState
+            return self.INITIAL_RATE_AT_TARGET
+        }
+
+        /// Calculates the adaptive interest rate with state
+        /// This is the full implementation that TokenState uses
+        access(all) fun calculateAdaptiveRate(
+            creditBalance: UFix128,
+            debitBalance: UFix128,
+            currentRateAtTarget: UFix128,
+            lastUpdate: UFix64
+        ): AdaptiveRateResult {
+            // Calculate utilization = debit / credit (avoiding division by zero)
+            let utilization = creditBalance > 0.0
+                ? debitBalance / creditBalance
+                : 0.0
+
+            // Calculate error normalized by distance to boundary
+            let errNormFactor = utilization > self.TARGET_UTILIZATION
+                ? FlowCreditMarketMath.one - self.TARGET_UTILIZATION
+                : self.TARGET_UTILIZATION
+
+            let errMagnitude: UFix128
+            let errIsNegative: Bool
+
+            if utilization >= self.TARGET_UTILIZATION {
+                errMagnitude = (utilization - self.TARGET_UTILIZATION) / errNormFactor
+                errIsNegative = false
+            } else {
+                errMagnitude = (self.TARGET_UTILIZATION - utilization) / errNormFactor
+                errIsNegative = true
+            }
+
+            let err = FlowCreditMarketMath.SignedUFix128(value: errMagnitude, isNegative: errIsNegative)
+
+            var avgRateAtTarget: UFix128
+            var endRateAtTarget: UFix128
+
+            if currentRateAtTarget == 0.0 {
+                // First interaction - use initial rate
+                avgRateAtTarget = self.INITIAL_RATE_AT_TARGET
+                endRateAtTarget = self.INITIAL_RATE_AT_TARGET
+            } else {
+                // Calculate speed = ADJUSTMENT_SPEED * err
+                let speed = FlowCreditMarketMath.signedMul(
+                    FlowCreditMarketMath.SignedUFix128(value: self.ADJUSTMENT_SPEED, isNegative: false),
+                    err
+                )
+
+                // Calculate elapsed time since last update
+                let elapsed = getCurrentBlock().timestamp - lastUpdate
+
+                // Calculate linearAdaptation = speed * elapsed
+                let linearAdaptation = FlowCreditMarketMath.SignedUFix128(
+                    value: speed.value * UFix128(elapsed),
+                    isNegative: speed.isNegative
+                )
+
+                if linearAdaptation.value == 0.0 {
+                    // No change
+                    avgRateAtTarget = currentRateAtTarget
+                    endRateAtTarget = currentRateAtTarget
+                } else {
+                    // Use trapezoidal rule for averaging
+                    // avg ≈ (startRate + endRate + 2*midRate) / 4
+                    endRateAtTarget = self.newRateAtTarget(currentRateAtTarget, linearAdaptation)
+
+                    let halfLinearAdaptation = FlowCreditMarketMath.SignedUFix128(
+                        value: linearAdaptation.value / 2.0,
+                        isNegative: linearAdaptation.isNegative
+                    )
+                    let midRateAtTarget = self.newRateAtTarget(currentRateAtTarget, halfLinearAdaptation)
+
+                    avgRateAtTarget = (currentRateAtTarget + endRateAtTarget + 2.0 * midRateAtTarget) / 4.0
+                }
+            }
+
+            // Apply the curve function to get final rate
+            let rate = self.curve(avgRateAtTarget, err)
+
+            return AdaptiveRateResult(
+                rate: rate,
+                newRateAtTarget: endRateAtTarget
+            )
+        }
+
+        /// Calculates the rate using the piecewise linear curve
+        /// r = ((1-1/C)*err + 1) * rateAtTarget if err < 0
+        ///     ((C-1)*err + 1) * rateAtTarget else
+        access(all) fun curve(_ _rateAtTarget: UFix128, _ err: FlowCreditMarketMath.SignedUFix128): UFix128 {
+            let coeff: UFix128
+
+            if err.isNegative {
+                // coeff = 1 - 1/C
+                coeff = FlowCreditMarketMath.one - FlowCreditMarketMath.one / self.CURVE_STEEPNESS
+            } else {
+                // coeff = C - 1
+                coeff = self.CURVE_STEEPNESS - FlowCreditMarketMath.one
+            }
+
+            // Calculate (coeff * err + 1) * rateAtTarget
+            let coeffTimesErr = coeff * err.value
+            let factor = coeffTimesErr + FlowCreditMarketMath.one
+
+            return factor * _rateAtTarget
+        }
+
+        /// Calculates new rate at target using exponential adaptation
+        /// Formula: bound(startRateAtTarget * exp(linearAdaptation), minRate, maxRate)
+        access(all) fun newRateAtTarget(_ startRateAtTarget: UFix128, _ linearAdaptation: FlowCreditMarketMath.SignedUFix128): UFix128 {
+            // Calculate exp(linearAdaptation)
+            let expAdaptation = FlowCreditMarketMath.wExp(linearAdaptation)
+
+            // Multiply by startRateAtTarget
+            let newRate = startRateAtTarget * expAdaptation
+
+            // Bound between min and max
+            return FlowCreditMarketMath.bound(newRate, self.MIN_RATE_AT_TARGET, self.MAX_RATE_AT_TARGET)
+        }
+    }
+
+    /// Result struct for adaptive rate calculations
+    access(all) struct AdaptiveRateResult {
+        access(all) let rate: UFix128
+        access(all) let newRateAtTarget: UFix128
+
+        init(rate: UFix128, newRateAtTarget: UFix128) {
+            self.rate = rate
+            self.newRateAtTarget = newRateAtTarget
+        }
+    }
+
     /// TokenState
     ///
     /// The TokenState struct tracks values related to a single token Type within the Pool.
@@ -351,6 +532,10 @@ access(all) contract FlowCreditMarket {
         access(all) var currentDebitRate: UFix128
         /// The interest curve implementation used to calculate interest rate
         access(all) var interestCurve: {InterestCurve}
+        /// Adaptive IRM state: rate at target utilization (0.0 if not using adaptive curve)
+        access(all) var adaptiveRateAtTarget: UFix128
+        /// Adaptive IRM state: last update timestamp for adaptive calculations
+        access(all) var adaptiveLastUpdate: UFix64
         /// The insurance rate applied to total credit when computing credit interest (default 0.1%)
         access(all) var insuranceRate: UFix64
         /// Per-deposit limit fraction of capacity (default 0.05 i.e., 5%)
@@ -364,13 +549,15 @@ access(all) contract FlowCreditMarket {
 
         init(interestCurve: {InterestCurve}, depositRate: UFix64, depositCapacityCap: UFix64) {
             self.lastUpdate = getCurrentBlock().timestamp
-            self.totalCreditBalance = 0.0 as UFix128
-            self.totalDebitBalance = 0.0 as UFix128
+            self.totalCreditBalance = 0.0
+            self.totalDebitBalance = 0.0
             self.creditInterestIndex = FlowCreditMarketMath.one
             self.debitInterestIndex = FlowCreditMarketMath.one
             self.currentCreditRate = FlowCreditMarketMath.one
             self.currentDebitRate = FlowCreditMarketMath.one
             self.interestCurve = interestCurve
+            self.adaptiveRateAtTarget = 0.0
+            self.adaptiveLastUpdate = getCurrentBlock().timestamp
             self.insuranceRate = 0.001
             self.depositLimitFraction = 0.05
             self.depositRate = depositRate
@@ -474,27 +661,54 @@ access(all) contract FlowCreditMarket {
         access(all) fun updateInterestRates() {
             // If there's no credit balance, we can't calculate a meaningful credit rate
             // so we'll just set both rates to one (no interest) and return early
-            if self.totalCreditBalance == 0.0 as UFix128 {
+            if self.totalCreditBalance == 0.0 {
                 self.currentCreditRate = FlowCreditMarketMath.one  // 1.0 in fixed point (no interest)
                 self.currentDebitRate = FlowCreditMarketMath.one   // 1.0 in fixed point (no interest)
                 return
             }
 
-            let debitRate = self.interestCurve.interestRate(creditBalance: self.totalCreditBalance, debitBalance: self.totalDebitBalance)
+            var debitRate: UFix128
+
+            // Check if using AdaptiveCurveIRM for adaptive rate calculation
+            if self.interestCurve.getType() == Type<FlowCreditMarket.AdaptiveCurveIRM>() {
+                // Cast to AdaptiveCurveIRM to access adaptive-specific methods
+                let adaptiveCurve = self.interestCurve as! FlowCreditMarket.AdaptiveCurveIRM
+
+                // Calculate adaptive rate with stored state
+                let result = adaptiveCurve.calculateAdaptiveRate(
+                    creditBalance: self.totalCreditBalance,
+                    debitBalance: self.totalDebitBalance,
+                    currentRateAtTarget: self.adaptiveRateAtTarget,
+                    lastUpdate: self.adaptiveLastUpdate
+                )
+
+                // Update adaptive state
+                self.adaptiveRateAtTarget = result.newRateAtTarget
+                self.adaptiveLastUpdate = getCurrentBlock().timestamp
+
+                debitRate = result.rate
+            } else {
+                // Use standard interest curve
+                debitRate = self.interestCurve.interestRate(
+                    creditBalance: self.totalCreditBalance,
+                    debitBalance: self.totalDebitBalance
+                )
+            }
+
             let debitIncome = self.totalDebitBalance * debitRate
 
-            // Calculate insurance amount (0.1% of credit balance)
+            // Calculate insurance amount (default 0.1% of credit balance)
             let insuranceRate: UFix128 = FlowCreditMarketMath.toUFix128(self.insuranceRate)
             let insuranceAmount: UFix128 = self.totalCreditBalance * insuranceRate
 
             // Calculate credit rate, ensuring we don't have underflows
-            var creditRate: UFix128 = 0.0 as UFix128
+            var creditRate: UFix128 = 0.0
             if debitIncome >= insuranceAmount {
                 creditRate = ((debitIncome - insuranceAmount) / self.totalCreditBalance)
             } else {
                 // If debit income doesn't cover insurance, credit interest would be negative.
                 // Since negative rates aren't represented here, we pay 0% to depositors.
-                creditRate = 0.0 as UFix128
+                creditRate = 0.0
             }
 
             self.currentCreditRate = FlowCreditMarket.perSecondInterestRate(yearlyRate: creditRate)
