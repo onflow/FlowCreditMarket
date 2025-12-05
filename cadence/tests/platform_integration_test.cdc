@@ -48,7 +48,6 @@ fun testCreatePoolSucceeds() {
 access(all)
 fun testCreateUserPositionSucceeds() {
     Test.reset(to: snapshot)
-    let pid: UInt64 = 1
 
     // mock setup
     setMockOraclePrice(signer: protocolAccount, forTokenIdentifier: flowTokenIdentifier, price: 1.0)
@@ -64,9 +63,6 @@ fun testCreateUserPositionSucceeds() {
         depositCapacityCap: 1_000_000.0
     )
 
-    setupMoetReserves(protocolAccount: protocolAccount, moetAmount: 10_000.0)
-
-
     let collateralAmount = 1_000.0 // FLOW
 
     // configure user account
@@ -79,7 +75,7 @@ fun testCreateUserPositionSucceeds() {
     Test.assertEqual(0.0, moetBalance)
 
     // ensure there is not yet a position open - fails as there are no open positions yet
-    getAvailableBalance(pid: pid, vaultIdentifier: defaultTokenIdentifier, pullFromTopUpSource: false, beFailed: true)
+    getAvailableBalance(pid: 0, vaultIdentifier: defaultTokenIdentifier, pullFromTopUpSource: false, beFailed: true)
     
     // open the position & push to drawDownSink - forces MOET to downstream test sink which is user's MOET Vault
     let res = executeTransaction("./transactions/mock-flow-credit-market-consumer/create_wrapped_position.cdc",
@@ -89,7 +85,7 @@ fun testCreateUserPositionSucceeds() {
     Test.expect(res, Test.beSucceeded())
 
     // ensure the position is now open
-    let pidZeroBalance = getAvailableBalance(pid: pid, vaultIdentifier: defaultTokenIdentifier, pullFromTopUpSource: false, beFailed: false)
+    let pidZeroBalance = getAvailableBalance(pid: 0, vaultIdentifier: defaultTokenIdentifier, pullFromTopUpSource: false, beFailed: false)
     Test.assert(pidZeroBalance > 0.0)
 
     // ensure MOET has flown to the user's MOET Vault via the VaultSink provided when opening the position
@@ -100,7 +96,6 @@ fun testCreateUserPositionSucceeds() {
 access(all)
 fun testUndercollateralizedPositionRebalanceSucceeds() {
     Test.reset(to: snapshot)
-    let pid: UInt64 = 1
 
     let initialFlowPrice = 1.0 // initial price of FLOW set in the mock oracle
     let priceChange = 0.2 // the percentage difference in the price of FLOW 
@@ -119,9 +114,6 @@ fun testUndercollateralizedPositionRebalanceSucceeds() {
         depositCapacityCap: 1_000_000.0
     )
 
-    setupMoetReserves(protocolAccount: protocolAccount, moetAmount: 10_000.0)
-
-
     let collateralAmount = 1_000.0 // FLOW used when opening the position
 
     // configure user account
@@ -138,20 +130,20 @@ fun testUndercollateralizedPositionRebalanceSucceeds() {
 
     // check how much MOET the user has after borrowing
     let moetBalanceBeforeRebalance = getBalance(address: user.address, vaultPublicPath: MOET.VaultPublicPath)!
-    let availableBeforePriceChange = getAvailableBalance(pid: pid, vaultIdentifier: defaultTokenIdentifier, pullFromTopUpSource: false, beFailed: false)
-    let healthBeforePriceChange = getPositionHealth(pid: pid, beFailed: false)
+    let availableBeforePriceChange = getAvailableBalance(pid: 0, vaultIdentifier: defaultTokenIdentifier, pullFromTopUpSource: false, beFailed: false)
+    let healthBeforePriceChange = getPositionHealth(pid: 0, beFailed: false)
 
     // decrease the price of the collateral
     setMockOraclePrice(signer: protocolAccount, forTokenIdentifier: flowTokenIdentifier, price: initialFlowPrice * (1.0 - priceChange))
-    let availableAfterPriceChange = getAvailableBalance(pid: pid, vaultIdentifier: defaultTokenIdentifier, pullFromTopUpSource: true, beFailed: false)
-    let healthAfterPriceChange = getPositionHealth(pid: pid, beFailed: false)
+    let availableAfterPriceChange = getAvailableBalance(pid: 0, vaultIdentifier: defaultTokenIdentifier, pullFromTopUpSource: true, beFailed: false)
+    let healthAfterPriceChange = getPositionHealth(pid: 0, beFailed: false)
 
     // rebalance should pull from the topUpSource, decreasing the MOET in the user's Vault since we use a VaultSource
     // as a topUpSource when opening the Position
-    rebalancePosition(signer: protocolAccount, pid: pid, force: true, beFailed: false)
+    rebalancePosition(signer: protocolAccount, pid: 0, force: true, beFailed: false)
 
     let moetBalanceAfterRebalance = getBalance(address: user.address, vaultPublicPath: MOET.VaultPublicPath)!
-    let healthAfterRebalance = getPositionHealth(pid: pid, beFailed: false)
+    let healthAfterRebalance = getPositionHealth(pid: 0, beFailed: false)
 
     // NOTE - exact amounts are not tested here, this is purely a behavioral test though we may update these tests
     
@@ -168,7 +160,6 @@ fun testUndercollateralizedPositionRebalanceSucceeds() {
 access(all)
 fun testOvercollateralizedPositionRebalanceSucceeds() {
     Test.reset(to: snapshot)
-    let pid: UInt64 = 1
 
     let initialFlowPrice = 1.0 // initial price of FLOW set in the mock oracle
     let priceChange = 1.2 // the percentage difference in the price of FLOW 
@@ -187,8 +178,6 @@ fun testOvercollateralizedPositionRebalanceSucceeds() {
         depositCapacityCap: 1_000_000.0
     )
 
-    setupMoetReserves(protocolAccount: protocolAccount, moetAmount: 10_000.0)
-
     let collateralAmount = 1_000.0 // FLOW used when opening the position
 
     // configure user account
@@ -205,20 +194,20 @@ fun testOvercollateralizedPositionRebalanceSucceeds() {
 
     // check how much MOET the user has after borrowing
     let moetBalanceBeforeRebalance = getBalance(address: user.address, vaultPublicPath: MOET.VaultPublicPath)!
-    let availableBeforePriceChange = getAvailableBalance(pid: pid, vaultIdentifier: defaultTokenIdentifier, pullFromTopUpSource: false, beFailed: false)
-    let healthBeforePriceChange = getPositionHealth(pid: pid, beFailed: false)
+    let availableBeforePriceChange = getAvailableBalance(pid: 0, vaultIdentifier: defaultTokenIdentifier, pullFromTopUpSource: false, beFailed: false)
+    let healthBeforePriceChange = getPositionHealth(pid: 0, beFailed: false)
 
     // decrease the price of the collateral
     setMockOraclePrice(signer: protocolAccount, forTokenIdentifier: flowTokenIdentifier, price: initialFlowPrice * (priceChange))
-    let availableAfterPriceChange = getAvailableBalance(pid: pid, vaultIdentifier: defaultTokenIdentifier, pullFromTopUpSource: true, beFailed: false)
-    let healthAfterPriceChange = getPositionHealth(pid: pid, beFailed: false)
+    let availableAfterPriceChange = getAvailableBalance(pid: 0, vaultIdentifier: defaultTokenIdentifier, pullFromTopUpSource: true, beFailed: false)
+    let healthAfterPriceChange = getPositionHealth(pid: 0, beFailed: false)
 
     // rebalance should pull from the topUpSource, decreasing the MOET in the user's Vault since we use a VaultSource
     // as a topUpSource when opening the Position
-    rebalancePosition(signer: protocolAccount, pid: pid, force: true, beFailed: false)
+    rebalancePosition(signer: protocolAccount, pid: 0, force: true, beFailed: false)
 
     let moetBalanceAfterRebalance = getBalance(address: user.address, vaultPublicPath: MOET.VaultPublicPath)!
-    let healthAfterRebalance = getPositionHealth(pid: pid, beFailed: false)
+    let healthAfterRebalance = getPositionHealth(pid: 0, beFailed: false)
 
     // NOTE - exact amounts are not tested here, this is purely a behavioral test though we may update these tests
     

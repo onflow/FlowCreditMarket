@@ -35,16 +35,13 @@ fun setup() {
         depositCapacityCap: 1_000_000.0
     )
 
-    // Set up MOET reserves so that rebalancing can withdraw MOET when needed
-    setupMoetReserves(protocolAccount: protocolAccount, moetAmount: 10_000.0)
-
     snapshot = getCurrentBlockHeight()
 }
 
 access(all)
 fun test_borrower_full_redemption_insolvency() {
     safeReset()
-    let pid: UInt64 = 1
+    let pid: UInt64 = 0
 
     // Borrower setup
     let borrower = Test.createAccount()

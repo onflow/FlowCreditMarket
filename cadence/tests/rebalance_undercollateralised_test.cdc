@@ -25,7 +25,6 @@ fun setup() {
 access(all)
 fun testRebalanceUndercollateralised() {
     // Test.reset(to: snapshot)
-    let pid: UInt64 = 1
     let initialPrice = 1.0
     let priceDropPct: UFix64 = 0.2
     setMockOraclePrice(signer: protocolAccount, forTokenIdentifier: flowTokenIdentifier, price: initialPrice)
@@ -41,9 +40,6 @@ fun testRebalanceUndercollateralised() {
         depositCapacityCap: 1_000_000.0
     )
 
-    // Set up MOET reserves so that rebalancing can withdraw MOET when needed
-    setupMoetReserves(protocolAccount: protocolAccount, moetAmount: 10_000.0)
-
     // user setup
     let user = Test.createAccount()
     setupMoetVault(user, beFailed: false)
@@ -57,15 +53,15 @@ fun testRebalanceUndercollateralised() {
     )
     Test.expect(openRes, Test.beSucceeded())
 
-    let healthBefore = getPositionHealth(pid: pid, beFailed: false)
+    let healthBefore = getPositionHealth(pid: 0, beFailed: false)
 
     // Capture available balance before price change so we can verify directionality.
-    let availableBeforePriceChange = getAvailableBalance(pid: pid, vaultIdentifier: defaultTokenIdentifier, pullFromTopUpSource: true, beFailed: false)
+    let availableBeforePriceChange = getAvailableBalance(pid: 0, vaultIdentifier: defaultTokenIdentifier, pullFromTopUpSource: true, beFailed: false)
 
     // Apply price drop.
     setMockOraclePrice(signer: protocolAccount, forTokenIdentifier: flowTokenIdentifier, price: initialPrice * (1.0 - priceDropPct))
 
-    let availableAfterPriceChange = getAvailableBalance(pid: pid, vaultIdentifier: defaultTokenIdentifier, pullFromTopUpSource: true, beFailed: false)
+    let availableAfterPriceChange = getAvailableBalance(pid: 0, vaultIdentifier: defaultTokenIdentifier, pullFromTopUpSource: true, beFailed: false)
 
     // After a price drop, the position becomes less healthy so the amount that is safely withdrawable should drop.
     Test.assert(availableAfterPriceChange < availableBeforePriceChange, message: "Expected available balance to decrease after price drop (before: ".concat(availableBeforePriceChange.toString()).concat(", after: ").concat(availableAfterPriceChange.toString()).concat(")"))
@@ -73,16 +69,16 @@ fun testRebalanceUndercollateralised() {
     // Record the user's MOET balance before any pay-down so we can verify that the protocol actually
     // pulled the funds from the user during rebalance.
     let userMoetBalanceBefore = getBalance(address: user.address, vaultPublicPath: MOET.VaultPublicPath)!
-    let healthAfterPriceChange = getPositionHealth(pid: pid, beFailed: false)
+    let healthAfterPriceChange = getPositionHealth(pid: 0, beFailed: false)
 
-    rebalancePosition(signer: protocolAccount, pid: pid, force: true, beFailed: false)
+    rebalancePosition(signer: protocolAccount, pid: 0, force: true, beFailed: false)
 
-    let healthAfterRebalance = getPositionHealth(pid: pid, beFailed: false)
+    let healthAfterRebalance = getPositionHealth(pid: 0, beFailed: false)
 
     Test.assert(healthBefore > healthAfterPriceChange) // health decreased after drop
     Test.assert(healthAfterRebalance > healthAfterPriceChange) // health improved after rebalance
 
-    let detailsAfterRebalance = getPositionDetails(pid: pid, beFailed: false)
+    let detailsAfterRebalance = getPositionDetails(pid: 0, beFailed: false)
 
     // Expected debt after rebalance calculation based on contract's pay-down math
     let effectiveCollateralAfterDrop = 1_000.0 * 0.8 * (1.0 - priceDropPct) // 640
