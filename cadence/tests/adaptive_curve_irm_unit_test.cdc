@@ -1,6 +1,7 @@
 import Test
 import "FlowCreditMarket"
 import "FlowCreditMarketMath"
+import "test_helpers"
 
 /// Test suite for AdaptiveCurveIRM unit tests
 /// Mirrors patterns from test/AdaptiveCurveIrmTest.sol
@@ -16,21 +17,7 @@ access(all) let tolerance: UFix128 = 0.001  // 0.1% tolerance
 
 access(all)
 fun setup() {
-    // Deploy FlowCreditMarketMath first (dependency)
-    var err = Test.deployContract(
-        name: "FlowCreditMarketMath",
-        path: "../lib/FlowCreditMarketMath.cdc",
-        arguments: []
-    )
-    Test.expect(err, Test.beNil())
-
-    // Deploy FlowCreditMarket contract
-    err = Test.deployContract(
-        name: "FlowCreditMarket",
-        path: "../contracts/FlowCreditMarket.cdc",
-        arguments: []
-    )
-    Test.expect(err, Test.beNil())
+    deployContracts()
 }
 
 // ========== Initial Rate Tests ==========
@@ -356,14 +343,29 @@ fun test_irm_parameters() {
     // Curve steepness = 4
     Test.assertEqual(4.0, irm.CURVE_STEEPNESS)
 
-    // Initial rate at target = 4% APR
-    Test.assertEqual(0.04, irm.INITIAL_RATE_AT_TARGET)
+    // Initial rate at target = 4% APR (per-second)
+    let expectedInitialRate = 0.04 / 365.0 / 24.0 / 3600.0
+    Test.assert(
+        irm.INITIAL_RATE_AT_TARGET >= expectedInitialRate * (1.0 - tolerance) &&
+        irm.INITIAL_RATE_AT_TARGET <= expectedInitialRate * (1.0 + tolerance),
+        message: "Initial rate at target should be ~4% APR per second"
+    )
 
-    // Min rate at target = 0.1% APR
-    Test.assertEqual(0.001, irm.MIN_RATE_AT_TARGET)
+    // Min rate at target = 0.1% APR (per-second)
+    let expectedMinRate = 0.001 / 365.0 / 24.0 / 3600.0
+    Test.assert(
+        irm.MIN_RATE_AT_TARGET >= expectedMinRate * (1.0 - tolerance) &&
+        irm.MIN_RATE_AT_TARGET <= expectedMinRate * (1.0 + tolerance),
+        message: "Min rate at target should be ~0.1% APR per second"
+    )
 
-    // Max rate at target = 200% APR
-    Test.assertEqual(2.0, irm.MAX_RATE_AT_TARGET)
+    // Max rate at target = 200% APR (per-second)
+    let expectedMaxRate = 2.0 / 365.0 / 24.0 / 3600.0
+    Test.assert(
+        irm.MAX_RATE_AT_TARGET >= expectedMaxRate * (1.0 - tolerance) &&
+        irm.MAX_RATE_AT_TARGET <= expectedMaxRate * (1.0 + tolerance),
+        message: "Max rate at target should be ~200% APR per second"
+    )
 
     // Adjustment speed = 50/year (per second)
     let expectedSpeed = 50.0 / 365.0 / 24.0 / 3600.0

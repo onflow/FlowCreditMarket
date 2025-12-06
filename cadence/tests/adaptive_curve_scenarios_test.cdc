@@ -1,6 +1,7 @@
 import Test
 import "FlowCreditMarket"
 import "FlowCreditMarketMath"
+import "test_helpers"
 
 /// Test suite for AdaptiveCurveIRM realistic scenario testing
 /// Tests real-world market behavior patterns and rate convergence
@@ -16,21 +17,7 @@ access(all) let tolerance: UFix128 = 0.01  // 1% tolerance for scenarios
 
 access(all)
 fun setup() {
-    // Deploy FlowCreditMarketMath first (dependency)
-    var err = Test.deployContract(
-        name: "FlowCreditMarketMath",
-        path: "../lib/FlowCreditMarketMath.cdc",
-        arguments: []
-    )
-    Test.expect(err, Test.beNil())
-
-    // Deploy FlowCreditMarket contract
-    err = Test.deployContract(
-        name: "FlowCreditMarket",
-        path: "../contracts/FlowCreditMarket.cdc",
-        arguments: []
-    )
-    Test.expect(err, Test.beNil())
+    deployContracts()
 }
 
 // ========== Low Utilization Scenarios ==========
@@ -572,4 +559,245 @@ fun test_scenario_volatile_week() {
     // By day 3 at target utilization, rate should stabilize
     // (actual value depends on accumulated changes)
     Test.assert(day3.newRateAtTarget > 0.0, message: "Day 3 should maintain positive rate")
+}
+
+// ========== Iterative Ping Tests (Solidity parity) ==========
+
+/// Scenario: 45 days at 95% utilization with pings every minute
+/// Mirrors testRateAfter45DaysUtilizationAboveTargetPingEveryMinute from Solidity
+/// Tests cumulative behavior with frequent updates and interest accrual
+access(all)
+fun test_scenario_45_days_above_target_ping_every_minute() {
+    let irm = FlowCreditMarket.AdaptiveCurveIRM()
+    let currentTime = getCurrentBlock().timestamp
+
+    // Initialize at target utilization (90%)
+    let creditBalance: UFix128 = 1000.0
+    var debitBalance: UFix128 = 900.0
+
+    let result0 = irm.calculateAdaptiveRate(
+        creditBalance: creditBalance,
+        debitBalance: debitBalance,
+        currentRateAtTarget: 0.0,
+        lastUpdate: 0
+    )
+
+    // Verify initialization
+    Test.assertEqual(irm.INITIAL_RATE_AT_TARGET, result0.newRateAtTarget)
+
+    // Set utilization to 95% (error = 50%)
+    let initialDebitBalance: UFix128 = 950.0
+    debitBalance = initialDebitBalance
+    var totalCredit: UFix128 = creditBalance
+    var totalDebit: UFix128 = debitBalance
+    var currentRateAtTarget = result0.newRateAtTarget
+    var lastUpdate = currentTime
+
+    // Simulate 45 days with pings every minute
+    let oneMinute: UFix64 = 60
+    let fortyFiveDays: UFix64 = UInt64(45 * 24 * 3600)
+    let totalMinutes: UFix64 = fortyFiveDays / oneMinute
+
+    var i: UFix64 = 0
+    while i < totalMinutes {
+        lastUpdate = currentTime + UFix64(i * oneMinute)
+        let nextUpdate = lastUpdate + oneMinute
+
+        let result = irm.calculateAdaptiveRate(
+            creditBalance: totalCredit,
+            debitBalance: totalDebit,
+            currentRateAtTarget: currentRateAtTarget,
+            lastUpdate: lastUpdate
+        )
+
+        // Simulate interest accrual
+        // interest = totalDebit * rate * time (using simple compounding approximation)
+        let borrowAPR = result.rate
+        let interest = totalDebit * borrowAPR * UFix128(oneMinute)
+
+        // Update balances
+        totalDebit = totalDebit + interest
+        totalCredit = totalCredit + interest
+
+        // Update state for next iteration
+        currentRateAtTarget = result.newRateAtTarget
+        i = i + 1
+    }
+
+    // Final utilization should remain close to 95%
+    let finalUtilization = totalDebit / totalCredit
+    Test.assert(
+        finalUtilization >= 0.94 && finalUtilization <= 0.96,
+        message: "Final utilization should remain near 95%, got ".concat(finalUtilization.toString())
+    )
+
+    // Expected rate at target: 4% * exp(50 * 45/365 * 50%) = 87.22% APR
+    let expectedAnnualRate = 0.8722
+    let expectedPerSecondRate = expectedAnnualRate / 365.0 / 24.0 / 3600.0
+
+    Test.assert(
+        currentRateAtTarget >= expectedPerSecondRate * 0.92,
+        message: "Rate at target should be at least 92% of expected (accounting for ping variance), expected ~"
+            .concat(expectedPerSecondRate.toString())
+            .concat(", got ")
+            .concat(currentRateAtTarget.toString())
+    )
+
+    // Rate should be within 8% of expected (as per Solidity test tolerance)
+    Test.assert(
+        currentRateAtTarget <= expectedPerSecondRate * 1.08,
+        message: "Rate at target should be within 108% of expected, expected ~"
+            .concat(expectedPerSecondRate.toString())
+            .concat(", got ")
+            .concat(currentRateAtTarget.toString())
+    )
+
+    // Expected growth: exp(87.22% * 3.5 * 45/365) = +45.70%
+    // With 30% relative tolerance for pings
+    let expectedGrowthMultiplier: UFix128 = 1.457
+    let expectedFinalDebit = initialDebitBalance * expectedGrowthMultiplier
+
+    Test.assert(
+        totalDebit >= expectedFinalDebit * 0.7 && totalDebit <= expectedFinalDebit * 1.3,
+        message: "Total debt growth should match expected range with ping variance, expected ~"
+            .concat(expectedFinalDebit.toString())
+            .concat(", got ")
+            .concat(totalDebit.toString())
+    )
+}
+
+/// Scenario: 3 weeks at target utilization with pings every minute
+/// Mirrors testRateAfter3WeeksUtilizationTargetPingEveryMinute from Solidity
+/// Tests rate stability at target with frequent updates
+access(all)
+fun test_scenario_3_weeks_at_target_ping_every_minute() {
+    let irm = FlowCreditMarket.AdaptiveCurveIRM()
+    let currentTime = getCurrentBlock().timestamp
+
+    // Initialize at target utilization (90%)
+    let creditBalance: UFix128 = 1000.0
+    let debitBalance: UFix128 = 900.0
+
+    let result0 = irm.calculateAdaptiveRate(
+        creditBalance: creditBalance,
+        debitBalance: debitBalance,
+        currentRateAtTarget: 0.0,
+        lastUpdate: 0
+    )
+
+    // Verify initialization
+    Test.assertEqual(irm.INITIAL_RATE_AT_TARGET, result0.newRateAtTarget)
+
+    var totalCredit: UFix128 = creditBalance
+    var totalDebit: UFix128 = debitBalance
+    var currentRateAtTarget = result0.newRateAtTarget
+    var lastUpdate = currentTime
+
+    // Simulate 3 weeks with pings every minute
+    let oneMinute: UFix64 = 60
+    let threeWeeks: UFix64 = UInt64(3 * 7 * 24 * 3600)
+    let totalMinutes: UFix64 = threeWeeks / oneMinute
+
+    var i: UFix64 = 0
+    while i < totalMinutes {
+        lastUpdate = currentTime + UFix64(i * oneMinute)
+        let nextUpdate = lastUpdate + oneMinute
+
+        let result = irm.calculateAdaptiveRate(
+            creditBalance: totalCredit,
+            debitBalance: totalDebit,
+            currentRateAtTarget: currentRateAtTarget,
+            lastUpdate: lastUpdate
+        )
+
+        // Simulate interest accrual
+        let borrowAPR = result.rate
+        let interest = totalDebit * borrowAPR * UFix128(oneMinute)
+
+        // Update balances
+        totalDebit = totalDebit + interest
+        totalCredit = totalCredit + interest
+
+        // Update state for next iteration
+        currentRateAtTarget = result.newRateAtTarget
+        i = i + 1
+    }
+
+    // Final utilization should remain close to target (90%)
+    let finalUtilization = totalDebit / totalCredit
+    Test.assert(
+        finalUtilization >= 0.89 && finalUtilization <= 0.91,
+        message: "Final utilization should remain near target 90%, got ".concat(finalUtilization.toString())
+    )
+
+    // Rate at target should remain stable (within 10% tolerance for pings)
+    Test.assert(
+        currentRateAtTarget >= irm.INITIAL_RATE_AT_TARGET * 0.9,
+        message: "Rate at target should remain near initial rate, got "
+            .concat(currentRateAtTarget.toString())
+            .concat(", initial was ")
+            .concat(irm.INITIAL_RATE_AT_TARGET.toString())
+    )
+
+    Test.assert(
+        currentRateAtTarget <= irm.INITIAL_RATE_AT_TARGET * 1.1,
+        message: "Rate at target should remain within 10% of initial rate (accounting for ping variance), got "
+            .concat(currentRateAtTarget.toString())
+            .concat(", initial was ")
+            .concat(irm.INITIAL_RATE_AT_TARGET.toString())
+    )
+}
+
+/// Scenario: No ping test with extended time at target utilization
+/// Mirrors testRateAfterUtilizationTargetNoPing from Solidity
+/// Tests that rate remains stable at target utilization regardless of time elapsed
+access(all)
+fun test_scenario_extended_time_at_target_no_ping() {
+    let irm = FlowCreditMarket.AdaptiveCurveIRM()
+    let currentTime = getCurrentBlock().timestamp
+
+    // Initialize at target utilization
+    let creditBalance: UFix128 = 1000.0
+    let debitBalance: UFix128 = 900.0
+
+    let result0 = irm.calculateAdaptiveRate(
+        creditBalance: creditBalance,
+        debitBalance: debitBalance,
+        currentRateAtTarget: 0.0,
+        lastUpdate: 0
+    )
+
+    Test.assertEqual(irm.INITIAL_RATE_AT_TARGET, result0.newRateAtTarget)
+
+    // Test various elapsed times
+    let testPeriods: [UFix64] = [
+        UFix64(1),           // 1 second
+        UFix64(60),          // 1 minute
+        UFix64(3600),        // 1 hour
+        UFix64(86400),       // 1 day
+        UFix64(604800),      // 1 week
+        UFix64(2592000),     // 30 days
+        UFix64(31536000)     // 1 year
+    ]
+
+    for elapsed in testPeriods {
+        let result = irm.calculateAdaptiveRate(
+            creditBalance: creditBalance,
+            debitBalance: debitBalance,
+            currentRateAtTarget: result0.newRateAtTarget,
+            lastUpdate: currentTime - elapsed
+        )
+
+        // At exact target utilization, rate should remain stable
+        Test.assert(
+            result.newRateAtTarget >= result0.newRateAtTarget * (UFix128(1.0) - tolerance) &&
+            result.newRateAtTarget <= result0.newRateAtTarget * (UFix128(1.0) + tolerance),
+            message: "Rate at target should remain stable after "
+                .concat(elapsed.toString())
+                .concat(" seconds at target utilization, expected ")
+                .concat(result0.newRateAtTarget.toString())
+                .concat(", got ")
+                .concat(result.newRateAtTarget.toString())
+        )
+    }
 }

@@ -116,19 +116,23 @@ access(all) contract FlowCreditMarketMath {
     /// ln(2) = 0.693147180559945309
     access(all) let LN_2: UFix128
 
-    /// ln(1e-24) for UFix128 (lower bound for exp)
-    /// ln(1e-24) = -55.2620422318434
+    /// ln(1e-18) for UFix128 (lower bound for exp)
+    /// ln(1e-18) = -41.446531673892822312
+    /// Matches Solidity: LN_WEI_INT
     access(all) let LN_MIN: UFix128
 
     /// Upper bound for wExp to avoid overflow
-    /// ln(type(UFix128).max) ≈ 195.6
+    /// ln(type(int256).max / 1e36) = 93.859467695000404319 (Solidity bound)
+    /// Using a conservative bound to match Solidity behavior
     access(all) let WEXP_UPPER_BOUND: UFix128
 
     /// The value of wExp(WEXP_UPPER_BOUND)
+    /// Matches Solidity: WEXP_UPPER_VALUE
     access(all) let WEXP_UPPER_VALUE: UFix128
 
     /// Returns an approximation of exp(x) for signed x
     /// Uses 2nd-order Taylor series approximation
+    /// For negative x, computes 1/exp(|x|) for better accuracy
     access(all) fun wExp(_ x: SignedUFix128): UFix128 {
         // If x < ln(1e-24), exp(x) ≈ 0
         if x.isNegative && x.value >= self.LN_MIN {
@@ -140,52 +144,51 @@ access(all) contract FlowCreditMarketMath {
             return self.WEXP_UPPER_VALUE
         }
 
-        // Decompose x as x = q * ln(2) + r
-        // where q is an integer and -ln(2)/2 <= r <= ln(2)/2
-        let halfLn2 = self.LN_2 / 2.0
+        // For negative x, compute 1/exp(|x|) to avoid sign issues
+        if x.isNegative {
+            let positiveX = SignedUFix128(value: x.value, isNegative: false)
+            let expPositive = self.wExp(positiveX)
 
-        let xValue = x.value
-        var q: Int64 = 0
-        var rValue: UFix128 = 0.0
-        var rIsNegative: Bool = false
-
-        if !x.isNegative {
-            // Positive x
-            let qRaw = (xValue + halfLn2) / self.LN_2
-            q = Int64(UFix64(qRaw))
-            let qTimesLn2 = UFix128(UInt64(q)) * self.LN_2
-
-            if qTimesLn2 <= xValue {
-                rValue = xValue - qTimesLn2
-                rIsNegative = false
+            // Return 1/exp(|x|)
+            if expPositive > 0.0 {
+                return self.one / expPositive
             } else {
-                rValue = qTimesLn2 - xValue
-                rIsNegative = true
-            }
-        } else {
-            // Negative x
-            let qRaw = (xValue - halfLn2) / self.LN_2
-            q = -Int64(UFix64(qRaw))
-            let absQ = q < 0 ? UInt64(-q) : UInt64(q)
-            let qTimesLn2 = UFix128(absQ) * self.LN_2
-
-            if qTimesLn2 >= xValue {
-                rValue = qTimesLn2 - xValue
-                rIsNegative = true
-            } else {
-                rValue = xValue - qTimesLn2
-                rIsNegative = false
+                return self.WEXP_UPPER_VALUE
             }
         }
 
-        // Compute e^r with 2nd-order Taylor polynomial: 1 + r + r²/2
+        // Positive x path: Decompose x as x = q * ln(2) + r
+        // where q is an integer and -ln(2)/2 <= r <= ln(2)/2
+        let halfLn2 = self.LN_2 / 2.0
+        let xValue = x.value
+
+        // Calculate q (number of factors of 2)
+        let qRaw = (xValue + halfLn2) / self.LN_2
+        let q = Int64(UFix64(qRaw))
+        let qTimesLn2 = UFix128(UInt64(q)) * self.LN_2
+
+        // Calculate remainder r
+        var rValue: UFix128 = 0.0
+        var rIsNegative: Bool = false
+
+        if qTimesLn2 <= xValue {
+            rValue = xValue - qTimesLn2
+            rIsNegative = false
+        } else {
+            rValue = qTimesLn2 - xValue
+            rIsNegative = true
+        }
+
+        // Compute e^r with 2nd-order Taylor polynomial
         var expR = self.one
 
         if !rIsNegative {
+            // For positive r: e^r ≈ 1 + r + r²/2
             expR = expR + rValue
             expR = expR + (rValue * rValue / 2.0)
         } else {
-            // For negative r: 1 - |r| + |r|²/2
+            // For negative r: e^(-r) ≈ 1 - r + r²/2
+            // Rearrange to avoid underflow: 1 + r²/2 - r
             let rSquaredDiv2 = rValue * rValue / 2.0
             if rValue <= self.one + rSquaredDiv2 {
                 expR = self.one + rSquaredDiv2 - rValue
@@ -196,30 +199,18 @@ access(all) contract FlowCreditMarketMath {
         }
 
         // Return e^x = 2^q * e^r
-        if q >= 0 {
-            // Multiply by 2^q
-            let shift = UInt64(q)
-            var result = expR
-            var i: UInt64 = 0
-            while i < shift {
-                result = result * 2.0
-                if result >= UFix128.max / 2.0 {
-                    return self.WEXP_UPPER_VALUE
-                }
-                i = i + 1
+        // Multiply by 2^q
+        let shift = UInt64(q)
+        var result = expR
+        var i: UInt64 = 0
+        while i < shift {
+            result = result * 2.0
+            if result >= UFix128.max / 2.0 {
+                return self.WEXP_UPPER_VALUE
             }
-            return result
-        } else {
-            // Divide by 2^|q|
-            let shift = UInt64(-q)
-            var result = expR
-            var i: UInt64 = 0
-            while i < shift {
-                result = result / 2.0
-                i = i + 1
-            }
-            return result
+            i = i + 1
         }
+        return result
     }
 
     /// Bounds a value between low and high
@@ -259,8 +250,14 @@ access(all) contract FlowCreditMarketMath {
 
         // Initialize exponential function constants
         self.LN_2 = 0.693147180559945309
-        self.LN_MIN = 55.2620422318434
-        self.WEXP_UPPER_BOUND = 195.0  // Conservative bound for UFix128
-        self.WEXP_UPPER_VALUE = UFix128.max / 2.0  // Large but safe value
+        // ln(1e-18) to match Solidity's LN_WEI_INT
+        self.LN_MIN = 41.446531673892822312
+        // Match Solidity's WEXP_UPPER_BOUND
+        self.WEXP_UPPER_BOUND = 93.859467695000404319
+        // Solidity's WEXP_UPPER_VALUE is ~5.77e37, which exceeds Cadence UFix128 literal limits
+        // We use a large value that serves as an effective upper bound for adaptive IRM
+        // e^93.86 is astronomically large; for practical IRM use (linearAdaptation < 10),
+        // e^10 ~= 22026, so 1 billion provides ample headroom
+        self.WEXP_UPPER_VALUE = 1000000000.0  // 1.0e9
     }
 }

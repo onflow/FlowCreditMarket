@@ -361,14 +361,17 @@ access(all) contract FlowCreditMarket {
             // Adjustment speed = 50/year (per second)
             self.ADJUSTMENT_SPEED = 50.0 / 365.0 / 24.0 / 3600.0
 
-            // Initial rate at target = 4% APR
-            self.INITIAL_RATE_AT_TARGET = 0.04
+            // Initial rate at target = 4% APR (converted to per-second rate)
+            // Matches Solidity: 0.04 ether / int256(365 days)
+            self.INITIAL_RATE_AT_TARGET = 0.04 / 365.0 / 24.0 / 3600.0
 
-            // Min rate at target = 0.1% APR
-            self.MIN_RATE_AT_TARGET = 0.001
+            // Min rate at target = 0.1% APR (converted to per-second rate)
+            // Matches Solidity: 0.001 ether / int256(365 days)
+            self.MIN_RATE_AT_TARGET = 0.001 / 365.0 / 24.0 / 3600.0
 
-            // Max rate at target = 200% APR
-            self.MAX_RATE_AT_TARGET = 2.0
+            // Max rate at target = 200% APR (converted to per-second rate)
+            // Matches Solidity: 2.0 ether / int256(365 days)
+            self.MAX_RATE_AT_TARGET = 2.0 / 365.0 / 24.0 / 3600.0
         }
 
         /// Calculates the interest rate based on credit and debit balances
@@ -398,8 +401,8 @@ access(all) contract FlowCreditMarket {
                 ? FlowCreditMarketMath.one - self.TARGET_UTILIZATION
                 : self.TARGET_UTILIZATION
 
-            let errMagnitude: UFix128
-            let errIsNegative: Bool
+            var errMagnitude: UFix128 = 0.0
+            var errIsNegative: Bool = false
 
             if utilization >= self.TARGET_UTILIZATION {
                 errMagnitude = (utilization - self.TARGET_UTILIZATION) / errNormFactor

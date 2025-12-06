@@ -1,6 +1,7 @@
 import Test
 import "FlowCreditMarket"
 import "FlowCreditMarketMath"
+import "test_helpers"
 
 /// Test suite for AdaptiveCurveIRM edge cases and boundary conditions
 /// Tests extreme values, zero balances, overflow/underflow protection
@@ -16,21 +17,7 @@ access(all) let tolerance: UFix128 = 0.001  // 0.1% tolerance
 
 access(all)
 fun setup() {
-    // Deploy FlowCreditMarketMath first (dependency)
-    var err = Test.deployContract(
-        name: "FlowCreditMarketMath",
-        path: "../lib/FlowCreditMarketMath.cdc",
-        arguments: []
-    )
-    Test.expect(err, Test.beNil())
-
-    // Deploy FlowCreditMarket contract
-    err = Test.deployContract(
-        name: "FlowCreditMarket",
-        path: "../contracts/FlowCreditMarket.cdc",
-        arguments: []
-    )
-    Test.expect(err, Test.beNil())
+    deployContracts()
 }
 
 // ========== Zero Balance Tests ==========
