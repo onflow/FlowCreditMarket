@@ -27,7 +27,6 @@ fun setup() {
 access(all)
 fun testRebalanceOvercollateralised() {
     // Test.reset(to: snapshot)
-    let pid: UInt64 = 1
     let initialPrice = 1.0
     let priceIncreasePct: UFix64 = 1.2
     setMockOraclePrice(signer: protocolAccount, forTokenIdentifier: flowTokenIdentifier, price: initialPrice)
@@ -43,9 +42,6 @@ fun testRebalanceOvercollateralised() {
         depositCapacityCap: 1_000_000.0
     )
 
-    // Set up MOET reserves so that rebalancing can withdraw MOET when needed
-    setupMoetReserves(protocolAccount: protocolAccount, moetAmount: 10_000.0)
-
     let user = Test.createAccount()
     setupMoetVault(user, beFailed: false)
     mintFlow(to: user, amount: 1_000.0)
@@ -57,9 +53,9 @@ fun testRebalanceOvercollateralised() {
     )
     Test.expect(openRes, Test.beSucceeded())
 
-    let healthBefore = getPositionHealth(pid: pid, beFailed: false)
+    let healthBefore = getPositionHealth(pid: 0, beFailed: false)
 
-    let detailsBefore = getPositionDetails(pid: pid, beFailed: false)
+    let detailsBefore = getPositionDetails(pid: 0, beFailed: false)
 
     log(detailsBefore.balances[0].balance)
 
@@ -70,20 +66,20 @@ fun testRebalanceOvercollateralised() {
     // increase price
     setMockOraclePrice(signer: protocolAccount, forTokenIdentifier: flowTokenIdentifier, price: initialPrice * priceIncreasePct)
 
-    let healthAfterPriceChange = getPositionHealth(pid: pid, beFailed: false)
+    let healthAfterPriceChange = getPositionHealth(pid: 0, beFailed: false)
 
     // After a 20% price increase, health should be at least 1.5 (=960/615.38)
     Test.assert(healthAfterPriceChange >= intMaxHealth,
         message: "Expected health after price increase to be >= 1.5 but got ".concat(healthAfterPriceChange.toString()))
 
-    rebalancePosition(signer: protocolAccount, pid: pid, force: true, beFailed: false)
+    rebalancePosition(signer: protocolAccount, pid: 0, force: true, beFailed: false)
 
-    let healthAfterRebalance = getPositionHealth(pid: pid, beFailed: false)
+    let healthAfterRebalance = getPositionHealth(pid: 0, beFailed: false)
 
     Test.assert(healthAfterPriceChange > healthBefore) // got healthier due to price increase
     Test.assert(healthAfterRebalance < healthAfterPriceChange) // health decreased after drawing down excess collateral
 
-    let detailsAfterRebalance = getPositionDetails(pid: pid, beFailed: false)
+    let detailsAfterRebalance = getPositionDetails(pid: 0, beFailed: false)
 
     // Expected debt after rebalance: effective collateral (post-price) / targetHealth
     // 1000 Flow at price 1.2 = 1200, collateralFactor 0.8 -> 960 effective collateral

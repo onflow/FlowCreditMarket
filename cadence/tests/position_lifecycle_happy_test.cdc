@@ -48,9 +48,6 @@ fun testPositionLifecycleHappyPath() {
         depositCapacityCap: 1_000_000.0
     )
 
-    // Set up MOET reserves so that rebalancing can withdraw MOET when needed
-    setupMoetReserves(protocolAccount: protocolAccount, moetAmount: 10_000.0)
-
     // user prep
     let user = Test.createAccount()
     setupMoetVault(user, beFailed: false)
