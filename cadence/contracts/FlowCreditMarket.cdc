@@ -355,8 +355,10 @@ access(all) contract FlowCreditMarket {
         access(all) var insuranceRate: UFix64
         /// Per-deposit limit fraction of capacity (default 0.05 i.e., 5%)
         access(all) var depositLimitFraction: UFix64
-        /// The rate at which depositCapacity can increase over time
+        /// The rate at which depositCapacity can increase over time. This is per hour. and should be applied to the depositCapacityCap once an hour.
         access(all) var depositRate: UFix64
+        /// The timestamp of the last deposit capacity update
+        access(all) var lastDepositCapacityUpdate: UFix64
         /// The limit on deposits of the related token
         access(all) var depositCapacity: UFix64
         /// The upper bound on total deposits of the related token, limiting how much depositCapacity can reach
@@ -376,6 +378,7 @@ access(all) contract FlowCreditMarket {
             self.depositRate = depositRate
             self.depositCapacity = depositCapacityCap
             self.depositCapacityCap = depositCapacityCap
+            self.lastDepositCapacityUpdate = getCurrentBlock().timestamp
         }
 
         /// Sets the insurance rate for this token state
@@ -482,15 +485,15 @@ access(all) contract FlowCreditMarket {
 
         /// Regenerates deposit capacity over time based on depositRate
         /// Note: dt should be calculated before updateInterestIndices() updates lastUpdate
-        access(all) fun updateDepositCapacity(dt: UFix64) {
-            if dt > 0.0 {
-                let newDepositCapacity = self.depositCapacity + (self.depositRate * dt)
+        access(all) fun regenerateDepositCapacity() {
+            let currentTime: UFix64 = getCurrentBlock().timestamp
+            let dt: UFix64 = currentTime - self.lastDepositCapacityUpdate
+            if dt > 3600.0 { // 1 hour
+                let newDepositCapacity = self.depositCapacityCap + self.depositRate
 
-                if newDepositCapacity >= self.depositCapacityCap {
-                    self.setDepositCapacity(self.depositCapacityCap)
-                } else {
-                    self.setDepositCapacity(newDepositCapacity)
-                }
+                self.depositCapacityCap = newDepositCapacity
+                self.setDepositCapacity(newDepositCapacity)
+                self.lastDepositCapacityUpdate = currentTime
             }
         }
 
@@ -505,12 +508,8 @@ access(all) contract FlowCreditMarket {
         }
 
         access(all) fun updateForTimeChange() {
-            // Calculate time delta before updateInterestIndices() updates lastUpdate
-            let currentTime: UFix64 = getCurrentBlock().timestamp
-            let dt: UFix64 = currentTime - self.lastUpdate
-            
             self.updateInterestIndices()
-            self.updateDepositCapacity(dt: dt)
+            self.regenerateDepositCapacity()
         }
 
         access(all) fun updateInterestRates() {
@@ -2347,6 +2346,17 @@ access(all) contract FlowCreditMarket {
             let tsRef = &self.globalLedger[tokenType] as auth(EImplementation) &TokenState?
                 ?? panic("Invariant: token state missing")
             tsRef.setDepositCapacityCap(cap)
+        }
+
+        /// Regenerates deposit capacity for all supported token types
+        /// Each token type's capacity regenerates independently based on its own depositRate,
+        /// approximately once per hour, up to its respective depositCapacityCap
+        access(EImplementation) fun regenerateAllDepositCapacities() {
+            for tokenType in self.globalLedger.keys {
+                let tsRef = &self.globalLedger[tokenType] as auth(EImplementation) &TokenState?
+                    ?? panic("Invariant: token state missing")
+                tsRef.regenerateDepositCapacity()
+            }
         }
 
         /// Enables or disables verbose logging inside the Pool for testing and diagnostics
