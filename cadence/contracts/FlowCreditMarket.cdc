@@ -363,6 +363,9 @@ access(all) contract FlowCreditMarket {
         access(all) var depositCapacity: UFix64
         /// The upper bound on total deposits of the related token, limiting how much depositCapacity can reach
         access(all) var depositCapacityCap: UFix64
+        /// Tracks per-user deposit usage for enforcing user deposit limits
+        /// Maps position ID -> usage amount (how much of each user's limit has been consumed for this token type)
+        access(all) var depositUsage: {UInt64: UFix64}
 
         init(interestCurve: {InterestCurve}, depositRate: UFix64, depositCapacityCap: UFix64) {
             self.lastUpdate = getCurrentBlock().timestamp
@@ -378,6 +381,7 @@ access(all) contract FlowCreditMarket {
             self.depositRate = depositRate
             self.depositCapacity = depositCapacityCap
             self.depositCapacityCap = depositCapacityCap
+            self.depositUsage = {}
             self.lastDepositCapacityUpdate = getCurrentBlock().timestamp
         }
 
@@ -400,6 +404,11 @@ access(all) contract FlowCreditMarket {
             if self.depositCapacity > cap {
                 self.depositCapacity = cap
             }
+        }
+
+        /// Calculates the per-user deposit limit cap based on depositLimitFraction * depositCapacityCap
+        access(all) fun getUserDepositLimitCap(): UFix64 {
+            return self.depositLimitFraction * self.depositCapacityCap
         }
         /// Decreases deposit capacity by the specified amount (used when deposits are made)
         access(EImplementation) fun consumeDepositCapacity(_ amount: UFix64) {
@@ -485,14 +494,22 @@ access(all) contract FlowCreditMarket {
 
         /// Regenerates deposit capacity over time based on depositRate
         /// Note: dt should be calculated before updateInterestIndices() updates lastUpdate
+        /// When capacity regenerates, all user deposit usage is reset for this token type
         access(all) fun regenerateDepositCapacity() {
             let currentTime: UFix64 = getCurrentBlock().timestamp
             let dt: UFix64 = currentTime - self.lastDepositCapacityUpdate
             if dt > 3600.0 { // 1 hour
+                let oldCap = self.depositCapacityCap
                 let newDepositCapacity = self.depositCapacityCap + self.depositRate
 
                 self.depositCapacityCap = newDepositCapacity
                 self.setDepositCapacity(newDepositCapacity)
+                
+                // If capacity cap increased (regenerated), reset all user usage for this token type
+                if newDepositCapacity > oldCap {
+                    self.depositUsage = {}
+                }
+                
                 self.lastDepositCapacityUpdate = currentTime
             }
         }
@@ -506,6 +523,7 @@ access(all) contract FlowCreditMarket {
         access(all) fun depositLimit(): UFix64 {
             return self.depositCapacity * self.depositLimitFraction
         }
+
 
         access(all) fun updateForTimeChange() {
             self.updateInterestIndices()
@@ -1984,6 +2002,26 @@ access(all) contract FlowCreditMarket {
                 }
             }
 
+            // Per-user deposit limit: check if user has exceeded their per-user limit
+            let userDepositLimitCap = tokenState.getUserDepositLimitCap()
+            var currentUsage: UFix64 = 0.0
+            if tokenState.depositUsage[pid] != nil {
+                currentUsage = tokenState.depositUsage[pid]!
+            }
+            let remainingUserLimit = userDepositLimitCap - currentUsage
+            
+            // If the deposit would exceed the user's limit, queue or reject the excess
+            if from.balance > remainingUserLimit {
+                let excessAmount = from.balance - remainingUserLimit
+                let queuedForUserLimit <- from.withdraw(amount: excessAmount)
+                
+                if position.queuedDeposits[type] == nil {
+                    position.queuedDeposits[type] <-! queuedForUserLimit
+                } else {
+                    position.queuedDeposits[type]!.deposit(from: <-queuedForUserLimit)
+                }
+            }
+
             // If this position doesn't currently have an entry for this token, create one.
             if position.balances[type] == nil {
                 position.balances[type] = InternalBalance(direction: BalanceDirection.Credit, scaledBalance: 0.0 as UFix128)
@@ -2001,6 +2039,13 @@ access(all) contract FlowCreditMarket {
             // will be recorded at that time.
             let acceptedAmount = from.balance
             position.balances[type]!.recordDeposit(amount: FlowCreditMarketMath.toUFix128(acceptedAmount), tokenState: tokenState)
+
+            // Track per-user deposit usage for the accepted amount
+            var currentUserUsage: UFix64 = 0.0
+            if tokenState.depositUsage[pid] != nil {
+                currentUserUsage = tokenState.depositUsage[pid]!
+            }
+            tokenState.depositUsage[pid] = currentUserUsage + acceptedAmount
 
             // Consume deposit capacity for the accepted deposit amount
             // Only the accepted amount consumes capacity; queued portions will consume capacity when processed later
@@ -2351,6 +2396,7 @@ access(all) contract FlowCreditMarket {
         /// Regenerates deposit capacity for all supported token types
         /// Each token type's capacity regenerates independently based on its own depositRate,
         /// approximately once per hour, up to its respective depositCapacityCap
+        /// When capacity regenerates, user deposit usage is reset for that token type
         access(EImplementation) fun regenerateAllDepositCapacities() {
             for tokenType in self.globalLedger.keys {
                 let tsRef = &self.globalLedger[tokenType] as auth(EImplementation) &TokenState?
