@@ -404,6 +404,8 @@ access(all) contract FlowCreditMarket {
             if self.depositCapacity > cap {
                 self.depositCapacity = cap
             }
+            // Reset the last update timestamp to prevent regeneration based on old timestamp
+            self.lastDepositCapacityUpdate = getCurrentBlock().timestamp
         }
 
         /// Calculates the per-user deposit limit cap based on depositLimitFraction * depositCapacityCap
@@ -2644,6 +2646,18 @@ access(all) contract FlowCreditMarket {
         }
         access(all) fun getDefaultToken(): Type {
             return self.defaultToken
+        }
+        
+        /// Returns the deposit capacity and deposit capacity cap for a given token type
+        access(all) fun getDepositCapacityInfo(type: Type): {String: UFix64} {
+            let tokenState = self._borrowUpdatedTokenState(type: type)
+            return {
+                "depositCapacity": tokenState.depositCapacity,
+                "depositCapacityCap": tokenState.depositCapacityCap,
+                "depositRate": tokenState.depositRate,
+                "depositLimitFraction": tokenState.depositLimitFraction,
+                "lastDepositCapacityUpdate": tokenState.lastDepositCapacityUpdate
+            }
         }
     }
 
