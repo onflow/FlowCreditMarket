@@ -2408,12 +2408,18 @@ access(all) contract FlowCreditMarket {
         /// This allows governance to change the interest rate model for a token after it has been added
         /// to the pool. For example, switching from a fixed rate to a kink-based model, or updating
         /// the parameters of an existing kink model.
+        ///
+        /// Important: Before changing the curve, we must first compound any accrued interest at the
+        /// OLD rate. Otherwise, interest that accrued since lastUpdate would be calculated using the
+        /// new rate, which would be incorrect.
         access(EGovernance) fun setInterestCurve(tokenType: Type, interestCurve: {InterestCurve}) {
             pre {
                 self.globalLedger[tokenType] != nil: "Unsupported token type"
             }
-            let tsRef = &self.globalLedger[tokenType] as auth(EImplementation) &TokenState?
-                ?? panic("Invariant: token state missing")
+            // First, update interest indices to compound any accrued interest at the OLD rate
+            // This "finalizes" all interest accrued up to this moment before switching curves
+            let tsRef = self._borrowUpdatedTokenState(type: tokenType)
+            // Now safe to set the new curve - subsequent interest will accrue at the new rate
             tsRef.setInterestCurve(interestCurve)
             emit InterestCurveUpdated(
                 poolUUID: self.uuid,
