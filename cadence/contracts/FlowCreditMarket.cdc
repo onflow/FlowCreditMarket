@@ -412,6 +412,7 @@ access(all) contract FlowCreditMarket {
         access(all) fun getUserDepositLimitCap(): UFix64 {
             return self.depositLimitFraction * self.depositCapacityCap
         }
+
         /// Decreases deposit capacity by the specified amount and tracks per-user deposit usage
         /// (used when deposits are made)
         access(EImplementation) fun consumeDepositCapacity(_ amount: UFix64, pid: UInt64) {
@@ -424,8 +425,8 @@ access(all) contract FlowCreditMarket {
             
             // Track per-user deposit usage for the accepted amount
             var currentUserUsage: UFix64 = 0.0
-            if self.depositUsage[pid] != nil {
-                currentUserUsage = self.depositUsage[pid]!
+            if let usage = self.depositUsage[pid] {
+                currentUserUsage = usage
             }
             self.depositUsage[pid] = currentUserUsage + amount
         }
@@ -506,8 +507,8 @@ access(all) contract FlowCreditMarket {
         /// Note: dt should be calculated before updateInterestIndices() updates lastUpdate
         /// When capacity regenerates, all user deposit usage is reset for this token type
         access(all) fun regenerateDepositCapacity() {
-            let currentTime: UFix64 = getCurrentBlock().timestamp
-            let dt: UFix64 = currentTime - self.lastDepositCapacityUpdate
+            let currentTime = getCurrentBlock().timestamp
+            let dt = currentTime - self.lastDepositCapacityUpdate
             let hourInSeconds: UFix64 = 3600.0
             if dt > hourInSeconds { // 1 hour
                 let multiplier = dt / hourInSeconds
@@ -2017,8 +2018,8 @@ access(all) contract FlowCreditMarket {
             // Per-user deposit limit: check if user has exceeded their per-user limit
             let userDepositLimitCap = tokenState.getUserDepositLimitCap()
             var currentUsage: UFix64 = 0.0
-            if tokenState.depositUsage[pid] != nil {
-                currentUsage = tokenState.depositUsage[pid]!
+            if let usage = tokenState.depositUsage {
+                currentUsage = usage
             }
             let remainingUserLimit = userDepositLimitCap - currentUsage
             
