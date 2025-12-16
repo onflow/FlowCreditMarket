@@ -49,6 +49,7 @@ access(all) contract FlowCreditMarket {
     access(all) entitlement EGovernance
     access(all) entitlement EImplementation
     access(all) entitlement EParticipant
+    access(all) entitlement ETokenStateView
 
     /* --- NUMERIC TYPES POLICY ---
         - External/public APIs (Vault amounts, deposits/withdrawals, events) use UFix64.
@@ -139,7 +140,7 @@ access(all) contract FlowCreditMarket {
         /// do in fact relate to the same token Type.
         /// amount is expressed in UFix128 for the same rationale as deposits; public withdraw APIs are UFix64 and are
         /// converted at the boundary.
-        access(all) fun recordWithdrawal(amount: UFix128, tokenState: &TokenState) {
+        access(all) fun recordWithdrawal(amount: UFix128, tokenState: auth(EImplementation) &TokenState) {
             if self.direction == BalanceDirection.Debit {
                 // Withdrawing from a debit position just increases the debt amount.
 
@@ -332,40 +333,40 @@ access(all) contract FlowCreditMarket {
     /// The TokenState struct tracks values related to a single token Type within the Pool.
     access(all) struct TokenState {
         /// The timestamp at which the TokenState was last updated
-        access(all) var lastUpdate: UFix64
+        access(EImplementation) var lastUpdate: UFix64
         /// The total credit balance of the related Token across the whole Pool in which this TokenState resides
-        access(all) var totalCreditBalance: UFix128
+        access(EImplementation) var totalCreditBalance: UFix128
         /// The total debit balance of the related Token across the whole Pool in which this TokenState resides
-        access(all) var totalDebitBalance: UFix128
+        access(EImplementation) var totalDebitBalance: UFix128
         /// The index of the credit interest for the related token. Interest indices are 18-decimal fixed-point values
         /// (see FlowCreditMarketMath) and are stored as UFix128 to maintain precision when converting between scaled and true
         /// balances and when compounding.
-        access(all) var creditInterestIndex: UFix128
+        access(EImplementation) var creditInterestIndex: UFix128
         /// The index of the debit interest for the related token. Same rationale as creditInterestIndex: UFix128 keeps
         /// the internal interest math and conversions precise and consistent.
-        access(all) var debitInterestIndex: UFix128
+        access(EImplementation) var debitInterestIndex: UFix128
         /// The interest rate for credit of the associated token, stored as UFix128 to match index precision and avoid
         /// cumulative rounding during compounding.
-        access(all) var currentCreditRate: UFix128
+        access(EImplementation) var currentCreditRate: UFix128
         /// The interest rate for debit of the associated token. Also UFix128 for consistency with indices/rates math.
-        access(all) var currentDebitRate: UFix128
+        access(EImplementation) var currentDebitRate: UFix128
         /// The interest curve implementation used to calculate interest rate
-        access(all) var interestCurve: {InterestCurve}
+        access(EImplementation) var interestCurve: {InterestCurve}
         /// The insurance rate applied to total credit when computing credit interest (default 0.1%)
-        access(all) var insuranceRate: UFix64
+        access(EImplementation) var insuranceRate: UFix64
         /// Per-deposit limit fraction of capacity (default 0.05 i.e., 5%)
-        access(all) var depositLimitFraction: UFix64
+        access(EImplementation) var depositLimitFraction: UFix64
         /// The rate at which depositCapacity can increase over time. This is per hour. and should be applied to the depositCapacityCap once an hour.
-        access(all) var depositRate: UFix64
+        access(EImplementation) var depositRate: UFix64
         /// The timestamp of the last deposit capacity update
-        access(all) var lastDepositCapacityUpdate: UFix64
+        access(EImplementation) var lastDepositCapacityUpdate: UFix64
         /// The limit on deposits of the related token
-        access(all) var depositCapacity: UFix64
+        access(EImplementation) var depositCapacity: UFix64
         /// The upper bound on total deposits of the related token, limiting how much depositCapacity can reach
-        access(all) var depositCapacityCap: UFix64
+        access(EImplementation) var depositCapacityCap: UFix64
         /// Tracks per-user deposit usage for enforcing user deposit limits
         /// Maps position ID -> usage amount (how much of each user's limit has been consumed for this token type)
-        access(all) var depositUsage: {UInt64: UFix64}
+        access(EImplementation) var depositUsage: {UInt64: UFix64}
 
         init(interestCurve: {InterestCurve}, depositRate: UFix64, depositCapacityCap: UFix64) {
             self.lastUpdate = getCurrentBlock().timestamp
@@ -409,7 +410,7 @@ access(all) contract FlowCreditMarket {
         }
 
         /// Calculates the per-user deposit limit cap based on depositLimitFraction * depositCapacityCap
-        access(all) fun getUserDepositLimitCap(): UFix64 {
+        access(EImplementation) fun getUserDepositLimitCap(): UFix64 {
             return self.depositLimitFraction * self.depositCapacityCap
         }
 
@@ -436,11 +437,11 @@ access(all) contract FlowCreditMarket {
         }
 
         // Explicit UFix128 balance update helpers used by core accounting
-        access(all) fun increaseCreditBalance(by amount: UFix128) {
+        access(EImplementation) fun increaseCreditBalance(by amount: UFix128) {
             self.totalCreditBalance = self.totalCreditBalance + amount
         }
 
-        access(all) fun decreaseCreditBalance(by amount: UFix128) {
+        access(EImplementation) fun decreaseCreditBalance(by amount: UFix128) {
             if amount >= self.totalCreditBalance {
                 self.totalCreditBalance = 0.0 as UFix128
             } else {
@@ -448,11 +449,11 @@ access(all) contract FlowCreditMarket {
             }
         }
 
-        access(all) fun increaseDebitBalance(by amount: UFix128) {
+        access(EImplementation) fun increaseDebitBalance(by amount: UFix128) {
             self.totalDebitBalance = self.totalDebitBalance + amount
         }
 
-        access(all) fun decreaseDebitBalance(by amount: UFix128) {
+        access(EImplementation) fun decreaseDebitBalance(by amount: UFix128) {
             if amount >= self.totalDebitBalance {
                 self.totalDebitBalance = 0.0 as UFix128
             } else {
@@ -461,7 +462,7 @@ access(all) contract FlowCreditMarket {
         }
 
         /// Updates the totalCreditBalance by the provided amount
-        access(all) fun updateCreditBalance(amount: Int256) {
+        access(EImplementation) fun updateCreditBalance(amount: Int256) {
             // temporary cast the credit balance to a signed value so we can add/subtract
             let adjustedBalance = Int256(self.totalCreditBalance) + amount
             // Do not silently clamp: underflow indicates a serious accounting error
@@ -469,7 +470,7 @@ access(all) contract FlowCreditMarket {
             self.totalCreditBalance = UFix128(adjustedBalance)
         }
 
-        access(all) fun updateDebitBalance(amount: Int256) {
+        access(EImplementation) fun updateDebitBalance(amount: Int256) {
             // temporary cast the debit balance to a signed value so we can add/subtract
             let adjustedBalance = Int256(self.totalDebitBalance) + amount
             // Do not silently clamp: underflow indicates a serious accounting error
@@ -478,7 +479,7 @@ access(all) contract FlowCreditMarket {
         }
 
         // Enhanced updateInterestIndices with deposit capacity update
-        access(all) fun updateInterestIndices() {
+        access(EImplementation) fun updateInterestIndices() {
             let currentTime: UFix64 = getCurrentBlock().timestamp
             let dt: UFix64 = currentTime - self.lastUpdate
 
@@ -506,20 +507,22 @@ access(all) contract FlowCreditMarket {
         /// Regenerates deposit capacity over time based on depositRate
         /// Note: dt should be calculated before updateInterestIndices() updates lastUpdate
         /// When capacity regenerates, all user deposit usage is reset for this token type
-        access(all) fun regenerateDepositCapacity() {
+        access(EImplementation) fun regenerateDepositCapacity() {
             let currentTime = getCurrentBlock().timestamp
             let dt = currentTime - self.lastDepositCapacityUpdate
             let hourInSeconds: UFix64 = 3600.0
-            if dt > hourInSeconds { // 1 hour
+            if dt >= hourInSeconds { // 1 hour
                 let multiplier = dt / hourInSeconds
                 let oldCap = self.depositCapacityCap
-                let newDepositCapacity = self.depositRate * multiplier + self.depositCapacityCap
+                let newDepositCapacityCap = self.depositRate * multiplier + self.depositCapacityCap
 
-                self.depositCapacityCap = newDepositCapacity
-                self.setDepositCapacity(newDepositCapacity)
+                self.depositCapacityCap = newDepositCapacityCap
+
+                // Set the deposit capacity to the new deposit capacity cap, i.e. regenerate the capacity
+                self.setDepositCapacity(newDepositCapacityCap)
                 
                 // If capacity cap increased (regenerated), reset all user usage for this token type
-                if newDepositCapacity > oldCap {
+                if newDepositCapacityCap > oldCap {
                     self.depositUsage = {}
                 }
                 
@@ -533,17 +536,17 @@ access(all) contract FlowCreditMarket {
         // Excess is queued and drained in chunks (see asyncUpdatePosition),
         // enabling fair throughput across many deposits in a block. The 5%
         // fraction is conservative and can be tuned by protocol parameters.
-        access(all) fun depositLimit(): UFix64 {
+        access(EImplementation) fun depositLimit(): UFix64 {
             return self.depositCapacity * self.depositLimitFraction
         }
 
 
-        access(all) fun updateForTimeChange() {
+        access(EImplementation) fun updateForTimeChange() {
             self.updateInterestIndices()
             self.regenerateDepositCapacity()
         }
 
-        access(all) fun updateInterestRates() {
+        access(EImplementation) fun updateInterestRates() {
             // If there's no credit balance, we can't calculate a meaningful credit rate
             // so we'll just set both rates to one (no interest) and return early
             if self.totalCreditBalance == 0.0 as UFix128 {
@@ -2018,7 +2021,7 @@ access(all) contract FlowCreditMarket {
             // Per-user deposit limit: check if user has exceeded their per-user limit
             let userDepositLimitCap = tokenState.getUserDepositLimitCap()
             var currentUsage: UFix64 = 0.0
-            if let usage = tokenState.depositUsage {
+            if let usage = tokenState.depositUsage[pid] {
                 currentUsage = usage
             }
             let remainingUserLimit = userDepositLimitCap - currentUsage
