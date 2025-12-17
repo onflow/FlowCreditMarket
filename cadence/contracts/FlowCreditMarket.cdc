@@ -2916,20 +2916,14 @@ access(all) contract FlowCreditMarket {
     /// scaledBalance + accrued interest and the scaled balance is the amount a borrower has actually interacted with
     /// (via deposits or withdrawals)
     access(all) view fun scaledBalanceToTrueBalance(_ scaled: UFix128, interestIndex: UFix128): UFix128 {
-        // The interest index is a fixed point number with 18 decimal places. To maintain precision,
-        // we multiply the scaled balance by the interest index and then divide by 10^18 to get the
-        // true balance with proper decimal alignment.
-        return (scaled * interestIndex) / 1.0
+        return scaled * interestIndex
     }
 
     /// Transforms the provided `trueBalance` to a scaled balance where the scaled balance is the amount a borrower has
     /// actually interacted with (via deposits or withdrawals) and the true balance is the amount with respect to
     /// accrued interest
     access(all) view fun trueBalanceToScaledBalance(_ trueBalance: UFix128, interestIndex: UFix128): UFix128 {
-        // The interest index is a fixed point number with 18 decimal places. To maintain precision,
-        // we multiply the true balance by 10^18 and then divide by the interest index to get the
-        // scaled balance with proper decimal alignment.
-        return (trueBalance * 1.0) / interestIndex
+        return trueBalance / interestIndex
     }
 
     /* --- INTERNAL METHODS --- */
