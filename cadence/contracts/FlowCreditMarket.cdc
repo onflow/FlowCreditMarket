@@ -516,8 +516,11 @@ access(all) contract FlowCreditMarket {
     
 
     /// Risk parameters for a token used in effective collateral/debt computations.
-    /// - collateralFactor: fraction applied to credit value to derive effective collateral
-    /// - borrowFactor: fraction dividing debt value to derive effective debt
+    /// The collateral and borrow factors are fractional values which represent a discount to the "true/market" value of the token.
+    /// The size of this discount indicates a subjective assessment of risk for the token.
+    /// The difference between the effective value and "true" value represents the safety buffer available to prevent loss.
+    /// - collateralFactor: the factor used to derive effective collateral
+    /// - borrowFactor: the factor used to derive effective debt
     /// - liquidationBonus: premium applied to liquidations to incentivize repayors
     access(all) struct RiskParams {
         access(all) let collateralFactor: UFix128
@@ -525,6 +528,10 @@ access(all) contract FlowCreditMarket {
         access(all) let liquidationBonus: UFix128  // bonus expressed as fractional rate, e.g. 0.05 for 5%
 
         init(cf: UFix128, bf: UFix128, lb: UFix128) {
+            pre {
+                cf <= FlowCreditMarketMath.one: "collateral factor must be <=1"
+                bf <= FlowCreditMarketMath.one: "borrow factor must be <=1"
+            }
             self.collateralFactor = cf
             self.borrowFactor = bf
             self.liquidationBonus = lb
@@ -701,6 +708,7 @@ access(all) contract FlowCreditMarket {
         /// to detect when the interest indices need to be updated in InternalPositions.
         access(EImplementation) var version: UInt64
         /// Liquidation target health and controls (global)
+        /// TODO(jord): This is the desired health factor following liquidation?
         access(self) var liquidationTargetHF: UFix128   // e24 fixed-point, e.g., 1.05e24
         access(self) var liquidationsPaused: Bool
         access(self) var liquidationWarmupSec: UInt64
@@ -882,8 +890,8 @@ access(all) contract FlowCreditMarket {
                     let trueBalance = FlowCreditMarket.scaledBalanceToTrueBalance(balance.scaledBalance,
                         interestIndex: tokenState.creditInterestIndex)
 
-                let value = price * trueBalance
-                let effectiveCollateralValue = value * collateralFactor
+                    let value = price * trueBalance
+                    let effectiveCollateralValue = value * collateralFactor
                     effectiveCollateral = effectiveCollateral + effectiveCollateralValue
                 } else {
                     let trueBalance = FlowCreditMarket.scaledBalanceToTrueBalance(balance.scaledBalance,
@@ -958,10 +966,10 @@ access(all) contract FlowCreditMarket {
             let debtState = self._borrowUpdatedTokenState(type: debtType)
             let seizeState = self._borrowUpdatedTokenState(type: seizeType)
             // Resolve per-token liquidation bonus (default 5%) for debtType
+            // TODO(jord): should this be a config?
             var lbDebtUFix: UFix64 = 0.05
-            let lbDebtOpt = self.liquidationBonus[debtType]
-            if lbDebtOpt != nil {
-                lbDebtUFix = lbDebtOpt!
+            if let lbDebtOpt = self.liquidationBonus[debtType] {
+                lbDebtUFix = lbDebtOpt
             }
             let debtSnap = FlowCreditMarket.TokenSnapshot(
                 price: FlowCreditMarketMath.toUFix128(self.priceOracle.price(ofToken: debtType)!),
@@ -1036,6 +1044,11 @@ access(all) contract FlowCreditMarket {
             }
             let requiredEffColl = effDebt * target
             if effColl >= requiredEffColl {
+                // TODO(jord): I think this is an unexpected path?
+                //  - liquidationTargetHF must be >1, otherwise we would liquidate positions into still-unhealthy states
+                //  - we check that health<1 at the top of this function
+                //  - effColl >= requiredEffColl iff heath>=1
+                //  - therefore this branch should never execute
                 return FlowCreditMarket.LiquidationQuote(requiredRepay: 0.0, seizeType: seizeType, seizeAmount: 0.0, newHF: health)
             }
             let deltaEffColl = requiredEffColl - effColl
@@ -1044,8 +1057,22 @@ access(all) contract FlowCreditMarket {
             // effDebtNew = effDebt - (repayTrue * debtSnap.price / debtSnap.risk.borrowFactor)
             // target = effColl / effDebtNew  => effDebtNew = effColl / target
             // So reductionNeeded = effDebt - effColl/target
+            //
+            // TODO(jord):
+            // This equation doesn't make sense to me:
+            //     target = effColl / effDebtNew
+            //
+            //  - we are trying to determine what final effective debt amount is necessary to bring health factor to target
+            //  - the equation is using effColl, which is the effective collateral BEFORE the liquidation occurs
+            //    alongside effDebtNew, which is the effective debt AFTER the liquidation occurs
+            //  - however, the liquidation involves two things:
+            //    - liquidator provides MOET
+            //    - liquidator seizes collateral
+            //  - this implies that effColl will decrease during the liquidation
+            //  - therefore the equation does not represent a health factor at a specific point in time?
             let effDebtNew = FlowCreditMarketMath.div(effColl, target)
             if effDebt <= effDebtNew {
+                // TODO(jord): I think passing in target as newHF here is wrong (although probably not dangerous)
                 return FlowCreditMarket.LiquidationQuote(requiredRepay: 0.0, seizeType: seizeType, seizeAmount: 0.0, newHF: target)
             }
             // Use simultaneous solve below; the approximate path is omitted
