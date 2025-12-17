@@ -535,14 +535,14 @@ fun runFundsRequiredForTargetHealthAfterWithdrawing(
     // effectiveCollateralValue = collateralBalance * collateralPrice * collateralFactor
     let effectiveFLOWCollateralValue = (intFLOWCollateral * intFLOWPrice) * intFLOWCollateralFactor
     // borrowLimit = (effectiveCollateralValue / targetHealth) * borrowFactor
-    let expectedBorrowCapacity = FlowCreditMarketMath.div(effectiveFLOWCollateralValue, intTargetHealth) * intFLOWBorrowFactor
+    let expectedBorrowCapacity = (effectiveFLOWCollateralValue / intTargetHealth) * intFLOWBorrowFactor
     let desiredFinalDebt = intFLOWBorrowed + intWithdrawAmount
 
     var expectedRequired: UFix128 = 0.0
     if desiredFinalDebt > expectedBorrowCapacity {
         let valueDiff = desiredFinalDebt - expectedBorrowCapacity
-        expectedRequired = FlowCreditMarketMath.div(valueDiff * intTargetHealth, intFLOWPrice)
-        expectedRequired = FlowCreditMarketMath.div(expectedRequired, intFLOWCollateralFactor)
+        expectedRequired = (valueDiff * intTargetHealth) / intFLOWPrice
+        expectedRequired = expectedRequired / intFLOWCollateralFactor
     }
     let ufixExpectedRequired = FlowCreditMarketMath.toUFix64Round(expectedRequired)
 
