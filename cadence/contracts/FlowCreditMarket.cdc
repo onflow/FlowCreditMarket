@@ -490,7 +490,7 @@ access(all) contract FlowCreditMarket {
             // Calculate credit rate, ensuring we don't have underflows
             var creditRate: UFix128 = 0.0
             if debitIncome >= insuranceAmount {
-                creditRate = ((debitIncome - insuranceAmount) / self.totalCreditBalance)
+                creditRate = (debitIncome - insuranceAmount) / self.totalCreditBalance
             } else {
                 // If debit income doesn't cover insurance, credit interest would be negative.
                 // Since negative rates aren't represented here, we pay 0% to depositors.
