@@ -1,7 +1,6 @@
 import "FlowCreditMarket"
 
-access(all) fun main(): Bool {
+access(all) fun main() {
     // Should panic: rate > 100%
-    let curve = FlowCreditMarket.FixedRateInterestCurve(yearlyRate: 1.5)
-    return true
+    FlowCreditMarket.FixedRateInterestCurve(yearlyRate: 1.5)
 }
