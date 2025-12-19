@@ -4,6 +4,8 @@ import "FlowCreditMarketRegistry"
 /// INTENDED FOR BETA PURPOSES ONLY
 ///
 /// This transaction will backfill the provided positions into the Registry
+///
+/// @param pids: The IDs of the positions to backfill - registration fails if the PID doesn't exist in the canonical pool
 transaction(pids: [UInt64]) {
 
     let pool: &FlowCreditMarket.Pool
