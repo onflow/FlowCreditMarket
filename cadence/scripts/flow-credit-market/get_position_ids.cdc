@@ -1,11 +1,11 @@
 import "FlowCreditMarket"
 
-/// Returns the next position ID for a given pool
+/// Returns all Position IDs in the canonical Pool
 ///
 access(all)
-fun main(): UInt64 {
+fun main(): [UInt64] {
     let pool = getAuthAccount<auth(BorrowValue) &Account>(Type<@FlowCreditMarket.Pool>().address!).storage.borrow<&FlowCreditMarket.Pool>(
             from:FlowCreditMarket.PoolStoragePath
         ) ?? panic("Could not borrow reference to Pool from \(FlowCreditMarket.PoolStoragePath) - ensure a Pool has been configured")
-    return pool.nextPositionID
+    return pool.getPositionIDs()
 }

@@ -67,6 +67,13 @@ access(all) contract FlowCreditMarketRegistry {
             return self.rebalanceConfigs[pid] ?? self.defaultRebalanceRecurringConfig
         }
 
+        /// Returns the IDs of the positions that have a custom rebalance configuration
+        ///
+        /// @return [UInt64]: The IDs of the positions that have a custom rebalance configuration
+        access(all) view fun getIDsWithCustomConfig(): [UInt64] {
+            return self.rebalanceConfigs.keys
+        }
+
         /// Registers a position in the registry associated with the identified pool and position ID
         ///
         /// @param poolUUID: The UUID of the pool
