@@ -30,15 +30,15 @@ fun setup() {
 access(all)
 fun test_FixedRateInterestCurve_uses_spread_model() {
     // For FixedRateInterestCurve, credit rate = debit rate - insurance rate (simple spread)
-    let debitRate: UFix128 = 0.10 as UFix128  // 10% yearly
+    let debitRate: UFix128 = 0.10  // 10% yearly
     var tokenState = FlowCreditMarket.TokenState(
         interestCurve: FlowCreditMarket.FixedRateInterestCurve(yearlyRate: debitRate),
         depositRate: 1.0,
         depositCapacityCap: 1_000.0
     )
     // Balance changes automatically trigger updateInterestRates() via updateForUtilizationChange()
-    tokenState.increaseCreditBalance(by: 1000.0 as UFix128)
-    tokenState.increaseDebitBalance(by: 500.0 as UFix128)  // 50% utilization
+    tokenState.increaseCreditBalance(by: 1000.0)
+    tokenState.increaseDebitBalance(by: 500.0)  // 50% utilization
 
     // Debit rate should match the fixed yearly rate
     let expectedDebitRate = FlowCreditMarket.perSecondInterestRate(yearlyRate: debitRate)
@@ -54,21 +54,21 @@ fun test_FixedRateInterestCurve_uses_spread_model() {
 access(all)
 fun test_FixedRateInterestCurve_zero_credit_rate_when_insurance_exceeds_debit() {
     // When insuranceRate >= debitRate, credit rate should be 0
-    let debitRate: UFix128 = 0.001 as UFix128  // 0.1% yearly (same as default insurance)
+    let debitRate: UFix128 = 0.001  // 0.1% yearly (same as default insurance)
     var tokenState = FlowCreditMarket.TokenState(
         interestCurve: FlowCreditMarket.FixedRateInterestCurve(yearlyRate: debitRate),
         depositRate: 1.0,
         depositCapacityCap: 1_000.0
     )
     // Balance changes automatically trigger rate updates via updateForUtilizationChange()
-    tokenState.increaseCreditBalance(by: 100.0 as UFix128)
-    tokenState.increaseDebitBalance(by: 50.0 as UFix128)
+    tokenState.increaseCreditBalance(by: 100.0)
+    tokenState.increaseDebitBalance(by: 50.0)
 
     // Debit rate still follows the curve
     let expectedDebitRate = FlowCreditMarket.perSecondInterestRate(yearlyRate: debitRate)
     Test.assertEqual(expectedDebitRate, tokenState.currentDebitRate)
 
-    // Credit rate should be 0 (insurance >= debit rate)
+    // Credit rate should be `one` (multiplicative identity = 0% growth) since insurance >= debit rate
     Test.assertEqual(FlowCreditMarketMath.one, tokenState.currentCreditRate)
 }
 
@@ -79,15 +79,15 @@ fun test_FixedRateInterestCurve_zero_credit_rate_when_insurance_exceeds_debit() 
 access(all)
 fun test_KinkCurve_uses_reserve_factor_model() {
     // For non-FixedRate curves, insurance is a percentage of debit income
-    let debitRate: UFix128 = 0.20 as UFix128  // 20% yearly
+    let debitRate: UFix128 = 0.20  // 20% yearly
     var tokenState = FlowCreditMarket.TokenState(
         interestCurve: CustomFixedCurve(debitRate),  // Custom curve triggers reserve factor path
         depositRate: 1.0,
         depositCapacityCap: 1_000.0
     )
     // Balance changes automatically trigger rate updates via updateForUtilizationChange()
-    tokenState.increaseCreditBalance(by: 200.0 as UFix128)
-    tokenState.increaseDebitBalance(by: 50.0 as UFix128)  // 25% utilization
+    tokenState.increaseCreditBalance(by: 200.0)
+    tokenState.increaseDebitBalance(by: 50.0)  // 25% utilization
 
     // Debit rate should match the curve rate
     let expectedDebitRate = FlowCreditMarket.perSecondInterestRate(yearlyRate: debitRate)
@@ -105,20 +105,20 @@ fun test_KinkCurve_uses_reserve_factor_model() {
 access(all)
 fun test_KinkCurve_zero_credit_rate_when_no_borrowing() {
     // When there's no debit balance, credit rate should be 0 (no income to distribute)
-    let debitRate: UFix128 = 0.10 as UFix128
+    let debitRate: UFix128 = 0.10
     var tokenState = FlowCreditMarket.TokenState(
         interestCurve: CustomFixedCurve(debitRate),
         depositRate: 1.0,
         depositCapacityCap: 1_000.0
     )
     // Balance changes automatically trigger rate updates via updateForUtilizationChange()
-    tokenState.increaseCreditBalance(by: 100.0 as UFix128)
+    tokenState.increaseCreditBalance(by: 100.0)
     // No debit balance - zero utilization
 
     // Debit rate still follows the curve
     let expectedDebitRate = FlowCreditMarket.perSecondInterestRate(yearlyRate: debitRate)
     Test.assertEqual(expectedDebitRate, tokenState.currentDebitRate)
 
-    // Credit rate should be 0 (no income to distribute)
+    // Credit rate should be `one` (multiplicative identity = 0% growth) since no debit income to distribute
     Test.assertEqual(FlowCreditMarketMath.one, tokenState.currentCreditRate)
 }

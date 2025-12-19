@@ -22,11 +22,11 @@ transaction(
         self.position = signer.storage.borrow<&MockFlowCreditMarketConsumer.PositionWrapper>(
                 from: MockFlowCreditMarketConsumer.WrapperStoragePath
             )?.borrowPositionForWithdraw()
-            ?? panic("Could not find a WrappedPosition in signer's storage at ".concat(MockFlowCreditMarketConsumer.WrapperStoragePath.toString()))
+            ?? panic("Could not find a WrappedPosition in signer's storage at \(MockFlowCreditMarketConsumer.WrapperStoragePath.toString())")
 
         // Parse the token type
         self.tokenType = CompositeType(tokenTypeIdentifier)
-            ?? panic("Invalid tokenTypeIdentifier: ".concat(tokenTypeIdentifier))
+            ?? panic("Invalid tokenTypeIdentifier: \(tokenTypeIdentifier)")
 
         // Ensure signer has a FlowToken vault to receive borrowed tokens
         // (Most borrows in tests are FlowToken)
@@ -42,7 +42,7 @@ transaction(
         } else {
             // For other tokens, try to find a matching vault
             // This is a simplified approach for testing
-            panic("Unsupported token type for borrow: ".concat(tokenTypeIdentifier))
+            panic("Unsupported token type for borrow: \(tokenTypeIdentifier)")
         }
     }
 

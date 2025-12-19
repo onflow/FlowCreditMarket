@@ -8,16 +8,16 @@ access(all) let defaultUFixVariance = 0.00000001
 // Variance for UFix64 comparisons
 access(all) let defaultUIntVariance: UInt128 = 1_000_000_000_000_000
 // Variance for UFix128 comparisons
-access(all) let defaultUFix128Variance: UFix128 = 0.00000001 as UFix128
+access(all) let defaultUFix128Variance: UFix128 = 0.00000001
 
 // Health values
 access(all) let minHealth = 1.1
 access(all) let targetHealth = 1.3
 access(all) let maxHealth = 1.5
 // UFix128 equivalents (kept same variable names for minimal test churn)
-access(all) var intMinHealth: UFix128 = 1.1 as UFix128
-access(all) var intTargetHealth: UFix128 = 1.3 as UFix128
-access(all) var intMaxHealth: UFix128 = 1.5 as UFix128
+access(all) var intMinHealth: UFix128 = 1.1
+access(all) var intTargetHealth: UFix128 = 1.3
+access(all) var intMaxHealth: UFix128 = 1.5
 access(all) let ceilingHealth: UFix128 = UFix128.max      // infinite health when debt ~ 0.0
 
 /* --- Test execution helpers --- */
@@ -453,4 +453,33 @@ access(all) fun ufixEqualWithinVariance(_ expected: UFix64, _ actual: UFix64): B
 access(all) fun ufix128EqualWithinVariance(_ expected: UFix128, _ actual: UFix128): Bool {
     let absDiff: UFix128 = expected >= actual ? expected - actual : actual - expected
     return absDiff <= defaultUFix128Variance
+}
+
+/* --- Balance & Timestamp Helpers --- */
+
+access(all)
+fun getBlockTimestamp(): UFix64 {
+    let res = _executeScript("../scripts/flow-credit-market/get_block_timestamp.cdc", [])
+    Test.expect(res, Test.beSucceeded())
+    return res.returnValue as! UFix64
+}
+
+access(all)
+fun getDebitBalanceForType(details: FlowCreditMarket.PositionDetails, vaultType: Type): UFix64 {
+    for balance in details.balances {
+        if balance.vaultType == vaultType && balance.direction == FlowCreditMarket.BalanceDirection.Debit {
+            return balance.balance
+        }
+    }
+    return 0.0
+}
+
+access(all)
+fun getCreditBalanceForType(details: FlowCreditMarket.PositionDetails, vaultType: Type): UFix64 {
+    for balance in details.balances {
+        if balance.vaultType == vaultType && balance.direction == FlowCreditMarket.BalanceDirection.Credit {
+            return balance.balance
+        }
+    }
+    return 0.0
 }

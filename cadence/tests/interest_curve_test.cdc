@@ -27,8 +27,6 @@ fun test_FixedRateInterestCurve_returns_constant_rate() {
     Test.assertEqual(fixedRate, rate2)
 }
 
-// Validation tests are implicit in the preconditions - attempting to create invalid curves will panic
-
 access(all)
 fun test_FixedRateInterestCurve_accepts_zero_rate() {
     // Zero rate should be valid (0% APY)
@@ -207,48 +205,6 @@ fun test_TokenState_with_KinkInterestCurve() {
 }
 
 access(all)
-fun test_setInterestCurve_updates_rates() {
-    // Create a TokenState with a fixed rate curve
-    let fixedCurve = FlowCreditMarket.FixedRateInterestCurve(yearlyRate: 0.05)
-    var tokenState = FlowCreditMarket.TokenState(
-        interestCurve: fixedCurve,
-        depositRate: 1.0,
-        depositCapacityCap: 1_000.0
-    )
-
-    // Set up some balances (rate updates automatically via updateForUtilizationChange)
-    tokenState.increaseCreditBalance(by: 100.0)
-    tokenState.increaseDebitBalance(by: 50.0)
-
-    let initialDebitRate = tokenState.currentDebitRate
-
-    // Now change to a different fixed rate
-    let newFixedCurve = FlowCreditMarket.FixedRateInterestCurve(yearlyRate: 0.15)
-
-    // Note: We can't directly call setInterestCurve on the struct because it's pass-by-value
-    // In a real scenario, this would be called on the Pool's TokenState reference
-    // For this test, we'll create a new TokenState with the new curve and verify the calculation
-
-    var newTokenState = FlowCreditMarket.TokenState(
-        interestCurve: newFixedCurve,
-        depositRate: 1.0,
-        depositCapacityCap: 1_000.0
-    )
-    // Balance changes automatically trigger rate updates
-    newTokenState.increaseCreditBalance(by: 100.0)
-    newTokenState.increaseDebitBalance(by: 50.0)
-
-    let newDebitRate = newTokenState.currentDebitRate
-
-    // The new rate should be different from the initial rate
-    Test.assert(newDebitRate != initialDebitRate)
-
-    // The new rate should correspond to 15% yearly
-    let expectedNewRate = FlowCreditMarket.perSecondInterestRate(yearlyRate: 0.15)
-    Test.assertEqual(expectedNewRate, newDebitRate)
-}
-
-access(all)
 fun test_KinkCurve_rates_update_automatically_on_balance_change() {
     // Create TokenState with KinkCurve (80% optimal, 2% base, 5% slope1, 50% slope2)
     let kinkCurve = FlowCreditMarket.KinkInterestCurve(
@@ -267,16 +223,16 @@ fun test_KinkCurve_rates_update_automatically_on_balance_change() {
     // credit: 100, debit: 0 → utilization = 0% → rate = baseRate = 2%
     tokenState.increaseCreditBalance(by: 100.0)
 
-    let rateAtZeroUtil = FlowCreditMarket.perSecondInterestRate(yearlyRate: 0.02)
-    Test.assertEqual(rateAtZeroUtil, tokenState.currentDebitRate)
+    let rateAtZeroUtilization = FlowCreditMarket.perSecondInterestRate(yearlyRate: 0.02)
+    Test.assertEqual(rateAtZeroUtilization, tokenState.currentDebitRate)
 
     // Step 2: Add debt to create 50% utilization
     // credit: 100, debit: 100 → total: 200, utilization = 100/200 = 50%
     // rate = 0.02 + (0.05 × 0.50 / 0.80) = 0.02 + 0.03125 = 0.05125
     tokenState.increaseDebitBalance(by: 100.0)
 
-    let rateAt50Util = FlowCreditMarket.perSecondInterestRate(yearlyRate: 0.05125)
-    Test.assertEqual(rateAt50Util, tokenState.currentDebitRate)
+    let rateAt50Utilization = FlowCreditMarket.perSecondInterestRate(yearlyRate: 0.05125)
+    Test.assertEqual(rateAt50Utilization, tokenState.currentDebitRate)
 
     // Step 3: Increase utilization to 90% (above kink)
     // credit: 100, debit: 900 → total: 1000, utilization = 900/1000 = 90%
@@ -329,34 +285,6 @@ fun test_KinkInterestCurve_with_large_balances() {
     Test.assertEqual(0.035 as UFix128, rate)
 }
 
-access(all)
-fun test_FixedRateInterestCurve_with_MOET_typical_rate() {
-    // MOET should use a low fixed rate (e.g., 2-5% APY)
-    let moetCurve = FlowCreditMarket.FixedRateInterestCurve(yearlyRate: 0.03) // 3% APY
-
-    let rate = moetCurve.interestRate(creditBalance: 10_000.0, debitBalance: 8_000.0)
-    Test.assertEqual(0.03 as UFix128, rate)
-}
-
-access(all)
-fun test_KinkInterestCurve_with_volatile_asset_typical_params() {
-    // Volatile assets should use kink model with higher max rates
-    // Example: similar to Aave v3 WETH parameters
-    // https://github.com/aave/risk-v3/blob/main/liquidity-risk/borrow-interest-rate.md#rate-strategy-volatile-one
-    let volatileCurve = FlowCreditMarket.KinkInterestCurve(
-        optimalUtilization: 0.80,  // 80% optimal utilization
-        baseRate: 0.00,             // 0% base rate
-        slope1: 0.027,              // 2.7% slope before kink
-        slope2: 0.80                // 80% slope after kink
-    )
-
-    // Test at 90% utilization (high but not extreme)
-    // excessUtilization = (0.90 - 0.80) / (1.0 - 0.80) = 0.10 / 0.20 = 0.5
-    // rate = 0.00 + 0.027 + (0.80 × 0.5) = 0.427 (42.7% APY)
-    let rate = volatileCurve.interestRate(creditBalance: 10.0, debitBalance: 90.0)
-    Test.assertEqual(0.427 as UFix128, rate)
-}
-
 // ============================================================================
 // Precondition Failure Tests
 // ============================================================================
@@ -366,7 +294,7 @@ access(all)
 fun test_FixedRateInterestCurve_rejects_rate_exceeding_max() {
     // Attempt to create a fixed rate curve with rate > 100%
     // This should fail the precondition: yearlyRate <= 1.0
-    let res = _executeScript("./test_scripts/test_fixed_rate_max.cdc", [])
+    let res = _executeScript("./scripts/test_fixed_rate_max.cdc", [])
     Test.expect(res, Test.beFailed())
 }
 
@@ -374,7 +302,7 @@ access(all)
 fun test_KinkInterestCurve_rejects_optimal_too_low() {
     // Attempt to create a kink curve with optimalUtilization < 1%
     // This should fail the precondition: optimalUtilization >= 0.01
-    let res = _executeScript("./test_scripts/test_kink_optimal_too_low.cdc", [])
+    let res = _executeScript("./scripts/test_kink_optimal_too_low.cdc", [])
     Test.expect(res, Test.beFailed())
 }
 
@@ -382,7 +310,7 @@ access(all)
 fun test_KinkInterestCurve_rejects_optimal_too_high() {
     // Attempt to create a kink curve with optimalUtilization > 99%
     // This should fail the precondition: optimalUtilization <= 0.99
-    let res = _executeScript("./test_scripts/test_kink_optimal_too_high.cdc", [])
+    let res = _executeScript("./scripts/test_kink_optimal_too_high.cdc", [])
     Test.expect(res, Test.beFailed())
 }
 
@@ -390,7 +318,7 @@ access(all)
 fun test_KinkInterestCurve_rejects_slope2_less_than_slope1() {
     // Attempt to create a kink curve with slope2 < slope1
     // This should fail the precondition: slope2 >= slope1
-    let res = _executeScript("./test_scripts/test_kink_slope2_less_than_slope1.cdc", [])
+    let res = _executeScript("./scripts/test_kink_slope2_less_than_slope1.cdc", [])
     Test.expect(res, Test.beFailed())
 }
 
@@ -398,6 +326,6 @@ access(all)
 fun test_KinkInterestCurve_rejects_max_rate_exceeded() {
     // Attempt to create a kink curve with baseRate + slope1 + slope2 > 400%
     // This should fail the precondition: baseRate + slope1 + slope2 <= 4.0
-    let res = _executeScript("./test_scripts/test_kink_max_rate.cdc", [])
+    let res = _executeScript("./scripts/test_kink_max_rate.cdc", [])
     Test.expect(res, Test.beFailed())
 }

@@ -326,9 +326,6 @@ access(all) contract FlowCreditMarket {
     /// A fixed-rate interest curve implementation that returns a constant yearly interest rate
     /// regardless of utilization. This is suitable for stable assets like MOET where predictable
     /// rates are desired.
-    ///
-    /// Based on Morpho's FixedRateIRM design.
-    ///
     /// @param yearlyRate The fixed yearly interest rate as a UFix128 (e.g., 0.05 for 5% APY)
     access(all) struct FixedRateInterestCurve: InterestCurve {
 
@@ -336,7 +333,7 @@ access(all) contract FlowCreditMarket {
 
         init(yearlyRate: UFix128) {
             pre {
-                yearlyRate <= 1.0: "Yearly rate cannot exceed 100% (max safe rate for fixed curve)"
+                yearlyRate <= 1.0: "Yearly rate cannot exceed 100%, got \(yearlyRate)"
             }
             self.yearlyRate = yearlyRate
         }
@@ -348,8 +345,7 @@ access(all) contract FlowCreditMarket {
 
     /// KinkInterestCurve
     ///
-    /// A kink-based interest rate curve implementation modeled after Aave v3's
-    /// DefaultReserveInterestRateStrategyV2. The curve has two linear segments:
+    /// A kink-based interest rate curve implementation. The curve has two linear segments:
     /// - Before the optimal utilization ratio (the "kink"): a gentle slope
     /// - After the optimal utilization ratio: a steep slope to discourage over-utilization
     ///
@@ -380,10 +376,10 @@ access(all) contract FlowCreditMarket {
 
         init(optimalUtilization: UFix128, baseRate: UFix128, slope1: UFix128, slope2: UFix128) {
             pre {
-                optimalUtilization >= 0.01: "Optimal utilization must be at least 1%"
-                optimalUtilization <= 0.99: "Optimal utilization must be at most 99%"
-                slope2 >= slope1: "Slope2 must be greater than or equal to slope1"
-                baseRate + slope1 + slope2 <= 4.0: "Maximum rate cannot exceed 400%"
+                optimalUtilization >= 0.01: "Optimal utilization must be at least 1%, got \(optimalUtilization)"
+                optimalUtilization <= 0.99: "Optimal utilization must be at most 99%, got \(optimalUtilization)"
+                slope2 >= slope1: "Slope2 (\(slope2)) must be >= slope1 (\(slope1))"
+                baseRate + slope1 + slope2 <= 4.0: "Maximum rate cannot exceed 400%, got \(baseRate + slope1 + slope2)"
             }
             self.optimalUtilization = optimalUtilization
             self.baseRate = baseRate
