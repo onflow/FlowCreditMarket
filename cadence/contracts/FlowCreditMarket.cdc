@@ -1830,21 +1830,24 @@ access(all) contract FlowCreditMarket {
             let withdrawAmountU = UFix128(withdrawAmount)
             let withdrawPrice2 = UFix128(self.priceOracle.price(ofToken: withdrawType)!)
             let withdrawBorrowFactor2 = UFix128(self.borrowFactor[withdrawType]!)
+            let balance = position.balances[withdrawType]
+            let direction = balance?.direction ?? BalanceDirection.Debit
+            let scaledBalance = balance?.scaledBalance ?? 0.0
 
-            let maybeBalance = position.balances[withdrawType]
-                if maybeBalance == nil || maybeBalance!.direction == BalanceDirection.Debit {
-                    // If the position doesn't have any collateral for the withdrawn token, we can just compute how much
-                    // additional effective debt the withdrawal will create.
+            switch direction {
+                case BalanceDirection.Debit:
+                    // If the position doesn't have any collateral for the withdrawn token,
+                    // we can just compute how much additional effective debt the withdrawal will create.
                     effectiveDebtAfterWithdrawal = balanceSheet.effectiveDebt +
                         (withdrawAmountU * withdrawPrice2) / withdrawBorrowFactor2
-                } else {
+
+                case BalanceDirection.Credit:
                     let withdrawTokenState = self._borrowUpdatedTokenState(type: withdrawType)
 
                     // The user has a collateral position in the given token, we need to figure out if this withdrawal
                     // will flip over into debt, or just draw down the collateral.
-                    let collateralBalance = maybeBalance!.scaledBalance
                     let trueCollateral = FlowCreditMarket.scaledBalanceToTrueBalance(
-                        collateralBalance,
+                        scaledBalance,
                         interestIndex: withdrawTokenState.creditInterestIndex
                     )
                     let collateralFactor = UFix128(self.collateralFactor[withdrawType]!)
@@ -1860,9 +1863,12 @@ access(all) contract FlowCreditMarket {
                         effectiveCollateralAfterWithdrawal = balanceSheet.effectiveCollateral -
                             (trueCollateral * withdrawPrice2) * collateralFactor
                     }
-                }
+            }
 
-            return BalanceSheet(effectiveCollateral: effectiveCollateralAfterWithdrawal, effectiveDebt: effectiveDebtAfterWithdrawal)
+            return BalanceSheet(
+                effectiveCollateral: effectiveCollateralAfterWithdrawal,
+                effectiveDebt: effectiveDebtAfterWithdrawal
+            )
         }
 
 
@@ -1904,61 +1910,61 @@ access(all) contract FlowCreditMarket {
             let depositPrice = UFix128(self.priceOracle.price(ofToken: depositType)!)
             let depositBorrowFactor = UFix128(self.borrowFactor[depositType]!)
             let withdrawBorrowFactor = UFix128(self.borrowFactor[withdrawType]!)
-            let maybeBalance = position.balances[depositType]
-            if maybeBalance?.direction == BalanceDirection.Debit {
-                // The user has a debt position in the given token, we start by looking at the health impact of paying off
-                // the entire debt.
-                let depositTokenState = self._borrowUpdatedTokenState(type: depositType)
-                let debtBalance = maybeBalance!.scaledBalance
-                let trueDebtTokenCount = FlowCreditMarket.scaledBalanceToTrueBalance(
-                    debtBalance,
-                    interestIndex: depositTokenState.debitInterestIndex
-                )
-                let debtEffectiveValue = (depositPrice * trueDebtTokenCount) / depositBorrowFactor
+            if let balance = position.balances[depositType] {
+                if balance.direction == BalanceDirection.Debit {
+                    // The user has a debt position in the given token,
+                    // we start by looking at the health impact of paying off the entire debt.
+                    let depositTokenState = self._borrowUpdatedTokenState(type: depositType)
+                    let trueDebtTokenCount = FlowCreditMarket.scaledBalanceToTrueBalance(
+                        balance.scaledBalance,
+                        interestIndex: depositTokenState.debitInterestIndex
+                    )
+                    let debtEffectiveValue = (depositPrice * trueDebtTokenCount) / depositBorrowFactor
 
-                // Ensure we don't underflow - if debtEffectiveValue is greater than effectiveDebtAfterWithdrawal,
-                // it means we can pay off all debt
-                var effectiveDebtAfterPayment: UFix128 = 0.0
-                if debtEffectiveValue <= effectiveDebtAfterWithdrawal {
-                    effectiveDebtAfterPayment = effectiveDebtAfterWithdrawal - debtEffectiveValue
-                }
-
-                // Check what the new health would be if we paid off all of this debt
-                let potentialHealth = FlowCreditMarket.healthComputation(
-                    effectiveCollateral: effectiveCollateralAfterWithdrawal,
-                    effectiveDebt: effectiveDebtAfterPayment
-                )
-
-                // Does paying off all of the debt reach the target health? Then we're done.
-                if potentialHealth >= targetHealth {
-                    // We can reach the target health by paying off some or all of the debt. We can easily
-                    // compute how many units of the token would be needed to reach the target health.
-                    let healthChange = targetHealth - healthAfterWithdrawal
-                    let requiredEffectiveDebt = effectiveDebtAfterWithdrawal
-                        - (effectiveCollateralAfterWithdrawal / targetHealth)
-
-                    // The amount of the token to pay back, in units of the token.
-                    let paybackAmount = (requiredEffectiveDebt * depositBorrowFactor) / depositPrice
-
-                    if self.debugLogging {
-                        log("    [CONTRACT] paybackAmount: \(paybackAmount)")
-                    }
-
-                    return FlowCreditMarketMath.toUFix64RoundUp(paybackAmount)
-                } else {
-                    // We can pay off the entire debt, but we still need to deposit more to reach the target health.
-                    // We have logic below that can determine the collateral deposition required to reach the target health
-                    // from this new health position. Rather than copy that logic here, we fall through into it. But first
-                    // we have to record the amount of tokens that went towards debt payback and adjust the effective
-                    // debt to reflect that it has been paid off.
-                    debtTokenCount = trueDebtTokenCount
-                    // Ensure we don't underflow
+                    // Ensure we don't underflow - if debtEffectiveValue is greater than effectiveDebtAfterWithdrawal,
+                    // it means we can pay off all debt
+                    var effectiveDebtAfterPayment: UFix128 = 0.0
                     if debtEffectiveValue <= effectiveDebtAfterWithdrawal {
-                        effectiveDebtAfterWithdrawal = effectiveDebtAfterWithdrawal - debtEffectiveValue
-                    } else {
-                        effectiveDebtAfterWithdrawal = 0.0
+                        effectiveDebtAfterPayment = effectiveDebtAfterWithdrawal - debtEffectiveValue
                     }
-                    healthAfterWithdrawal = potentialHealth
+
+                    // Check what the new health would be if we paid off all of this debt
+                    let potentialHealth = FlowCreditMarket.healthComputation(
+                        effectiveCollateral: effectiveCollateralAfterWithdrawal,
+                        effectiveDebt: effectiveDebtAfterPayment
+                    )
+
+                    // Does paying off all of the debt reach the target health? Then we're done.
+                    if potentialHealth >= targetHealth {
+                        // We can reach the target health by paying off some or all of the debt. We can easily
+                        // compute how many units of the token would be needed to reach the target health.
+                        let healthChange = targetHealth - healthAfterWithdrawal
+                        let requiredEffectiveDebt = effectiveDebtAfterWithdrawal
+                            - (effectiveCollateralAfterWithdrawal / targetHealth)
+
+                        // The amount of the token to pay back, in units of the token.
+                        let paybackAmount = (requiredEffectiveDebt * depositBorrowFactor) / depositPrice
+
+                        if self.debugLogging {
+                            log("    [CONTRACT] paybackAmount: \(paybackAmount)")
+                        }
+
+                        return FlowCreditMarketMath.toUFix64RoundUp(paybackAmount)
+                    } else {
+                        // We can pay off the entire debt, but we still need to deposit more to reach the target health.
+                        // We have logic below that can determine the collateral deposition required to reach the target health
+                        // from this new health position. Rather than copy that logic here, we fall through into it. But first
+                        // we have to record the amount of tokens that went towards debt payback and adjust the effective
+                        // debt to reflect that it has been paid off.
+                        debtTokenCount = trueDebtTokenCount
+                        // Ensure we don't underflow
+                        if debtEffectiveValue <= effectiveDebtAfterWithdrawal {
+                            effectiveDebtAfterWithdrawal = effectiveDebtAfterWithdrawal - debtEffectiveValue
+                        } else {
+                            effectiveDebtAfterWithdrawal = 0.0
+                        }
+                        healthAfterWithdrawal = potentialHealth
+                    }
                 }
             }
 
@@ -2068,19 +2074,24 @@ access(all) contract FlowCreditMarket {
             let depositPriceCasted = UFix128(self.priceOracle.price(ofToken: depositType)!)
             let depositBorrowFactorCasted = UFix128(self.borrowFactor[depositType]!)
             let depositCollateralFactorCasted = UFix128(self.collateralFactor[depositType]!)
-            let maybeBalance = position.balances[depositType]
-                if maybeBalance == nil || maybeBalance!.direction == BalanceDirection.Credit {
-                    // If there's no debt for the deposit token, we can just compute how much additional effective collateral the deposit will create.
+            let balance = position.balances[depositType]
+            let direction = balance?.direction ?? BalanceDirection.Credit
+            let scaledBalance = balance?.scaledBalance ?? 0.0
+
+            switch direction {
+                case BalanceDirection.Credit:
+                    // If there's no debt for the deposit token,
+                    // we can just compute how much additional effective collateral the deposit will create.
                     effectiveCollateralAfterDeposit = balanceSheet.effectiveCollateral +
                         (depositAmountCasted * depositPriceCasted) * depositCollateralFactorCasted
-                } else {
+
+                case BalanceDirection.Debit:
                     let depositTokenState = self._borrowUpdatedTokenState(type: depositType)
 
                     // The user has a debt position in the given token, we need to figure out if this deposit
                     // will result in net collateral, or just bring down the debt.
-                    let debtBalance = maybeBalance!.scaledBalance
                     let trueDebt = FlowCreditMarket.scaledBalanceToTrueBalance(
-                        debtBalance,
+                        scaledBalance,
                         interestIndex: depositTokenState.debitInterestIndex
                     )
                     if self.debugLogging {
@@ -2101,14 +2112,14 @@ access(all) contract FlowCreditMarket {
                         effectiveCollateralAfterDeposit = balanceSheet.effectiveCollateral +
                             (depositAmountCasted - trueDebt) * depositPriceCasted * depositCollateralFactorCasted
                     }
-                }
+            }
 
             if self.debugLogging {
                 log("    [CONTRACT] effectiveCollateralAfterDeposit: \(effectiveCollateralAfterDeposit)")
                 log("    [CONTRACT] effectiveDebtAfterDeposit: \(effectiveDebtAfterDeposit)")
             }
 
-            // We now have new effective collateral and debt values that reflect the proposed deposit (if any!)
+            // We now have new effective collateral and debt values that reflect the proposed deposit (if any!).
             // Now we can figure out how many of the withdrawal token are available while keeping the position
             // at or above the target health value.
             return BalanceSheet(
@@ -2141,70 +2152,70 @@ access(all) contract FlowCreditMarket {
                 return 0.0
             }
 
-            // For situations where the available withdrawal will BOTH draw down collateral and create debt, we keep
-            // track of the number of tokens that are available from collateral
+            // For situations where the available withdrawal will BOTH draw down collateral and create debt,
+            // we keep track of the number of tokens that are available from collateral
             var collateralTokenCount: UFix128 = 0.0
 
             let withdrawPrice = UFix128(self.priceOracle.price(ofToken: withdrawType)!)
             let withdrawCollateralFactor = UFix128(self.collateralFactor[withdrawType]!)
             let withdrawBorrowFactor = UFix128(self.borrowFactor[withdrawType]!)
 
-            let maybeBalance = position.balances[withdrawType]
-            if maybeBalance?.direction == BalanceDirection.Credit {
-                // The user has a credit position in the withdraw token, we start by looking at the health impact of pulling out all
-                // of that collateral
-                let withdrawTokenState = self._borrowUpdatedTokenState(type: withdrawType)
-                let creditBalance = maybeBalance!.scaledBalance
-                let trueCredit = FlowCreditMarket.scaledBalanceToTrueBalance(
-                    creditBalance,
-                    interestIndex: withdrawTokenState.creditInterestIndex
-                )
-                let collateralEffectiveValue = (withdrawPrice * trueCredit) * withdrawCollateralFactor
+            if let balance = position.balances[withdrawType] {
+                if balance.direction == BalanceDirection.Credit {
+                    // The user has a credit position in the withdraw token,
+                    // we start by looking at the health impact of pulling out all of that collateral
+                    let withdrawTokenState = self._borrowUpdatedTokenState(type: withdrawType)
+                    let trueCredit = FlowCreditMarket.scaledBalanceToTrueBalance(
+                        balance.scaledBalance,
+                        interestIndex: withdrawTokenState.creditInterestIndex
+                    )
+                    let collateralEffectiveValue = (withdrawPrice * trueCredit) * withdrawCollateralFactor
 
-                // Check what the new health would be if we took out all of this collateral
-                let potentialHealth = FlowCreditMarket.healthComputation(
-                    effectiveCollateral: effectiveCollateralAfterDeposit - collateralEffectiveValue, // ??? - why subtract?
-                    effectiveDebt: effectiveDebtAfterDeposit
-                )
+                    // Check what the new health would be if we took out all of this collateral
+                    let potentialHealth = FlowCreditMarket.healthComputation(
+                        effectiveCollateral: effectiveCollateralAfterDeposit - collateralEffectiveValue, // ??? - why subtract?
+                        effectiveDebt: effectiveDebtAfterDeposit
+                    )
 
-                // Does drawing down all of the collateral go below the target health? Then the max withdrawal comes from collateral only.
-                if potentialHealth <= targetHealth {
-                    // We will hit the health target before using up all of the withdraw token credit. We can easily
-                    // compute how many units of the token would bring the position down to the target health.
-                    // We will hit the health target before using up all available withdraw credit.
+                    // Does drawing down all of the collateral go below the target health? Then the max withdrawal comes from collateral only.
+                    if potentialHealth <= targetHealth {
+                        // We will hit the health target before using up all of the withdraw token credit. We can easily
+                        // compute how many units of the token would bring the position down to the target health.
+                        // We will hit the health target before using up all available withdraw credit.
 
-                    let availableEffectiveValue = effectiveCollateralAfterDeposit - (targetHealth * effectiveDebtAfterDeposit)
-                    if self.debugLogging {
-                        log("    [CONTRACT] availableEffectiveValue: \(availableEffectiveValue)")
+                        let availableEffectiveValue = effectiveCollateralAfterDeposit - (targetHealth * effectiveDebtAfterDeposit)
+                        if self.debugLogging {
+                            log("    [CONTRACT] availableEffectiveValue: \(availableEffectiveValue)")
+                        }
+
+                        // The amount of the token we can take using that amount of health
+                        let availableTokenCount = (availableEffectiveValue / withdrawCollateralFactor) / withdrawPrice
+                        if self.debugLogging {
+                            log("    [CONTRACT] availableTokenCount: \(availableTokenCount)")
+                        }
+
+                        return FlowCreditMarketMath.toUFix64RoundDown(availableTokenCount)
+                    } else {
+                        // We can flip this credit position into a debit position, before hitting the target health.
+                        // We have logic below that can determine health changes for debit positions. We've copied it here
+                        // with an added handling for the case where the health after deposit is an edgecase
+                        collateralTokenCount = trueCredit
+                        effectiveCollateralAfterDeposit = effectiveCollateralAfterDeposit - collateralEffectiveValue
+                        if self.debugLogging {
+                            log("    [CONTRACT] collateralTokenCount: \(collateralTokenCount)")
+                            log("    [CONTRACT] effectiveCollateralAfterDeposit: \(effectiveCollateralAfterDeposit)")
+                        }
+
+                        // We can calculate the available debt increase that would bring us to the target health
+                        var availableDebtIncrease = (effectiveCollateralAfterDeposit / targetHealth) - effectiveDebtAfterDeposit
+                        let availableTokens = (availableDebtIncrease * withdrawBorrowFactor) / withdrawPrice
+                        if self.debugLogging {
+                            log("    [CONTRACT] availableDebtIncrease: \(availableDebtIncrease)")
+                            log("    [CONTRACT] availableTokens: \(availableTokens)")
+                            log("    [CONTRACT] availableTokens + collateralTokenCount: \(availableTokens + collateralTokenCount)")
+                        }
+                        return FlowCreditMarketMath.toUFix64RoundDown(availableTokens + collateralTokenCount)
                     }
-
-                    // The amount of the token we can take using that amount of health
-                    let availableTokenCount = (availableEffectiveValue / withdrawCollateralFactor) / withdrawPrice
-                    if self.debugLogging {
-                        log("    [CONTRACT] availableTokenCount: \(availableTokenCount)")
-                    }
-
-                    return FlowCreditMarketMath.toUFix64RoundDown(availableTokenCount)
-                } else {
-                    // We can flip this credit position into a debit position, before hitting the target health.
-                    // We have logic below that can determine health changes for debit positions. We've copied it here
-                    // with an added handling for the case where the health after deposit is an edgecase
-                    collateralTokenCount = trueCredit
-                    effectiveCollateralAfterDeposit = effectiveCollateralAfterDeposit - collateralEffectiveValue
-                    if self.debugLogging {
-                        log("    [CONTRACT] collateralTokenCount: \(collateralTokenCount)")
-                        log("    [CONTRACT] effectiveCollateralAfterDeposit: \(effectiveCollateralAfterDeposit)")
-                    }
-
-                    // We can calculate the available debt increase that would bring us to the target health
-                    var availableDebtIncrease = (effectiveCollateralAfterDeposit / targetHealth) - effectiveDebtAfterDeposit
-                    let availableTokens = (availableDebtIncrease * withdrawBorrowFactor) / withdrawPrice
-                    if self.debugLogging {
-                        log("    [CONTRACT] availableDebtIncrease: \(availableDebtIncrease)")
-                        log("    [CONTRACT] availableTokens: \(availableTokens)")
-                        log("    [CONTRACT] availableTokens + collateralTokenCount: \(availableTokens + collateralTokenCount)")
-                    }
-                    return FlowCreditMarketMath.toUFix64RoundDown(availableTokens + collateralTokenCount)
                 }
             }
 
@@ -2235,28 +2246,33 @@ access(all) contract FlowCreditMarket {
             let price = UFix128(self.priceOracle.price(ofToken: type)!)
             let collateralFactor = UFix128(self.collateralFactor[type]!)
             let borrowFactor = UFix128(self.borrowFactor[type]!)
-            if position.balances[type] == nil || position.balances[type]!.direction == BalanceDirection.Credit {
-                // Since the user has no debt in the given token, we can just compute how much
-                // additional collateral this deposit will create.
-                effectiveCollateralIncrease = (amountU * price) * collateralFactor
-            } else {
-                // The user has a debit position in the given token, we need to figure out if this deposit
-                // will only pay off some of the debt, or if it will also create new collateral.
-                let debtBalance = position.balances[type]!.scaledBalance
-                let trueDebt = FlowCreditMarket.scaledBalanceToTrueBalance(
-                    debtBalance,
-                    interestIndex: tokenState.debitInterestIndex
-                )
+            let balance = position.balances[type]
+            let direction = balance?.direction ?? BalanceDirection.Credit
+            let scaledBalance = balance?.scaledBalance ?? 0.0
 
-                if trueDebt >= amountU {
-                    // This deposit will wipe out some or all of the debt, but won't create new collateral, we
-                    // just need to account for the debt decrease.
-                    effectiveDebtDecrease = (amountU * price) / borrowFactor
-                } else {
-                    // This deposit will wipe out all of the debt, and create new collateral.
-                    effectiveDebtDecrease = (trueDebt * price) / borrowFactor
-                    effectiveCollateralIncrease = (amountU - trueDebt) * price * collateralFactor
-                }
+            switch direction {
+                case BalanceDirection.Credit:
+                    // Since the user has no debt in the given token, we can just compute how much
+                    // additional collateral this deposit will create.
+                    effectiveCollateralIncrease = (amountU * price) * collateralFactor
+
+                case BalanceDirection.Debit:
+                    // The user has a debit position in the given token, we need to figure out if this deposit
+                    // will only pay off some of the debt, or if it will also create new collateral.
+                    let trueDebt = FlowCreditMarket.scaledBalanceToTrueBalance(
+                        scaledBalance,
+                        interestIndex: tokenState.debitInterestIndex
+                    )
+
+                    if trueDebt >= amountU {
+                        // This deposit will wipe out some or all of the debt, but won't create new collateral, we
+                        // just need to account for the debt decrease.
+                        effectiveDebtDecrease = (amountU * price) / borrowFactor
+                    } else {
+                        // This deposit will wipe out all of the debt, and create new collateral.
+                        effectiveDebtDecrease = (trueDebt * price) / borrowFactor
+                        effectiveCollateralIncrease = (amountU - trueDebt) * price * collateralFactor
+                    }
             }
 
             return FlowCreditMarket.healthComputation(
@@ -2281,28 +2297,33 @@ access(all) contract FlowCreditMarket {
             let price = UFix128(self.priceOracle.price(ofToken: type)!)
             let collateralFactor = UFix128(self.collateralFactor[type]!)
             let borrowFactor = UFix128(self.borrowFactor[type]!)
-            if position.balances[type] == nil || position.balances[type]!.direction == BalanceDirection.Debit {
-                // The user has no credit position in the given token, we can just compute how much
-                // additional effective debt this withdrawal will create.
-                effectiveDebtIncrease = (amountU * price) / borrowFactor
-            } else {
-                // The user has a credit position in the given token, we need to figure out if this withdrawal
-                // will only draw down some of the collateral, or if it will also create new debt.
-                let creditBalance = position.balances[type]!.scaledBalance
-                let trueCredit = FlowCreditMarket.scaledBalanceToTrueBalance(
-                    creditBalance,
-                    interestIndex: tokenState.creditInterestIndex
-                )
+            let balance = position.balances[type]
+            let direction = balance?.direction ?? BalanceDirection.Debit
+            let scaledBalance = balance?.scaledBalance ?? 0.0
 
-                if trueCredit >= amountU {
-                    // This withdrawal will draw down some collateral, but won't create new debt, we
-                    // just need to account for the collateral decrease.
-                    effectiveCollateralDecrease = (amountU * price) * collateralFactor
-                } else {
-                    // The withdrawal will wipe out all of the collateral, and create new debt.
-                    effectiveDebtIncrease = ((amountU - trueCredit) * price) / borrowFactor
-                    effectiveCollateralDecrease = (trueCredit * price) * collateralFactor
-                }
+            switch direction {
+                case BalanceDirection.Debit:
+                    // The user has no credit position in the given token, we can just compute how much
+                    // additional effective debt this withdrawal will create.
+                    effectiveDebtIncrease = (amountU * price) / borrowFactor
+
+                case BalanceDirection.Credit:
+                    // The user has a credit position in the given token, we need to figure out if this withdrawal
+                    // will only draw down some of the collateral, or if it will also create new debt.
+                    let trueCredit = FlowCreditMarket.scaledBalanceToTrueBalance(
+                        scaledBalance,
+                        interestIndex: tokenState.creditInterestIndex
+                    )
+
+                    if trueCredit >= amountU {
+                        // This withdrawal will draw down some collateral, but won't create new debt, we
+                        // just need to account for the collateral decrease.
+                        effectiveCollateralDecrease = (amountU * price) * collateralFactor
+                    } else {
+                        // The withdrawal will wipe out all of the collateral, and create new debt.
+                        effectiveDebtIncrease = ((amountU - trueCredit) * price) / borrowFactor
+                        effectiveCollateralDecrease = (trueCredit * price) * collateralFactor
+                    }
             }
 
             return FlowCreditMarket.healthComputation(
@@ -2416,7 +2437,10 @@ access(all) contract FlowCreditMarket {
 
             // If this position doesn't currently have an entry for this token, create one.
             if position.balances[type] == nil {
-                position.balances[type] = InternalBalance(direction: BalanceDirection.Credit, scaledBalance: 0.0)
+                position.balances[type] = InternalBalance(
+                    direction: BalanceDirection.Credit,
+                    scaledBalance: 0.0
+                )
             }
 
             // Create vault if it doesn't exist yet
@@ -2425,10 +2449,11 @@ access(all) contract FlowCreditMarket {
             }
             let reserveVault = (&self.reserves[type] as auth(FungibleToken.Withdraw) &{FungibleToken.Vault}?)!
 
-            // Reflect the deposit in the position's balance
+            // Reflect the deposit in the position's balance.
+            //
             // This only records the portion of the deposit that was accepted, not any queued portions,
-            // as the queued deposits will be processed later (by this function being called again), and therefore
-            // will be recorded at that time.
+            // as the queued deposits will be processed later (by this function being called again),
+            // and therefore will be recorded at that time.
             position.balances[type]!.recordDeposit(amount: UFix128(from.balance), tokenState: tokenState)
 
             // Add the money to the reserves
@@ -2907,7 +2932,10 @@ access(all) contract FlowCreditMarket {
                     if sinkAmount > 0.0 && sinkType == Type<@MOET.Vault>() {
                         let tokenState = self._borrowUpdatedTokenState(type: Type<@MOET.Vault>())
                         if position.balances[Type<@MOET.Vault>()] == nil {
-                            position.balances[Type<@MOET.Vault>()] = InternalBalance(direction: BalanceDirection.Credit, scaledBalance: 0.0)
+                            position.balances[Type<@MOET.Vault>()] = InternalBalance(
+                                direction: BalanceDirection.Credit,
+                                scaledBalance: 0.0
+                            )
                         }
                         // record the withdrawal and mint the tokens
                         let uintSinkAmount = UFix128(sinkAmount)
@@ -3059,7 +3087,10 @@ access(all) contract FlowCreditMarket {
                 }
             }
 
-            return BalanceSheet(effectiveCollateral: effectiveCollateral, effectiveDebt: effectiveDebt)
+            return BalanceSheet(
+                effectiveCollateral: effectiveCollateral,
+                effectiveDebt: effectiveDebt
+            )
         }
 
         /// A convenience function that returns a reference to a particular token state, making sure it's up-to-date for
