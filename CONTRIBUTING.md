@@ -1,6 +1,8 @@
-# Contributing to the Flow: Automated Lending Protocol Smart Contracts
+# Contributing to the Flow Credit Market Smart Contracts
 
-The following is a set of guidelines for contributing to the Flow:ALP. These are mostly guidelines, not rules. Use your best judgment, and feel free to propose changes to this document in a pull request.
+The following is a set of guidelines for contributing to Flow Credit Market.
+These are mostly guidelines, not rules.
+Use your best judgment, and feel free to propose changes to this document in a pull request.
 
 #### Table Of Contents
 
@@ -62,7 +64,7 @@ Enhancement suggestions are tracked as [GitHub issues](https://guides.github.com
 - **Provide specific examples to demonstrate the steps**. Include copy/pasteable snippets which you use in those examples, as [Markdown code blocks](https://help.github.com/articles/markdown-basics/#multiple-lines).
 - **Describe the current behavior** and **explain which behavior you expected to see instead** and why.
 - **Include screenshots and animated GIFs**. You can use [this tool](https://www.cockos.com/licecap/) to record GIFs on macOS and Windows, and [this tool](https://github.com/colinkeenan/silentcast) or [this tool](https://github.com/GNOME/byzanz) on Linux.
-- **Explain why this enhancement would be useful** to be included in the standard.
+- **Explain why this enhancement would be useful** to be included.
 
 ### Pull Requests
 
@@ -88,4 +90,4 @@ Before contributing, make sure to examine the project to get familiar with the p
 
 ### Additional Notes
 
-Thank you for your interest in contributing to the Flow Token Standards!
+Thank you for your interest in contributing to Flow Credit Market!
