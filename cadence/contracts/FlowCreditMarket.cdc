@@ -258,6 +258,7 @@ access(all) contract FlowCreditMarket {
     /// An internal resource used to track deposits, withdrawals, balances, and queued deposits to an open position.
     access(all) resource InternalPosition {
         /// The target health of the position
+        /// TODO(jord): Is this user-defined or protocol-defined?
         access(EImplementation) var targetHealth: UFix128
         /// The minimum health of the position, below which a position is considered undercollateralized
         access(EImplementation) var minHealth: UFix128
@@ -356,8 +357,10 @@ access(all) contract FlowCreditMarket {
         access(all) var debitInterestIndex: UFix128
         /// The interest rate for credit of the associated token, stored as UFix128 to match index precision and avoid
         /// cumulative rounding during compounding.
+        // TODO: format: APR? In call to compoundInterestIndex, assumes this is per-second rate?
         access(all) var currentCreditRate: UFix128
         /// The interest rate for debit of the associated token. Also UFix128 for consistency with indices/rates math.
+        // TODO: format: APR? 
         access(all) var currentDebitRate: UFix128
         /// The interest curve implementation used to calculate interest rate
         access(all) var interestCurve: {InterestCurve}
@@ -376,8 +379,8 @@ access(all) contract FlowCreditMarket {
             self.lastUpdate = getCurrentBlock().timestamp
             self.totalCreditBalance = 0.0 as UFix128
             self.totalDebitBalance = 0.0 as UFix128
-            self.creditInterestIndex = FlowCreditMarketMath.one
-            self.debitInterestIndex = FlowCreditMarketMath.one
+            self.creditInterestIndex = FlowCreditMarketMath.one // TODO: hard-coded to 1?
+            self.debitInterestIndex = FlowCreditMarketMath.one // TODO: hard-coded to 1?
             self.currentCreditRate = FlowCreditMarketMath.one
             self.currentDebitRate = FlowCreditMarketMath.one
             self.interestCurve = interestCurve
@@ -572,6 +575,13 @@ access(all) contract FlowCreditMarket {
         }
     }
 
+    /// A wrapper around one or more DEXes.
+    access(all) struct interface SwapperProvider {
+        /// Returns a Swapper for the given trade pair, if the pair is supported.
+        /// Otherwise returns nil.
+        access(all) fun getSwapper(inType: Type, outType: Type): {DefiActions.Swapper}?
+    }
+
     // PURE HELPERS -------------------------------------------------------------
 
     access(all) view fun effectiveCollateral(credit: UFix128, snap: TokenSnapshot): UFix128 {
@@ -699,6 +709,7 @@ access(all) contract FlowCreditMarket {
         /// percentage between 0.0 and 1.0
         access(self) var borrowFactor: {Type: UFix64}
         /// Per-token liquidation bonus fraction (e.g., 0.05 for 5%)
+        /// TODO(jord): we want to keep this logic but set it to 0 initially
         access(self) var liquidationBonus: {Type: UFix64}
         /// The count of positions to update per asynchronous update
         access(self) var positionsProcessedPerCallback: UInt64
@@ -716,15 +727,19 @@ access(all) contract FlowCreditMarket {
         // TODO(jord): remove this
         access(self) var protocolLiquidationFeeBps: UInt16
         /// Allowlist of permitted DeFiActions Swapper types for DEX liquidations
+        // TODO(jord): currently we store an allow-list of swapper types, but 
         access(self) var allowedSwapperTypes: {Type: Bool}
+        access(self) var dex: {SwapperProvider}
         /// Max allowed deviation in basis points between DEX-implied price and oracle price
         access(self) var dexOracleDeviationBps: UInt16
         /// Max slippage allowed in basis points for DEX liquidations
+        /// TODO(jord): revisit this. Is this ever necessary if we are also checking dexOracleDeviationBps? Do we want both a spot price check and a slippage from spot price check?
         access(self) var dexMaxSlippageBps: UInt64
         /// Max route hops allowed for DEX liquidations
+        // TODO(jord): unused
         access(self) var dexMaxRouteHops: UInt64
 
-        init(defaultToken: Type, priceOracle: {DeFiActions.PriceOracle}) {
+        init(defaultToken: Type, priceOracle: {DeFiActions.PriceOracle}, dex: {SwapperProvider}) {
             pre {
                 priceOracle.unitOfAccount() == defaultToken: "Price oracle must return prices in terms of the default token"
             }
@@ -752,6 +767,7 @@ access(all) contract FlowCreditMarket {
             self.lastUnpausedAt = nil
             self.protocolLiquidationFeeBps = UInt16(0)
             self.allowedSwapperTypes = {}
+            self.dex = dex
             self.dexOracleDeviationBps = UInt16(300) // 3% default
             self.dexMaxSlippageBps = 100
             self.dexMaxRouteHops = 3
@@ -872,6 +888,7 @@ access(all) contract FlowCreditMarket {
         /// Returns the health of the given position, which is the ratio of the position's effective collateral to its
         /// debt as denominated in the Pool's default token. "Effective collateral" means the value of each credit balance
         /// times the liquidation threshold for that token. i.e. the maximum borrowable amount
+        // TODO: make this output enumeration of effective debts/collaterals (or provide option that does)
         access(all) fun positionHealth(pid: UInt64): UFix128 {
             let position = self._borrowPosition(pid: pid)
 
@@ -951,6 +968,60 @@ access(all) contract FlowCreditMarket {
             )
         }
 
+
+        /// Any external party can perform a manual liquidation on a position P under the following circumstances:
+        ///   - P has health < 1
+        ///   - the liquidation price offered is better than what is available on a DEX
+        access(all) fun manualLiquidation(
+            pid: UInt64,
+            debtType: Type,
+            repayAmount: UFix64,
+            seizeType: Type,
+            seizeAmount: UFix64,
+            repaymentSource: @{FungibleToken.Vault}
+        ) {
+            pre {
+                // debt, collateral are both supported tokens
+                // repaymentSource has sufficient balance
+            }
+            post {
+                // health factor should be <= target
+            }
+
+            let positionView = self.buildPositionView(pid: pid)
+            let health = FlowCreditMarket.healthFactor(view: positionView)
+            destroy repaymentSource // maybe remove this
+            if health >= 1.0 {
+                return
+            }
+
+            let swapper = self.dex.getSwapper(inType: seizeType, outType: debtType)! // will revert if pair unsupported
+            // This asks "how much collateral do I need to give you to get repayAmount debt tokens"
+            let quote = swapper.quoteIn(forDesired: repayAmount, reverse: false)
+            // If the DEX would provide more debt tokens for the same amount of collateral, then reject the liquidation offer.
+            if (quote.inAmount < seizeAmount) {
+                return
+            }
+            
+            // At this point, the liquidation offer appears acceptable. As a sanity check, compare the DEX price to the oracle price.
+            let Pd_oracle = self.priceOracle.price(ofToken: debtType)!  // $/D
+            let Pc_oracle = self.priceOracle.price(ofToken: seizeType)! // $/C
+            let Pcd_oracle = Pd_oracle / Pc_oracle // C/D - price of collateral, denominated in debt token, implied by oracle
+
+            let Pcd_dex = quote.inAmount / quote.outAmount    // C/D - price of collateral, denominated in debt token, implied by dex quote
+            let Pcd_offer = seizeAmount / repayAmount // C/D - price of collateral, denominated in debt token, implied by liquidation offer
+
+            // Compute the absolute value of the difference between the oracle price and dex price
+            let Pcd_dex_oracle_diff: UFix64 = Pcd_dex < Pcd_oracle ? Pcd_oracle - Pcd_dex : Pcd_dex - Pcd_oracle
+            // Compute the percent difference (eg. 0.05 for 5%). For consistency, we always use the larger price as the denominator.
+            let Pcd_dex_oracle_diffPct: UFix64 = Pcd_dex < Pcd_oracle ? Pcd_dex_oracle_diff / Pcd_dex : Pcd_dex_oracle_diff / Pcd_oracle
+            let Pcd_dex_oracle_diffBps = UInt16(Pcd_dex_oracle_diffPct * 10_000.0)
+
+            assert(Pcd_dex_oracle_diffBps > self.dexOracleDeviationBps, message: "Too large difference between dex/oracle prices diff=\(Pcd_dex_oracle_diffBps)bps")
+
+            // perform the liquidation at this point
+        }
+
         /// Quote liquidation required repay and seize amounts to bring HF to liquidationTargetHF using a single seizeType
         access(all) fun quoteLiquidation(pid: UInt64, debtType: Type, seizeType: Type): FlowCreditMarket.LiquidationQuote {
             pre {
@@ -1001,7 +1072,7 @@ access(all) contract FlowCreditMarket {
             // Recompute effective totals and capture available true collateral for seizeType
             var effColl: UFix128 = 0.0 as UFix128
             var effDebt: UFix128 = 0.0 as UFix128
-            var trueCollateralSeize: UFix128 = 0.0 as UFix128
+            var trueCollateralSeize: UFix128 = 0.0 as UFix128 // includes accrued interest
             var trueDebt: UFix128 = 0.0 as UFix128
             for t in view.balances.keys {
                 let b = view.balances[t]!
@@ -1094,12 +1165,17 @@ access(all) contract FlowCreditMarket {
             }
 
             // Derived formula with positive denominator: u = (t * effDebt - effColl) / (t - (1 + LB) * CF)
+            // TODO: What is u?
+            // num = (t * effDebt - effColl)
             let num = effDebt * target - effColl
+            // denomFactor = (t - (1 + LB) * CF)
             let denomFactor = target - ((FlowCreditMarketMath.one + LB) * CF)
             if denomFactor <= FlowCreditMarketMath.zero {
                 // Impossible target, return 0
                 return FlowCreditMarket.LiquidationQuote(requiredRepay: 0.0, seizeType: seizeType, seizeAmount: 0.0, newHF: health)
             }
+            // repayTrueU128 = (num * BF) / (Pd * denomFactor)
+            // repayTrueU128 = [(t * effDebt - effColl)(BF)] / [(Pd)(t - (1+LB)*CF))]
             var repayTrueU128 = FlowCreditMarketMath.div(num * BF, Pd * denomFactor)
             if repayTrueU128 > trueDebt {
                 repayTrueU128 = trueDebt
@@ -1239,6 +1315,7 @@ access(all) contract FlowCreditMarket {
         }
 
         /// Permissionless liquidation: keeper repays exactly the required amount to reach target HF and receives seized collateral
+        // This uses liquidationQuote, which is "maybe AI slop no one understands"
         access(all) fun liquidateRepayForSeize(
             pid: UInt64,
             debtType: Type,
@@ -1329,7 +1406,7 @@ access(all) contract FlowCreditMarket {
             // Validate position is liquidatable
             let health = self.positionHealth(pid: pid)
             assert(health < FlowCreditMarketMath.one, message: "Position not liquidatable")
-            assert(self.isLiquidatable(pid: pid), message: "Position \(pid) is not liquidatable")
+            assert(self.isLiquidatable(pid: pid), message: "Position \(pid) is not liquidatable") // TODO(jord): this is equivalent to above two lines
 
             // Internal quote to determine required seize (capped by max)
             let internalQuote = self.quoteLiquidation(pid: pid, debtType: debtType, seizeType: seizeType)
@@ -2994,6 +3071,7 @@ access(all) contract FlowCreditMarket {
         let factory = self.account.storage.borrow<&PoolFactory>(from: self.PoolFactoryPath)!
     }
 
+    /// TODO(jord): document or remove + move to where other resources are defined
     access(all) resource LiquidationResult: Burner.Burnable {
         access(all) var seized: @{FungibleToken.Vault}?
         access(all) var remainder: @{FungibleToken.Vault}?
