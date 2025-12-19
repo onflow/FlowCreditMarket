@@ -1,0 +1,30 @@
+import "FlowCreditMarket"
+import "FlowCreditMarketRegistry"
+
+/// INTENDED FOR BETA PURPOSES ONLY
+///
+/// This transaction will backfill the provided positions into the Registry
+///
+/// @param pids: The IDs of the positions to backfill - registration fails if the PID doesn't exist in the canonical pool
+transaction(pids: [UInt64]) {
+
+    let pool: &FlowCreditMarket.Pool
+    let registry: auth(FlowCreditMarket.Register) &FlowCreditMarketRegistry.Registry
+    
+    prepare(signer: auth(BorrowValue) &Account) {
+        self.pool = signer.storage.borrow<auth(FlowCreditMarket.Register) &FlowCreditMarket.Pool>(from: FlowCreditMarket.PoolStoragePath)
+            ?? panic("Could not borrow reference to Pool from \(FlowCreditMarket.PoolStoragePath) - ensure a Pool has been configured")
+        let registryPath = FlowCreditMarket.deriveRegistryStoragePath(forPool: self.pool.uuid)
+        self.registry = signer.storage.borrow<auth(FlowCreditMarket.Register) &FlowCreditMarketRegistry.Registry>(from: registryPath)
+            ?? panic("Could not borrow reference to Registry from \(registryPath) - ensure a Registry has been configured")
+    }
+
+    execute {
+        for pid in pids {
+            if self.registry.registeredPositions[pid] != nil {
+                continue
+            }
+            self.registry.registerPosition(poolUUID: self.pool.uuid, pid: pid, rebalanceConfig: nil)
+        }
+    }
+}
