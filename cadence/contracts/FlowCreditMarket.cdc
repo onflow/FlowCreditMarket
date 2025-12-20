@@ -102,6 +102,12 @@ access(all) contract FlowCreditMarket {
         newOracleType: String
     )
 
+    access(all) event InterestCurveUpdated(
+        poolUUID: UInt64,
+        tokenType: String,
+        curveType: String
+    )
+
     /* --- CONSTRUCTS & INTERNAL METHODS ---- */
 
     access(all) entitlement EPosition
@@ -117,7 +123,7 @@ access(all) contract FlowCreditMarket {
         - Interest indices and rates are modeled as 18-decimal fixed-point in FlowCreditMarketMath and stored as UFix128.
         - Operating in the UFix128 domain minimizes rounding error in true↔scaled conversions and
           health/price computations.
-        - We convert at boundaries via FlowCreditMarketMath.toUFix128/toUFix64.
+        - We convert at boundaries via type casting to UFix128 or FlowCreditMarketMath.toUFix64.
     */
 
     /// InternalBalance
@@ -455,18 +461,121 @@ access(all) contract FlowCreditMarket {
     access(all) struct interface InterestCurve {
         access(all) fun interestRate(creditBalance: UFix128, debitBalance: UFix128): UFix128 {
             post {
-                result <= 1.0:
-                    "Interest rate can't exceed 100%"
+                // Max rate is 400% (4.0) to accommodate high-utilization scenarios
+                // with kink-based curves like Aave v3's interest rate strategy
+                result <= 4.0:
+                    "Interest rate can't exceed 400%"
             }
         }
     }
 
-    /// SimpleInterestCurve
+    /// FixedRateInterestCurve
     ///
-    /// A simple implementation of the InterestCurve interface.
-    access(all) struct SimpleInterestCurve: InterestCurve {
+    /// A fixed-rate interest curve implementation that returns a constant yearly interest rate
+    /// regardless of utilization. This is suitable for stable assets like MOET where predictable
+    /// rates are desired.
+    /// @param yearlyRate The fixed yearly interest rate as a UFix128 (e.g., 0.05 for 5% APY)
+    access(all) struct FixedRateInterestCurve: InterestCurve {
+
+        access(all) let yearlyRate: UFix128
+
+        init(yearlyRate: UFix128) {
+            pre {
+                yearlyRate <= 1.0: "Yearly rate cannot exceed 100%, got \(yearlyRate)"
+            }
+            self.yearlyRate = yearlyRate
+        }
+
         access(all) fun interestRate(creditBalance: UFix128, debitBalance: UFix128): UFix128 {
-            return 0.0 // TODO: replace with proper curve
+            return self.yearlyRate
+        }
+    }
+
+    /// KinkInterestCurve
+    ///
+    /// A kink-based interest rate curve implementation. The curve has two linear segments:
+    /// - Before the optimal utilization ratio (the "kink"): a gentle slope
+    /// - After the optimal utilization ratio: a steep slope to discourage over-utilization
+    ///
+    /// This creates a "kinked" curve that incentivizes maintaining utilization near the
+    /// optimal point while heavily penalizing over-utilization to protect protocol liquidity.
+    ///
+    /// Formula:
+    /// - utilization = debitBalance / (creditBalance + debitBalance)
+    /// - Before kink (utilization <= optimalUtilization):
+    ///   rate = baseRate + (slope1 × utilization / optimalUtilization)
+    /// - After kink (utilization > optimalUtilization):
+    ///   rate = baseRate + slope1 + (slope2 × excessUtilization)
+    ///   where excessUtilization = (utilization - optimalUtilization) / (1 - optimalUtilization)
+    ///
+    /// @param optimalUtilization The target utilization ratio (e.g., 0.80 for 80%)
+    /// @param baseRate The minimum yearly interest rate (e.g., 0.01 for 1% APY)
+    /// @param slope1 The total rate increase from 0% to optimal utilization (e.g., 0.04 for 4%)
+    /// @param slope2 The total rate increase from optimal to 100% utilization (e.g., 0.60 for 60%)
+    access(all) struct KinkInterestCurve: InterestCurve {
+
+        /// The optimal utilization ratio (the "kink" point), e.g., 0.80 = 80%
+        access(all) let optimalUtilization: UFix128
+
+        /// The base yearly interest rate applied at 0% utilization
+        access(all) let baseRate: UFix128
+
+        /// The slope of the interest curve before the optimal point (gentle slope)
+        access(all) let slope1: UFix128
+
+        /// The slope of the interest curve after the optimal point (steep slope)
+        access(all) let slope2: UFix128
+
+        init(
+            optimalUtilization: UFix128,
+            baseRate: UFix128,
+            slope1: UFix128,
+            slope2: UFix128
+        ) {
+            pre {
+                optimalUtilization >= 0.01:
+                    "Optimal utilization must be at least 1%, got \(optimalUtilization)"
+                optimalUtilization <= 0.99:
+                    "Optimal utilization must be at most 99%, got \(optimalUtilization)"
+                slope2 >= slope1:
+                    "Slope2 (\(slope2)) must be >= slope1 (\(slope1))"
+                baseRate + slope1 + slope2 <= 4.0:
+                    "Maximum rate cannot exceed 400%, got \(baseRate + slope1 + slope2)"
+            }
+            self.optimalUtilization = optimalUtilization
+            self.baseRate = baseRate
+            self.slope1 = slope1
+            self.slope2 = slope2
+        }
+
+        access(all) fun interestRate(creditBalance: UFix128, debitBalance: UFix128): UFix128 {
+            // If no debt, return base rate
+            if debitBalance == 0.0 {
+                return self.baseRate
+            }
+
+            // Calculate utilization ratio: debitBalance / (creditBalance + debitBalance)
+            // Note: totalBalance > 0 is guaranteed since debitBalance > 0 and creditBalance >= 0
+            let totalBalance = creditBalance + debitBalance
+            let utilization = debitBalance / totalBalance
+
+            // If utilization is below or at the optimal point, use slope1
+            if utilization <= self.optimalUtilization {
+                // rate = baseRate + (slope1 × utilization / optimalUtilization)
+                let utilizationFactor = utilization / self.optimalUtilization
+                let slope1Component = self.slope1 * utilizationFactor
+                return self.baseRate + slope1Component
+            } else {
+                // If utilization is above the optimal point, use slope2 for excess
+                // excessUtilization = (utilization - optimalUtilization) / (1 - optimalUtilization)
+                let excessUtilization = utilization - self.optimalUtilization
+                let maxExcess = FlowCreditMarketMath.one - self.optimalUtilization
+                let excessFactor = excessUtilization / maxExcess
+
+                // rate = baseRate + slope1 + (slope2 × excessFactor)
+                let slope2Component = self.slope2 * excessFactor
+                return self.baseRate + self.slope1 + slope2Component
+            }
         }
     }
 
@@ -554,11 +663,22 @@ access(all) contract FlowCreditMarket {
         access(EImplementation) fun setDepositLimitFraction(_ frac: UFix64) {
             self.depositLimitFraction = frac
         }
+        /// Sets the interest curve for this token state
+        /// After updating the curve, also update the interest rates to reflect the new curve
+        access(EImplementation) fun setInterestCurve(_ curve: {InterestCurve}) {
+            self.interestCurve = curve
+            // Update rates immediately to reflect the new curve
+            self.updateInterestRates()
+        }
 
-        // Explicit UFix128 balance update helpers used by core accounting
-
+        /// Balance update helpers used by core accounting.
+        /// All balance changes automatically trigger updateForUtilizationChange()
+        /// which recalculates interest rates based on the new utilization ratio.
+        /// This ensures rates always reflect the current state of the pool
+        /// without requiring manual rate update calls.
         access(all) fun increaseCreditBalance(by amount: UFix128) {
             self.totalCreditBalance = self.totalCreditBalance + amount
+            self.updateForUtilizationChange()
         }
 
         access(all) fun decreaseCreditBalance(by amount: UFix128) {
@@ -567,10 +687,12 @@ access(all) contract FlowCreditMarket {
             } else {
                 self.totalCreditBalance = self.totalCreditBalance - amount
             }
+            self.updateForUtilizationChange()
         }
 
         access(all) fun increaseDebitBalance(by amount: UFix128) {
             self.totalDebitBalance = self.totalDebitBalance + amount
+            self.updateForUtilizationChange()
         }
 
         access(all) fun decreaseDebitBalance(by amount: UFix128) {
@@ -579,6 +701,7 @@ access(all) contract FlowCreditMarket {
             } else {
                 self.totalDebitBalance = self.totalDebitBalance - amount
             }
+            self.updateForUtilizationChange()
         }
 
         /// Updates the totalCreditBalance by the provided amount
@@ -591,6 +714,7 @@ access(all) contract FlowCreditMarket {
                 message: "totalCreditBalance underflow"
             )
             self.totalCreditBalance = UFix128(adjustedBalance)
+            self.updateForUtilizationChange()
         }
 
         access(all) fun updateDebitBalance(amount: Int256) {
@@ -602,6 +726,7 @@ access(all) contract FlowCreditMarket {
                 message: "totalDebitBalance underflow"
             )
             self.totalDebitBalance = UFix128(adjustedBalance)
+            self.updateForUtilizationChange()
         }
 
         // Enhanced updateInterestIndices with deposit capacity update
@@ -646,33 +771,43 @@ access(all) contract FlowCreditMarket {
             self.updateInterestIndices()
         }
 
-        access(all) fun updateInterestRates() {
-            // If there's no credit balance, we can't calculate a meaningful credit rate
-            // so we'll just set both rates to one (no interest) and return early
-            if self.totalCreditBalance == 0.0 {
-                self.currentCreditRate = 1.0  // no interest
-                self.currentDebitRate = 1.0   // no interest
-                return
-            }
+        /// Called after any action that changes utilization (deposits, withdrawals, borrows, repays).
+        /// Recalculates interest rates based on the new credit/debit balance ratio.
+        access(all) fun updateForUtilizationChange() {
+            self.updateInterestRates()
+        }
 
+        access(all) fun updateInterestRates() {
             let debitRate = self.interestCurve.interestRate(
                 creditBalance: self.totalCreditBalance,
                 debitBalance: self.totalDebitBalance
             )
-            let debitIncome = self.totalDebitBalance * debitRate
-
-            // Calculate insurance amount (0.1% of credit balance)
             let insuranceRate = UFix128(self.insuranceRate)
-            let insuranceAmount = self.totalCreditBalance * insuranceRate
 
-            // Calculate credit rate, ensuring we don't have underflows
             var creditRate: UFix128 = 0.0
-            if debitIncome >= insuranceAmount {
-                creditRate = (debitIncome - insuranceAmount) / self.totalCreditBalance
+
+            // Two calculation paths based on curve type:
+            // 1. FixedRateInterestCurve: simple spread model (creditRate = debitRate - insuranceRate)
+            //    Used for stable assets like MOET where rates are governance-controlled
+            // 2. KinkInterestCurve (and others): reserve factor model
+            //    Insurance is a percentage of interest income, not a fixed spread
+            if self.interestCurve.getType() == Type<FlowCreditMarket.FixedRateInterestCurve>() {
+                // FixedRate path: creditRate = debitRate - insuranceRate
+                // This provides a fixed, predictable spread between borrower and lender rates
+                if debitRate > insuranceRate {
+                    creditRate = debitRate - insuranceRate
+                }
+                // else creditRate remains 0.0 (insurance exceeds debit rate)
             } else {
-                // If debit income doesn't cover insurance, credit interest would be negative.
-                // Since negative rates aren't represented here, we pay 0% to depositors.
-                creditRate = 0.0
+                // KinkCurve path (and any other curves): reserve factor model
+                // insuranceAmount = debitIncome * insuranceRate (percentage of income)
+                // creditRate = (debitIncome - insuranceAmount) / totalCreditBalance
+                let debitIncome = self.totalDebitBalance * debitRate
+                let insuranceAmount = debitIncome * insuranceRate
+
+                if self.totalCreditBalance > 0.0 {
+                    creditRate = (debitIncome - insuranceAmount) / self.totalCreditBalance
+                }
             }
 
             self.currentCreditRate = FlowCreditMarket.perSecondInterestRate(yearlyRate: creditRate)
@@ -759,9 +894,11 @@ access(all) contract FlowCreditMarket {
     access(all) view fun healthFactor(view: PositionView): UFix128 {
         var effectiveCollateralTotal: UFix128 = 0.0
         var effectiveDebtTotal: UFix128 = 0.0
+
         for tokenType in view.balances.keys {
             let balance = view.balances[tokenType]!
             let snap = view.snapshots[tokenType]!
+
             switch balance.direction {
                 case BalanceDirection.Credit:
                     let trueBalance = FlowCreditMarket.scaledBalanceToTrueBalance(
@@ -800,9 +937,11 @@ access(all) contract FlowCreditMarket {
 
         var effectiveCollateralTotal: UFix128 = 0.0
         var effectiveDebtTotal: UFix128 = 0.0
+
         for tokenType in view.balances.keys {
             let balance = view.balances[tokenType]!
             let snap = view.snapshots[tokenType]!
+
             switch balance.direction {
                 case BalanceDirection.Credit:
                     let trueBalance = FlowCreditMarket.scaledBalanceToTrueBalance(
@@ -935,7 +1074,7 @@ access(all) contract FlowCreditMarket {
             self.debugLogging = false
             self.globalLedger = {
                 defaultToken: TokenState(
-                    interestCurve: SimpleInterestCurve(),
+                    interestCurve: FixedRateInterestCurve(yearlyRate: 0.0),
                     depositRate: 1_000_000.0,        // Default: no rate limiting for default token
                     depositCapacityCap: 1_000_000.0  // Default: high capacity cap
                 )
@@ -1337,7 +1476,7 @@ access(all) contract FlowCreditMarket {
             }
 
             // Derived formula with positive denominator: u = (t * effDebt - effColl) / (t - (1 + LB) * CF)
-            let num = target * effDebt - effColl
+            let num = effDebt * target - effColl
             let denomFactor = target - ((1.0 + LB) * CF)
             if denomFactor <= 0.0 {
                 // Impossible target, return 0
@@ -1348,7 +1487,6 @@ access(all) contract FlowCreditMarket {
                     newHF: health
                 )
             }
-
             var repayTrueU128 = (num * BF) / (Pd * denomFactor)
             if repayTrueU128 > trueDebt {
                 repayTrueU128 = trueDebt
@@ -1401,14 +1539,18 @@ access(all) contract FlowCreditMarket {
                 // Use up to 16 steps to balance precision and cost
                 let stepsU: UFix128 = 16.0
                 var step = repayCapBySeize / stepsU
-                if step == 0.0 { step = 1.0 }
+                if step == 0.0 {
+                    step = 1.0
+                }
 
                 var r = step
                 while r <= repayCapBySeize {
                     // Compute S for this R under pricing relation, capped by available collateral
                     let uForR = (r * Pd) / BF
                     var sForR = (uForR * (1.0 + LB)) / Pc
-                    if sForR > trueCollateralSeize { sForR = trueCollateralSeize }
+                    if sForR > trueCollateralSeize {
+                        sForR = trueCollateralSeize
+                    }
 
                     // Compute resulting HF
                     let repayEffC = (r * Pd) / BF
@@ -1425,7 +1567,9 @@ access(all) contract FlowCreditMarket {
 
                     // Advance; ensure we always reach the cap
                     let next = r + step
-                    if next > repayCapBySeize { break }
+                    if next > repayCapBySeize {
+                        break
+                    }
                     r = next
                 }
 
@@ -1433,7 +1577,9 @@ access(all) contract FlowCreditMarket {
                 let rCap = repayCapBySeize
                 let uForR2 = (rCap * Pd) / BF
                 var sForR2 = (uForR2 * (1.0 + LB)) / Pc
-                if sForR2 > trueCollateralSeize { sForR2 = trueCollateralSeize }
+                if sForR2 > trueCollateralSeize {
+                    sForR2 = trueCollateralSeize
+                }
                 let repayEffC2 = (rCap * Pd) / BF
                 let seizeEffC2 = sForR2 * (Pc * CF)
                 let newEffCollC2 = effColl > seizeEffC2 ? effColl - seizeEffC2 : 0.0 as UFix128
@@ -1585,7 +1731,10 @@ access(all) contract FlowCreditMarket {
                     scaledBalance: 0.0
                 )
             }
-            position.balances[debtType]!.recordDeposit(amount: repayUint, tokenState: debtState)
+            position.balances[debtType]!.recordDeposit(
+                amount: repayUint,
+                tokenState: debtState
+            )
 
             // Withdraw seized collateral from position and send to liquidator
             let seizeState = self._borrowUpdatedTokenState(type: seizeType)
@@ -1596,7 +1745,10 @@ access(all) contract FlowCreditMarket {
                     scaledBalance: 0.0
                 )
             }
-            position.balances[seizeType]!.recordWithdrawal(amount: seizeUint, tokenState: seizeState)
+            position.balances[seizeType]!.recordWithdrawal(
+                amount: seizeUint,
+                tokenState: seizeState
+            )
             let seizeReserveRef = (&self.reserves[seizeType] as auth(FungibleToken.Withdraw) &{FungibleToken.Vault}?)!
             let payout <- seizeReserveRef.withdraw(amount: quote.seizeAmount)
 
@@ -1777,7 +1929,10 @@ access(all) contract FlowCreditMarket {
                     scaledBalance: 0.0
                 )
             }
-            position.balances[tokenType]!.recordWithdrawal(amount: seizeUint, tokenState: tokenState)
+            position.balances[tokenType]!.recordWithdrawal(
+                amount: seizeUint,
+                tokenState: tokenState
+            )
             if self.reserves[tokenType] == nil {
                 self.reserves[tokenType] <-! DeFiActionsUtils.getEmptyVault(tokenType)
             }
@@ -1871,8 +2026,7 @@ access(all) contract FlowCreditMarket {
             )
         }
 
-
-        access(self) fun computeRequiredDepositForHealth(
+         access(self) fun computeRequiredDepositForHealth(
             position: &InternalPosition,
             depositType: Type,
             withdrawType: Type,
@@ -1880,7 +2034,7 @@ access(all) contract FlowCreditMarket {
             effectiveDebt: UFix128,
             targetHealth: UFix128
         ): UFix64 {
-            var effectiveCollateralAfterWithdrawal = effectiveCollateral
+            let effectiveCollateralAfterWithdrawal = effectiveCollateral
             var effectiveDebtAfterWithdrawal = effectiveDebt
 
             if self.debugLogging {
@@ -1910,61 +2064,58 @@ access(all) contract FlowCreditMarket {
             let depositPrice = UFix128(self.priceOracle.price(ofToken: depositType)!)
             let depositBorrowFactor = UFix128(self.borrowFactor[depositType]!)
             let withdrawBorrowFactor = UFix128(self.borrowFactor[withdrawType]!)
-            if let balance = position.balances[depositType] {
-                if balance.direction == BalanceDirection.Debit {
-                    // The user has a debt position in the given token,
-                    // we start by looking at the health impact of paying off the entire debt.
-                    let depositTokenState = self._borrowUpdatedTokenState(type: depositType)
-                    let trueDebtTokenCount = FlowCreditMarket.scaledBalanceToTrueBalance(
-                        balance.scaledBalance,
-                        interestIndex: depositTokenState.debitInterestIndex
-                    )
-                    let debtEffectiveValue = (depositPrice * trueDebtTokenCount) / depositBorrowFactor
+            let maybeBalance = position.balances[depositType]
+            if maybeBalance?.direction == BalanceDirection.Debit {
+                // The user has a debt position in the given token, we start by looking at the health impact of paying off
+                // the entire debt.
+                let depositTokenState = self._borrowUpdatedTokenState(type: depositType)
+                let debtBalance = maybeBalance!.scaledBalance
+                let trueDebtTokenCount = FlowCreditMarket.scaledBalanceToTrueBalance(debtBalance,
+                    interestIndex: depositTokenState.debitInterestIndex
+                )
+                let debtEffectiveValue = (depositPrice * trueDebtTokenCount) / depositBorrowFactor
 
-                    // Ensure we don't underflow - if debtEffectiveValue is greater than effectiveDebtAfterWithdrawal,
-                    // it means we can pay off all debt
-                    var effectiveDebtAfterPayment: UFix128 = 0.0
+                // Ensure we don't underflow - if debtEffectiveValue is greater than effectiveDebtAfterWithdrawal,
+                // it means we can pay off all debt
+                var effectiveDebtAfterPayment: UFix128 = 0.0
+                if debtEffectiveValue <= effectiveDebtAfterWithdrawal {
+                    effectiveDebtAfterPayment = effectiveDebtAfterWithdrawal - debtEffectiveValue
+                }
+
+                // Check what the new health would be if we paid off all of this debt
+                let potentialHealth = FlowCreditMarket.healthComputation(
+                    effectiveCollateral: effectiveCollateralAfterWithdrawal,
+                    effectiveDebt: effectiveDebtAfterPayment
+                )
+
+                // Does paying off all of the debt reach the target health? Then we're done.
+                if potentialHealth >= targetHealth {
+                    // We can reach the target health by paying off some or all of the debt. We can easily
+                    // compute how many units of the token would be needed to reach the target health.
+                    let healthChange = targetHealth - healthAfterWithdrawal
+                    let requiredEffectiveDebt = effectiveDebtAfterWithdrawal
+                        - (effectiveCollateralAfterWithdrawal / targetHealth)
+
+                    // The amount of the token to pay back, in units of the token.
+                    let paybackAmount = (requiredEffectiveDebt * depositBorrowFactor) / depositPrice
+
+                    if self.debugLogging { log("    [CONTRACT] paybackAmount: \(paybackAmount)") }
+
+                    return FlowCreditMarketMath.toUFix64RoundUp(paybackAmount)
+                } else {
+                    // We can pay off the entire debt, but we still need to deposit more to reach the target health.
+                    // We have logic below that can determine the collateral deposition required to reach the target health
+                    // from this new health position. Rather than copy that logic here, we fall through into it. But first
+                    // we have to record the amount of tokens that went towards debt payback and adjust the effective
+                    // debt to reflect that it has been paid off.
+                    debtTokenCount = trueDebtTokenCount
+                    // Ensure we don't underflow
                     if debtEffectiveValue <= effectiveDebtAfterWithdrawal {
-                        effectiveDebtAfterPayment = effectiveDebtAfterWithdrawal - debtEffectiveValue
-                    }
-
-                    // Check what the new health would be if we paid off all of this debt
-                    let potentialHealth = FlowCreditMarket.healthComputation(
-                        effectiveCollateral: effectiveCollateralAfterWithdrawal,
-                        effectiveDebt: effectiveDebtAfterPayment
-                    )
-
-                    // Does paying off all of the debt reach the target health? Then we're done.
-                    if potentialHealth >= targetHealth {
-                        // We can reach the target health by paying off some or all of the debt. We can easily
-                        // compute how many units of the token would be needed to reach the target health.
-                        let healthChange = targetHealth - healthAfterWithdrawal
-                        let requiredEffectiveDebt = effectiveDebtAfterWithdrawal
-                            - (effectiveCollateralAfterWithdrawal / targetHealth)
-
-                        // The amount of the token to pay back, in units of the token.
-                        let paybackAmount = (requiredEffectiveDebt * depositBorrowFactor) / depositPrice
-
-                        if self.debugLogging {
-                            log("    [CONTRACT] paybackAmount: \(paybackAmount)")
-                        }
-
-                        return FlowCreditMarketMath.toUFix64RoundUp(paybackAmount)
+                        effectiveDebtAfterWithdrawal = effectiveDebtAfterWithdrawal - debtEffectiveValue
                     } else {
-                        // We can pay off the entire debt, but we still need to deposit more to reach the target health.
-                        // We have logic below that can determine the collateral deposition required to reach the target health
-                        // from this new health position. Rather than copy that logic here, we fall through into it. But first
-                        // we have to record the amount of tokens that went towards debt payback and adjust the effective
-                        // debt to reflect that it has been paid off.
-                        debtTokenCount = trueDebtTokenCount
-                        // Ensure we don't underflow
-                        if debtEffectiveValue <= effectiveDebtAfterWithdrawal {
-                            effectiveDebtAfterWithdrawal = effectiveDebtAfterWithdrawal - debtEffectiveValue
-                        } else {
-                            effectiveDebtAfterWithdrawal = 0.0
-                        }
-                        healthAfterWithdrawal = potentialHealth
+                        effectiveDebtAfterWithdrawal = 0.0
                     }
+                    healthAfterWithdrawal = potentialHealth
                 }
             }
 
@@ -1978,8 +2129,7 @@ access(all) contract FlowCreditMarket {
             let healthChangeU = targetHealth - healthAfterWithdrawal
             // TODO: apply the same logic as below to the early return blocks above
             let depositCollateralFactor = UFix128(self.collateralFactor[depositType]!)
-            var requiredEffectiveCollateral = healthChangeU * effectiveDebtAfterWithdrawal
-            requiredEffectiveCollateral = requiredEffectiveCollateral / depositCollateralFactor
+            let requiredEffectiveCollateral = (healthChangeU * effectiveDebtAfterWithdrawal) / depositCollateralFactor
 
             // The amount of the token to deposit, in units of the token.
             let collateralTokenCount = requiredEffectiveCollateral / depositPrice
@@ -2129,6 +2279,7 @@ access(all) contract FlowCreditMarket {
         }
 
         // Helper function to compute available withdrawal
+        // Helper function to compute available withdrawal
         access(self) fun computeAvailableWithdrawal(
             position: &InternalPosition,
             withdrawType: Type,
@@ -2137,85 +2288,82 @@ access(all) contract FlowCreditMarket {
             targetHealth: UFix128
         ): UFix64 {
             var effectiveCollateralAfterDeposit = effectiveCollateral
-            var effectiveDebtAfterDeposit = effectiveDebt
+            let effectiveDebtAfterDeposit = effectiveDebt
 
-            var healthAfterDeposit = FlowCreditMarket.healthComputation(
+            let healthAfterDeposit = FlowCreditMarket.healthComputation(
                 effectiveCollateral: effectiveCollateralAfterDeposit,
                 effectiveDebt: effectiveDebtAfterDeposit
             )
-            if self.debugLogging {
-                log("    [CONTRACT] healthAfterDeposit: \(healthAfterDeposit)")
-            }
+            if self.debugLogging { log("    [CONTRACT] healthAfterDeposit: \(healthAfterDeposit)") }
 
             if healthAfterDeposit <= targetHealth {
                 // The position is already at or below the provided target health, so we can't withdraw anything.
                 return 0.0
             }
 
-            // For situations where the available withdrawal will BOTH draw down collateral and create debt,
-            // we keep track of the number of tokens that are available from collateral
+            // For situations where the available withdrawal will BOTH draw down collateral and create debt, we keep
+            // track of the number of tokens that are available from collateral
             var collateralTokenCount: UFix128 = 0.0
 
             let withdrawPrice = UFix128(self.priceOracle.price(ofToken: withdrawType)!)
             let withdrawCollateralFactor = UFix128(self.collateralFactor[withdrawType]!)
             let withdrawBorrowFactor = UFix128(self.borrowFactor[withdrawType]!)
 
-            if let balance = position.balances[withdrawType] {
-                if balance.direction == BalanceDirection.Credit {
-                    // The user has a credit position in the withdraw token,
-                    // we start by looking at the health impact of pulling out all of that collateral
-                    let withdrawTokenState = self._borrowUpdatedTokenState(type: withdrawType)
-                    let trueCredit = FlowCreditMarket.scaledBalanceToTrueBalance(
-                        balance.scaledBalance,
-                        interestIndex: withdrawTokenState.creditInterestIndex
-                    )
-                    let collateralEffectiveValue = (withdrawPrice * trueCredit) * withdrawCollateralFactor
+            let maybeBalance = position.balances[withdrawType]
+            if maybeBalance?.direction == BalanceDirection.Credit {
+                // The user has a credit position in the withdraw token, we start by looking at the health impact of pulling out all
+                // of that collateral
+                let withdrawTokenState = self._borrowUpdatedTokenState(type: withdrawType)
+                let creditBalance = maybeBalance!.scaledBalance
+                let trueCredit = FlowCreditMarket.scaledBalanceToTrueBalance(creditBalance,
+                    interestIndex: withdrawTokenState.creditInterestIndex
+                )
+                let collateralEffectiveValue = (withdrawPrice * trueCredit) * withdrawCollateralFactor
 
-                    // Check what the new health would be if we took out all of this collateral
-                    let potentialHealth = FlowCreditMarket.healthComputation(
-                        effectiveCollateral: effectiveCollateralAfterDeposit - collateralEffectiveValue, // ??? - why subtract?
-                        effectiveDebt: effectiveDebtAfterDeposit
-                    )
+                // Check what the new health would be if we took out all of this collateral
+                let potentialHealth = FlowCreditMarket.healthComputation(
+                    effectiveCollateral: effectiveCollateralAfterDeposit - collateralEffectiveValue, // ??? - why subtract?
+                    effectiveDebt: effectiveDebtAfterDeposit
+                )
 
-                    // Does drawing down all of the collateral go below the target health? Then the max withdrawal comes from collateral only.
-                    if potentialHealth <= targetHealth {
-                        // We will hit the health target before using up all of the withdraw token credit. We can easily
-                        // compute how many units of the token would bring the position down to the target health.
-                        // We will hit the health target before using up all available withdraw credit.
+                // Does drawing down all of the collateral go below the target health? Then the max withdrawal comes from collateral only.
+                if potentialHealth <= targetHealth {
+                    // We will hit the health target before using up all of the withdraw token credit. We can easily
+                    // compute how many units of the token would bring the position down to the target health.
+                    // We will hit the health target before using up all available withdraw credit.
 
-                        let availableEffectiveValue = effectiveCollateralAfterDeposit - (targetHealth * effectiveDebtAfterDeposit)
-                        if self.debugLogging {
-                            log("    [CONTRACT] availableEffectiveValue: \(availableEffectiveValue)")
-                        }
-
-                        // The amount of the token we can take using that amount of health
-                        let availableTokenCount = (availableEffectiveValue / withdrawCollateralFactor) / withdrawPrice
-                        if self.debugLogging {
-                            log("    [CONTRACT] availableTokenCount: \(availableTokenCount)")
-                        }
-
-                        return FlowCreditMarketMath.toUFix64RoundDown(availableTokenCount)
-                    } else {
-                        // We can flip this credit position into a debit position, before hitting the target health.
-                        // We have logic below that can determine health changes for debit positions. We've copied it here
-                        // with an added handling for the case where the health after deposit is an edgecase
-                        collateralTokenCount = trueCredit
-                        effectiveCollateralAfterDeposit = effectiveCollateralAfterDeposit - collateralEffectiveValue
-                        if self.debugLogging {
-                            log("    [CONTRACT] collateralTokenCount: \(collateralTokenCount)")
-                            log("    [CONTRACT] effectiveCollateralAfterDeposit: \(effectiveCollateralAfterDeposit)")
-                        }
-
-                        // We can calculate the available debt increase that would bring us to the target health
-                        var availableDebtIncrease = (effectiveCollateralAfterDeposit / targetHealth) - effectiveDebtAfterDeposit
-                        let availableTokens = (availableDebtIncrease * withdrawBorrowFactor) / withdrawPrice
-                        if self.debugLogging {
-                            log("    [CONTRACT] availableDebtIncrease: \(availableDebtIncrease)")
-                            log("    [CONTRACT] availableTokens: \(availableTokens)")
-                            log("    [CONTRACT] availableTokens + collateralTokenCount: \(availableTokens + collateralTokenCount)")
-                        }
-                        return FlowCreditMarketMath.toUFix64RoundDown(availableTokens + collateralTokenCount)
+                    let availableEffectiveValue = effectiveCollateralAfterDeposit - (targetHealth * effectiveDebtAfterDeposit)
+                    if self.debugLogging {
+                        log("    [CONTRACT] availableEffectiveValue: \(availableEffectiveValue)")
                     }
+
+                    // The amount of the token we can take using that amount of health
+                    let availableTokenCount = (availableEffectiveValue / withdrawCollateralFactor) / withdrawPrice
+                    if self.debugLogging {
+                        log("    [CONTRACT] availableTokenCount: \(availableTokenCount)")
+                    }
+
+                    return FlowCreditMarketMath.toUFix64RoundDown(availableTokenCount)
+                } else {
+                    // We can flip this credit position into a debit position, before hitting the target health.
+                    // We have logic below that can determine health changes for debit positions. We've copied it here
+                    // with an added handling for the case where the health after deposit is an edgecase
+                    collateralTokenCount = trueCredit
+                    effectiveCollateralAfterDeposit = effectiveCollateralAfterDeposit - collateralEffectiveValue
+                    if self.debugLogging {
+                        log("    [CONTRACT] collateralTokenCount: \(collateralTokenCount)")
+                        log("    [CONTRACT] effectiveCollateralAfterDeposit: \(effectiveCollateralAfterDeposit)")
+                    }
+
+                    // We can calculate the available debt increase that would bring us to the target health
+                    let availableDebtIncrease = (effectiveCollateralAfterDeposit / targetHealth) - effectiveDebtAfterDeposit
+                    let availableTokens = (availableDebtIncrease * withdrawBorrowFactor) / withdrawPrice
+                    if self.debugLogging {
+                        log("    [CONTRACT] availableDebtIncrease: \(availableDebtIncrease)")
+                        log("    [CONTRACT] availableTokens: \(availableTokens)")
+                        log("    [CONTRACT] availableTokens + collateralTokenCount: \(availableTokens + collateralTokenCount)")
+                    }
+                    return FlowCreditMarketMath.toUFix64RoundDown(availableTokens + collateralTokenCount)
                 }
             }
 
@@ -2223,7 +2371,7 @@ access(all) contract FlowCreditMarket {
             // token, or we've accounted for the credit balance and adjusted the effective collateral above.
 
             // We can calculate the available debt increase that would bring us to the target health
-            var availableDebtIncrease = (effectiveCollateralAfterDeposit / targetHealth) - effectiveDebtAfterDeposit
+            let availableDebtIncrease = (effectiveCollateralAfterDeposit / targetHealth) - effectiveDebtAfterDeposit
             let availableTokens = (availableDebtIncrease * withdrawBorrowFactor) / withdrawPrice
             if self.debugLogging {
                 log("    [CONTRACT] availableDebtIncrease: \(availableDebtIncrease)")
@@ -2246,33 +2394,27 @@ access(all) contract FlowCreditMarket {
             let price = UFix128(self.priceOracle.price(ofToken: type)!)
             let collateralFactor = UFix128(self.collateralFactor[type]!)
             let borrowFactor = UFix128(self.borrowFactor[type]!)
-            let balance = position.balances[type]
-            let direction = balance?.direction ?? BalanceDirection.Credit
-            let scaledBalance = balance?.scaledBalance ?? 0.0
+            if position.balances[type] == nil || position.balances[type]!.direction == BalanceDirection.Credit {
+                // Since the user has no debt in the given token, we can just compute how much
+                // additional collateral this deposit will create.
+                effectiveCollateralIncrease = (amountU * price) * collateralFactor
+            } else {
+                // The user has a debit position in the given token, we need to figure out if this deposit
+                // will only pay off some of the debt, or if it will also create new collateral.
+                let debtBalance = position.balances[type]!.scaledBalance
+                let trueDebt = FlowCreditMarket.scaledBalanceToTrueBalance(debtBalance,
+                    interestIndex: tokenState.debitInterestIndex
+                )
 
-            switch direction {
-                case BalanceDirection.Credit:
-                    // Since the user has no debt in the given token, we can just compute how much
-                    // additional collateral this deposit will create.
-                    effectiveCollateralIncrease = (amountU * price) * collateralFactor
-
-                case BalanceDirection.Debit:
-                    // The user has a debit position in the given token, we need to figure out if this deposit
-                    // will only pay off some of the debt, or if it will also create new collateral.
-                    let trueDebt = FlowCreditMarket.scaledBalanceToTrueBalance(
-                        scaledBalance,
-                        interestIndex: tokenState.debitInterestIndex
-                    )
-
-                    if trueDebt >= amountU {
-                        // This deposit will wipe out some or all of the debt, but won't create new collateral, we
-                        // just need to account for the debt decrease.
-                        effectiveDebtDecrease = (amountU * price) / borrowFactor
-                    } else {
-                        // This deposit will wipe out all of the debt, and create new collateral.
-                        effectiveDebtDecrease = (trueDebt * price) / borrowFactor
-                        effectiveCollateralIncrease = (amountU - trueDebt) * price * collateralFactor
-                    }
+                if trueDebt >= amountU {
+                    // This deposit will wipe out some or all of the debt, but won't create new collateral, we
+                    // just need to account for the debt decrease.
+                    effectiveDebtDecrease = (amountU * price) / borrowFactor
+                } else {
+                    // This deposit will wipe out all of the debt, and create new collateral.
+                    effectiveDebtDecrease = (trueDebt * price) / borrowFactor
+                    effectiveCollateralIncrease = (amountU - trueDebt) * price * collateralFactor
+                }
             }
 
             return FlowCreditMarket.healthComputation(
@@ -2281,7 +2423,7 @@ access(all) contract FlowCreditMarket {
             )
         }
 
-        // Returns health value of this position if the given amount of the specified token were withdrawn without
+         // Returns health value of this position if the given amount of the specified token were withdrawn without
         // using the top up source.
         // NOTE: This method can return health values below 1.0, which aren't actually allowed. This indicates
         // that the proposed withdrawal would fail (unless a top up source is available and used).
@@ -2297,33 +2439,27 @@ access(all) contract FlowCreditMarket {
             let price = UFix128(self.priceOracle.price(ofToken: type)!)
             let collateralFactor = UFix128(self.collateralFactor[type]!)
             let borrowFactor = UFix128(self.borrowFactor[type]!)
-            let balance = position.balances[type]
-            let direction = balance?.direction ?? BalanceDirection.Debit
-            let scaledBalance = balance?.scaledBalance ?? 0.0
+            if position.balances[type] == nil || position.balances[type]!.direction == BalanceDirection.Debit {
+                // The user has no credit position in the given token, we can just compute how much
+                // additional effective debt this withdrawal will create.
+                effectiveDebtIncrease = (amountU * price) / borrowFactor
+            } else {
+                // The user has a credit position in the given token, we need to figure out if this withdrawal
+                // will only draw down some of the collateral, or if it will also create new debt.
+                let creditBalance = position.balances[type]!.scaledBalance
+                let trueCredit = FlowCreditMarket.scaledBalanceToTrueBalance(creditBalance,
+                    interestIndex: tokenState.creditInterestIndex
+                )
 
-            switch direction {
-                case BalanceDirection.Debit:
-                    // The user has no credit position in the given token, we can just compute how much
-                    // additional effective debt this withdrawal will create.
-                    effectiveDebtIncrease = (amountU * price) / borrowFactor
-
-                case BalanceDirection.Credit:
-                    // The user has a credit position in the given token, we need to figure out if this withdrawal
-                    // will only draw down some of the collateral, or if it will also create new debt.
-                    let trueCredit = FlowCreditMarket.scaledBalanceToTrueBalance(
-                        scaledBalance,
-                        interestIndex: tokenState.creditInterestIndex
-                    )
-
-                    if trueCredit >= amountU {
-                        // This withdrawal will draw down some collateral, but won't create new debt, we
-                        // just need to account for the collateral decrease.
-                        effectiveCollateralDecrease = (amountU * price) * collateralFactor
-                    } else {
-                        // The withdrawal will wipe out all of the collateral, and create new debt.
-                        effectiveDebtIncrease = ((amountU - trueCredit) * price) / borrowFactor
-                        effectiveCollateralDecrease = (trueCredit * price) * collateralFactor
-                    }
+                if trueCredit >= amountU {
+                    // This withdrawal will draw down some collateral, but won't create new debt, we
+                    // just need to account for the collateral decrease.
+                    effectiveCollateralDecrease = (amountU * price) * collateralFactor
+                } else {
+                    // The withdrawal will wipe out all of the collateral, and create new debt.
+                    effectiveDebtIncrease = ((amountU - trueCredit) * price) / borrowFactor
+                    effectiveCollateralDecrease = (trueCredit * price) * collateralFactor
+                }
             }
 
             return FlowCreditMarket.healthComputation(
@@ -2454,7 +2590,10 @@ access(all) contract FlowCreditMarket {
             // This only records the portion of the deposit that was accepted, not any queued portions,
             // as the queued deposits will be processed later (by this function being called again),
             // and therefore will be recorded at that time.
-            position.balances[type]!.recordDeposit(amount: UFix128(from.balance), tokenState: tokenState)
+            position.balances[type]!.recordDeposit(
+                amount: UFix128(from.balance),
+                tokenState: tokenState
+            )
 
             // Add the money to the reserves
             reserveVault.deposit(from: <-from)
@@ -2605,7 +2744,10 @@ access(all) contract FlowCreditMarket {
 
             // Reflect the withdrawal in the position's balance
             let uintAmount = UFix128(amount)
-            position.balances[type]!.recordWithdrawal(amount: uintAmount, tokenState: tokenState)
+            position.balances[type]!.recordWithdrawal(
+                amount: uintAmount,
+                tokenState: tokenState
+            )
             // Ensure that this withdrawal doesn't cause the position to be overdrawn.
             // Skip the assertion only when a top-up was used in this call and the immediate
             // post-withdrawal health is 0 (transitional state before top-up effects fully reflect).
@@ -2711,7 +2853,10 @@ access(all) contract FlowCreditMarket {
             var newWarmup = self.liquidationWarmupSec
             var newProtocolFee = self.protocolLiquidationFeeBps
             if let targetHF = targetHF {
-                assert(targetHF > 1.0, message: "targetHF must be > 1.0")
+                assert(
+                    targetHF > 1.0,
+                    message: "targetHF must be > 1.0"
+                )
                 self.liquidationTargetHF = targetHF
                 newTarget = targetHF
             }
@@ -2860,6 +3005,30 @@ access(all) contract FlowCreditMarket {
             tsRef.setDepositLimitFraction(fraction)
         }
 
+        /// Updates the interest curve for a given token
+        /// This allows governance to change the interest rate model for a token after it has been added
+        /// to the pool. For example, switching from a fixed rate to a kink-based model, or updating
+        /// the parameters of an existing kink model.
+        ///
+        /// Important: Before changing the curve, we must first compound any accrued interest at the
+        /// OLD rate. Otherwise, interest that accrued since lastUpdate would be calculated using the
+        /// new rate, which would be incorrect.
+        access(EGovernance) fun setInterestCurve(tokenType: Type, interestCurve: {InterestCurve}) {
+            pre {
+                self.globalLedger[tokenType] != nil: "Unsupported token type"
+            }
+            // First, update interest indices to compound any accrued interest at the OLD rate
+            // This "finalizes" all interest accrued up to this moment before switching curves
+            let tsRef = self._borrowUpdatedTokenState(type: tokenType)
+            // Now safe to set the new curve - subsequent interest will accrue at the new rate
+            tsRef.setInterestCurve(interestCurve)
+            emit InterestCurveUpdated(
+                poolUUID: self.uuid,
+                tokenType: tokenType.identifier,
+                curveType: interestCurve.getType().identifier
+            )
+        }
+
         /// Enables or disables verbose logging inside the Pool for testing and diagnostics
         access(EGovernance) fun setDebugLogging(_ enabled: Bool) {
             self.debugLogging = enabled
@@ -2939,7 +3108,10 @@ access(all) contract FlowCreditMarket {
                         }
                         // record the withdrawal and mint the tokens
                         let uintSinkAmount = UFix128(sinkAmount)
-                        position.balances[Type<@MOET.Vault>()]!.recordWithdrawal(amount: uintSinkAmount, tokenState: tokenState)
+                        position.balances[Type<@MOET.Vault>()]!.recordWithdrawal(
+                            amount: uintSinkAmount,
+                            tokenState: tokenState
+                        )
                         let sinkVault <- FlowCreditMarket._borrowMOETMinter().mintTokens(amount: sinkAmount)
 
                         emit Rebalanced(
@@ -3028,23 +3200,23 @@ access(all) contract FlowCreditMarket {
             if self.positionsNeedingUpdates.contains(pid) {
                 // If this position is already queued for an update, no need to check anything else
                 return
-            } else {
-                // If this position is not already queued for an update, we need to check if it needs one
-                let position = self._borrowPosition(pid: pid)
+            }
 
-                if position.queuedDeposits.length > 0 {
-                    // This position has deposits that need to be processed, so we need to queue it for an update
-                    self.positionsNeedingUpdates.append(pid)
-                    return
-                }
+            // If this position is not already queued for an update, we need to check if it needs one
+            let position = self._borrowPosition(pid: pid)
 
-                let positionHealth = self.positionHealth(pid: pid)
+            if position.queuedDeposits.length > 0 {
+                // This position has deposits that need to be processed, so we need to queue it for an update
+                self.positionsNeedingUpdates.append(pid)
+                return
+            }
 
-                if positionHealth < position.minHealth || positionHealth > position.maxHealth {
-                    // This position is outside the configured health bounds, we queue it for an update
-                    self.positionsNeedingUpdates.append(pid)
-                    return
-                }
+            let positionHealth = self.positionHealth(pid: pid)
+
+            if positionHealth < position.minHealth || positionHealth > position.maxHealth {
+                // This position is outside the configured health bounds, we queue it for an update
+                self.positionsNeedingUpdates.append(pid)
+                return
             }
         }
 
@@ -3084,6 +3256,7 @@ access(all) contract FlowCreditMarket {
 
                         let convertedBorrowFactor = UFix128(self.borrowFactor[type]!)
                         effectiveDebt = effectiveDebt + (value / convertedBorrowFactor)
+
                 }
             }
 
@@ -3654,12 +3827,10 @@ access(all) contract FlowCreditMarket {
     }
 
     /* --- PUBLIC METHODS ---- */
-    /// Returns a health value computed from the provided effective collateral and debt values where health is a ratio
-    /// of effective collateral over effective debt
-    access(all) view fun healthComputation(
-        effectiveCollateral: UFix128,
-        effectiveDebt: UFix128
-    ): UFix128 {
+
+    /// Returns a health value computed from the provided effective collateral and debt values
+    /// where health is a ratio of effective collateral over effective debt
+    access(all) view fun healthComputation(effectiveCollateral: UFix128, effectiveDebt: UFix128): UFix128 {
         if effectiveDebt == 0.0 {
             // Handles X/0 (infinite) including 0/0 (safe empty position)
             return UFix128.max
@@ -3703,9 +3874,9 @@ access(all) contract FlowCreditMarket {
         return oldIndex * pow
     }
 
-    /// Transforms the provided `scaledBalance` to a true balance (or actual balance) where the true balance is the
-    /// scaledBalance + accrued interest and the scaled balance is the amount a borrower has actually interacted with
-    /// (via deposits or withdrawals)
+    /// Transforms the provided `scaledBalance` to a true balance (or actual balance)
+    /// where the true balance is the scaledBalance + accrued interest
+    /// and the scaled balance is the amount a borrower has actually interacted with (via deposits or withdrawals)
     access(all) view fun scaledBalanceToTrueBalance(
         _ scaled: UFix128,
         interestIndex: UFix128
@@ -3713,9 +3884,9 @@ access(all) contract FlowCreditMarket {
         return scaled * interestIndex
     }
 
-    /// Transforms the provided `trueBalance` to a scaled balance where the scaled balance is the amount a borrower has
-    /// actually interacted with (via deposits or withdrawals) and the true balance is the amount with respect to
-    /// accrued interest
+    /// Transforms the provided `trueBalance` to a scaled balance
+    /// where the scaled balance is the amount a borrower has actually interacted with (via deposits or withdrawals)
+    /// and the true balance is the amount with respect to accrued interest
     access(all) view fun trueBalanceToScaledBalance(
         _ trueBalance: UFix128,
         interestIndex: UFix128
