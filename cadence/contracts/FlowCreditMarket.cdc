@@ -196,7 +196,8 @@ access(all) contract FlowCreditMarket {
 
                     // Harmonize comparison with withdrawal: treat an exact match as "does not flip to credit"
                     if trueBalance >= amount {
-                        // The deposit isn't big enough to clear the debt, so we just decrement the debt.
+                        // The deposit isn't big enough to clear the debt,
+                        // so we just decrement the debt.
                         let updatedBalance = trueBalance - amount
 
                         self.scaledBalance = FlowCreditMarket.trueBalanceToScaledBalance(
@@ -208,7 +209,8 @@ access(all) contract FlowCreditMarket {
                         tokenState.decreaseDebitBalance(by: amount)
 
                     } else {
-                        // The deposit is enough to clear the debt, so we switch to a credit position.
+                        // The deposit is enough to clear the debt,
+                        // so we switch to a credit position.
                         let updatedBalance = amount - trueBalance
 
                         self.direction = BalanceDirection.Credit
@@ -224,8 +226,8 @@ access(all) contract FlowCreditMarket {
             }
         }
 
-        /// Records a withdrawal of the defined amount, updating the inner scaledBalance as well as relevant values
-        /// in the provided TokenState.
+        /// Records a withdrawal of the defined amount, updating the inner scaledBalance
+        /// as well as relevant values in the provided TokenState.
         ///
         /// It's assumed the TokenState and InternalBalance relate to the same token Type,
         /// but since neither struct have values defining the associated token,
@@ -257,7 +259,8 @@ access(all) contract FlowCreditMarket {
                     tokenState.increaseDebitBalance(by: amount)
 
                 case BalanceDirection.Credit:
-                    // When withdrawing from a credit position, we first need to compute the true balance
+                    // When withdrawing from a credit position,
+                    // we first need to compute the true balance
                     // to see if this withdrawal will flip the position from credit to debit.
                     let trueBalance = FlowCreditMarket.scaledBalanceToTrueBalance(
                         self.scaledBalance,
@@ -265,8 +268,8 @@ access(all) contract FlowCreditMarket {
                     )
 
                     if trueBalance >= amount {
-                        // The withdrawal isn't big enough to push the position into debt, so we just decrement the
-                        // credit balance.
+                        // The withdrawal isn't big enough to push the position into debt,
+                        // so we just decrement the credit balance.
                         let updatedBalance = trueBalance - amount
 
                         self.scaledBalance = FlowCreditMarket.trueBalanceToScaledBalance(
@@ -277,7 +280,8 @@ access(all) contract FlowCreditMarket {
                         // Decrease the total credit balance for the token
                         tokenState.decreaseCreditBalance(by: amount)
                     } else {
-                        // The withdrawal is enough to push the position into debt, so we switch to a debit position.
+                        // The withdrawal is enough to push the position into debt,
+                        // so we switch to a debit position.
                         let updatedBalance = amount - trueBalance
 
                         self.direction = BalanceDirection.Debit
