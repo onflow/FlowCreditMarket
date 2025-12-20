@@ -34,7 +34,7 @@ fun _executeTransaction(_ path: String, _ args: [AnyStruct], _ signer: Test.Test
         authorizers: [signer.address],
         signers: [signer],
         arguments: args
-    )    
+    )
     return Test.executeTransaction(txn)
 }
 
@@ -170,7 +170,7 @@ fun getPositionHealth(pid: UInt64, beFailed: Bool): UFix128 {
             [pid]
         )
     Test.expect(res, beFailed ? Test.beFailed() : Test.beSucceeded())
-    return res.status == Test.ResultStatus.failed ? 0.0 as UFix128 : res.returnValue as! UFix128
+    return res.status == Test.ResultStatus.failed ? 0.0 : res.returnValue as! UFix128
 }
 
 access(all)

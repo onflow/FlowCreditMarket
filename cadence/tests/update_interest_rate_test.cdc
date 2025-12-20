@@ -45,8 +45,7 @@ fun test_FixedRateInterestCurve_uses_spread_model() {
     Test.assertEqual(expectedDebitRate, tokenState.currentDebitRate)
 
     // Credit rate = debitRate - insuranceRate (spread model, independent of utilization)
-    let insuranceRate: UFix128 = FlowCreditMarketMath.toUFix128(tokenState.insuranceRate)
-    let expectedCreditYearly = debitRate - insuranceRate  // 0.10 - 0.001 = 0.099
+    let expectedCreditYearly = debitRate - UFix128(tokenState.insuranceRate)  // 0.10 - 0.001 = 0.099
     let expectedCreditRate = FlowCreditMarket.perSecondInterestRate(yearlyRate: expectedCreditYearly)
     Test.assertEqual(expectedCreditRate, tokenState.currentCreditRate)
 }
@@ -69,7 +68,7 @@ fun test_FixedRateInterestCurve_zero_credit_rate_when_insurance_exceeds_debit() 
     Test.assertEqual(expectedDebitRate, tokenState.currentDebitRate)
 
     // Credit rate should be `one` (multiplicative identity = 0% growth) since insurance >= debit rate
-    Test.assertEqual(FlowCreditMarketMath.one, tokenState.currentCreditRate)
+    Test.assertEqual(1.0 as UFix128, tokenState.currentCreditRate)
 }
 
 // =============================================================================
@@ -94,9 +93,9 @@ fun test_KinkCurve_uses_reserve_factor_model() {
     Test.assertEqual(expectedDebitRate, tokenState.currentDebitRate)
 
     // Credit rate = (debitIncome - debitIncome * insuranceRate) / creditBalance
-    let debitIncome: UFix128 = tokenState.totalDebitBalance * debitRate  // 50 * 0.20 = 10
-    let reserveFactor: UFix128 = FlowCreditMarketMath.toUFix128(tokenState.insuranceRate)
-    let insurance: UFix128 = debitIncome * reserveFactor  // 10 * 0.001 = 0.01
+    let debitIncome = UFix128(tokenState.totalDebitBalance) * debitRate  // 50 * 0.20 = 10
+    let reserveFactor = UFix128(tokenState.insuranceRate)
+    let insurance = debitIncome * reserveFactor  // 10 * 0.001 = 0.01
     let expectedCreditYearly = (debitIncome - insurance) / tokenState.totalCreditBalance  // (10 - 0.01) / 200
     let expectedCreditRate = FlowCreditMarket.perSecondInterestRate(yearlyRate: expectedCreditYearly)
     Test.assertEqual(expectedCreditRate, tokenState.currentCreditRate)
