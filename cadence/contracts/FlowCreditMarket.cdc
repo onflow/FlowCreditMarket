@@ -536,7 +536,7 @@ access(all) contract FlowCreditMarket {
             }
 
             // If no credit balance, nothing to collect
-            if self.totalCreditBalance == 0.0 as UFix128 {
+            if self.totalCreditBalance == 0.0 {
                 return nil
             }
 
@@ -556,11 +556,11 @@ access(all) contract FlowCreditMarket {
 
             // Calculate insurance amount: insuranceRate is annual, so prorate by time elapsed
             // Convert timeElapsed from seconds to years (assuming 365.25 days per year)
-            let secondsPerYear: UFix64 = 365.25 * 24.0 * 60.0 * 60.0
+            let secondsPerYear = 365.25 * 24.0 * 60.0 * 60.0
             let yearsElapsed = timeElapsed / secondsPerYear
-            let insuranceRate: UFix128 = FlowCreditMarketMath.toUFix128(self.insuranceRate)
+            let insuranceRate = UFix128(self.insuranceRate)
             // Insurance amount is a percentage of total credit balance per year
-            let insuranceAmount: UFix128 = self.totalCreditBalance * insuranceRate * FlowCreditMarketMath.toUFix128(yearsElapsed)
+            let insuranceAmount = self.totalCreditBalance * insuranceRate * FlowCreditMarketMath.toUFix128(yearsElapsed)
             let insuranceAmountUFix64 = FlowCreditMarketMath.toUFix64RoundDown(insuranceAmount)
 
             // If calculated amount is zero or negative, skip collection but update timestamp
@@ -581,12 +581,14 @@ access(all) contract FlowCreditMarket {
             let amountToCollect = insuranceAmountUFix64 > reserveRef.balance ? reserveRef.balance : insuranceAmountUFix64
             var insuranceVault <- reserveRef.withdraw(amount: amountToCollect)
 
+			let insuranceSwapper = self.insuranceSwapper ?? panic("missing insurance swapper")
+
             // Validate swapper output type (input type is already validated when swapper is set)
-            assert(self.insuranceSwapper!.outType() == Type<@MOET.Vault>(), message: "Insurance swapper must output MOET")
+            assert(insuranceSwapper.outType() == Type<@MOET.Vault>(), message: "Insurance swapper must output MOET")
 
             // Get quote and perform swap
-            let quote = self.insuranceSwapper!.quoteOut(forProvided: amountToCollect, reverse: false)
-            var moetVault <- self.insuranceSwapper!.swap(quote: quote, inVault: <-insuranceVault)
+            let quote = insuranceSwapper.quoteOut(forProvided: amountToCollect, reverse: false)
+            var moetVault <- insuranceSwapper.swap(quote: quote, inVault: <-insuranceVault)
             assert(moetVault.getType() == Type<@MOET.Vault>(), message: "Insurance swapper returned wrong out type")
 
             // Update last collection time
@@ -902,7 +904,7 @@ access(all) contract FlowCreditMarket {
 
         /// Returns the balance of the MOET insurance fund
         access(all) view fun insuranceFundBalance(): UFix64 {
-            let fundRef = (&self.insuranceFund as &MOET.Vault)
+            let fundRef = &self.insuranceFund as &MOET.Vault
             return fundRef.balance
         }
 
@@ -2380,10 +2382,10 @@ access(all) contract FlowCreditMarket {
             }
             let tsRef = &self.globalLedger[tokenType] as auth(EImplementation) &TokenState?
                 ?? panic("Invariant: token state missing")
-            if swapper != nil {
+            if let swapper = swapper {
                 // Validate swapper types match
-                assert(swapper!.inType() == tokenType, message: "Swapper input type must match token type")
-                assert(swapper!.outType() == Type<@MOET.Vault>(), message: "Swapper output type must be MOET")
+                assert(swapper.inType() == tokenType, message: "Swapper input type must match token type")
+                assert(swapper.outType() == Type<@MOET.Vault>(), message: "Swapper output type must be MOET")
             }
             tsRef.setInsuranceSwapper(swapper)
         }
