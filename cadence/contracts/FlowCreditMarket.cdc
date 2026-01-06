@@ -675,10 +675,12 @@ access(all) contract FlowCreditMarket {
         access(EImplementation) fun setDepositLimitFraction(_ frac: UFix64) {
             self.depositLimitFraction = frac
         }
+
         /// Sets the deposit rate for this token state
         access(EImplementation) fun setDepositRate(_ rate: UFix64) {
             self.depositRate = rate
         }
+
         /// Sets the deposit capacity cap for this token state
         access(EImplementation) fun setDepositCapacityCap(_ cap: UFix64) {
             self.depositCapacityCap = cap
@@ -706,16 +708,15 @@ access(all) contract FlowCreditMarket {
             }
             
             // Track per-user deposit usage for the accepted amount
-            var currentUserUsage: UFix64 = 0.0
-            if let usage = self.depositUsage[pid] {
-                currentUserUsage = usage
-            }
+            let currentUserUsage = self.depositUsage[pid] ?? 0.0
             self.depositUsage[pid] = currentUserUsage + amount
         }
+
         /// Sets deposit capacity (used for time-based regeneration)
         access(EImplementation) fun setDepositCapacity(_ capacity: UFix64) {
             self.depositCapacity = capacity
         }
+
         /// Sets the interest curve for this token state
         /// After updating the curve, also update the interest rates to reflect the new curve
         access(EImplementation) fun setInterestCurve(_ curve: {InterestCurve}) {
@@ -814,7 +815,7 @@ access(all) contract FlowCreditMarket {
         access(EImplementation) fun regenerateDepositCapacity() {
             let currentTime = getCurrentBlock().timestamp
             let dt = currentTime - self.lastDepositCapacityUpdate
-            let hourInSeconds: UFix64 = 3600.0
+            let hourInSeconds = 3600.0
             if dt >= hourInSeconds { // 1 hour
                 let multiplier = dt / hourInSeconds
                 let oldCap = self.depositCapacityCap
@@ -2671,10 +2672,7 @@ access(all) contract FlowCreditMarket {
 
             // Per-user deposit limit: check if user has exceeded their per-user limit
             let userDepositLimitCap = tokenState.getUserDepositLimitCap()
-            var currentUsage: UFix64 = 0.0
-            if let usage = tokenState.depositUsage[pid] {
-                currentUsage = usage
-            }
+            let currentUsage = tokenState.depositUsage[pid] ?? 0.0
             let remainingUserLimit = userDepositLimitCap - currentUsage
             
             // If the deposit would exceed the user's limit, queue or reject the excess
