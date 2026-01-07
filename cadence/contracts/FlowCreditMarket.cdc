@@ -1442,15 +1442,25 @@ access(all) contract FlowCreditMarket {
         access(all) fun getQueuedDeposits(pid: UInt64): {Type: UFix64} {
             let position = self._borrowPosition(pid: pid)
             let result: {Type: UFix64} = {}
-            for depositType in position.queuedDeposits.keys {
-                if let amount = position.queuedDepositAmounts[depositType] {
-                    result[depositType] = amount
-                } else {
-                    let queuedVaultRef = (&position.queuedDeposits[depositType] as &{FungibleToken.Vault}?)!
-                    result[depositType] = queuedVaultRef.balance
-                }
+            for depositType in position.queuedDepositAmounts.keys {
+                result[depositType] = position.queuedDepositAmounts[depositType]!
             }
             return result
+        }
+
+        /// Rebuilds queued deposit amounts for a given position from queued deposits
+        access(EImplementation) fun syncQueuedDepositAmounts(pid: UInt64) {
+            let position = self._borrowPosition(pid: pid)
+
+            for existingType in position.queuedDepositAmounts.keys {
+                position.queuedDepositAmounts.remove(key: existingType)
+            }
+
+            for depositType in position.queuedDeposits.keys {
+                let queuedVault <- position.queuedDeposits.remove(key: depositType)!
+                position.queuedDepositAmounts[depositType] = queuedVault.balance
+                position.queuedDeposits[depositType] <-! queuedVault
+            }
         }
 
         /// Quote liquidation required repay and seize amounts to bring HF to liquidationTargetHF
@@ -2718,13 +2728,10 @@ access(all) contract FlowCreditMarket {
                     position.queuedDeposits[type] <-! queuedDeposit
                     position.queuedDepositAmounts[type] = queuedAmount
                 } else {
-                    position.queuedDeposits[type]!.deposit(from: <-queuedDeposit)
-                    if let existingQueued = position.queuedDepositAmounts[type] {
-                        position.queuedDepositAmounts[type] = existingQueued + queuedAmount
-                    } else {
-                        let queuedVaultRef = (&position.queuedDeposits[type] as &{FungibleToken.Vault}?)!
-                        position.queuedDepositAmounts[type] = queuedVaultRef.balance
-                    }
+                    let existingQueued <- position.queuedDeposits.remove(key: type)!
+                    existingQueued.deposit(from: <-queuedDeposit)
+                    position.queuedDepositAmounts[type] = existingQueued.balance
+                    position.queuedDeposits[type] <-! existingQueued
                 }
             }
 
