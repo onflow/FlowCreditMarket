@@ -300,18 +300,15 @@ access(all) contract FlowCreditMarket {
     /// BalanceSheet
     ///
     /// An struct containing a position's overview in terms of its effective collateral and debt
-    /// as well as its current health
+    /// as well as its current health.
     access(all) struct BalanceSheet {
 
-        /// A position's withdrawable value based on collateral deposits
-        /// against the Pool's collateral and borrow factors.
-        /// TODO(jord): I think this is "withdrawable value" only if effectiveDebt==0
-        /// Denominated in MOET.
+        /// Effective collateral is a normalized valuation of collateral deposited into this position, denominated in $.
+        /// In combination with effective debt, this determines how much additional debt can be taken out by this position.
         access(all) let effectiveCollateral: UFix128
 
-        /// A position's withdrawn value based on withdrawals
-        /// against the Pool's collateral and borrow factors
-        /// Denominated in MOET.
+        /// Effective debt is a normalized valuation of debt withdrawn against this position, denominated in $.
+        /// In combination with effective collateral, this determines how much additional debt can be taken out by this position.
         access(all) let effectiveDebt: UFix128
 
         /// The health of the related position
@@ -332,7 +329,6 @@ access(all) contract FlowCreditMarket {
 
     /// Liquidation parameters view (global)
     access(all) struct LiquidationParamsView {
-        /// Target health factor 
         access(all) let targetHF: UFix128
         access(all) let paused: Bool
         access(all) let warmupSec: UInt64
@@ -354,32 +350,6 @@ access(all) contract FlowCreditMarket {
         }
     }
 
-    /// A quote generated during the liquidation process.
-    /// It describes the terms of liquidation for a potential liquidator.
-    access(all) struct LiquidationQuote {
-        /// Amount the liquidator must repay, denominated in MOET
-        // TODO(jord): I think it is MOET, not sure
-        access(all) let requiredRepay: UFix64
-        /// The type of collateral the liquidator may seize in exchange for repayment.
-        access(all) let seizeType: Type
-        /// The amount of collateral the liquidator may seize in exchange for repayment.
-        access(all) let seizeAmount: UFix64
-        /// The new health factor after this liquidation occurs.
-        access(all) let newHF: UFix128
-
-        init(
-            requiredRepay: UFix64,
-            seizeType: Type,
-            seizeAmount: UFix64,
-            newHF: UFix128
-        ) {
-            self.requiredRepay = requiredRepay
-            self.seizeType = seizeType
-            self.seizeAmount = seizeAmount
-            self.newHF = newHF
-        }
-    }
-
     /// Entitlement mapping enabling authorized references on nested resources within InternalPosition
     access(all) entitlement mapping ImplementationUpdates {
         EImplementation -> Mutate
@@ -392,7 +362,6 @@ access(all) contract FlowCreditMarket {
     access(all) resource InternalPosition {
 
         /// The target health of the position
-        /// TODO(jord): Is this user-defined or protocol-defined?
         access(EImplementation) var targetHealth: UFix128
 
         /// The minimum health of the position, below which a position is considered undercollateralized
