@@ -1446,9 +1446,6 @@ access(all) contract FlowCreditMarket {
             assert(seizeAmount < quote.inAmount, message: "Liquidation offer must be better than that offered by DEX")
             
             // Compare the DEX price to the oracle price and revert if they diverge beyond configured threshold.
-            // Suppose our collateral is X and our debt is Y
-            // We get a quote for 10X for 100Y -> X=10Y, so Pxy = 
-            // Then the price of collateral denominated in debt is 10$/100FLOW = 0.1$/FLOW = 0.1C/D
             let Pcd_dex = quote.outAmount / quote.inAmount // price of collateral, denominated in debt token, implied by dex quote (D/C)
             // Compute the absolute value of the difference between the oracle price and dex price
             let Pcd_dex_oracle_diff: UFix64 = Pcd_dex < Pcd_oracle ? Pcd_oracle - Pcd_dex : Pcd_dex - Pcd_oracle
