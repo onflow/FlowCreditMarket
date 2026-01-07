@@ -906,11 +906,15 @@ access(all) contract FlowCreditMarket {
         access(all) fun trueBalance(ofToken: Type): UFix128 {
             let balance = self.balances[ofToken]!
             let tokenSnapshot = self.snapshots[ofToken]!
-            let trueBalance = FlowCreditMarket.scaledBalanceToTrueBalance(
-                    balance.scaledBalance,
-                    interestIndex: tokenSnapshot.creditIndex
-                )
-            return trueBalance
+            switch balance.direction {
+            case BalanceDirection.Debit:
+                return FlowCreditMarket.scaledBalanceToTrueBalance(
+                    balance.scaledBalance, interestIndex: tokenSnapshot.debitIndex)
+            case BalanceDirection.Credit:
+                return FlowCreditMarket.scaledBalanceToTrueBalance(
+                    balance.scaledBalance, interestIndex: tokenSnapshot.creditIndex)
+            }
+            panic("unreachable code")
         }
     }
 
