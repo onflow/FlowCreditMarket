@@ -1186,6 +1186,7 @@ access(all) contract FlowCreditMarket {
             self.debugLogging = false
             self.globalLedger = {
                 defaultToken: TokenState(
+                    tokenType: defaultToken,
                     interestCurve: FixedRateInterestCurve(yearlyRate: 0.0),
                     depositRate: 1_000_000.0,        // Default: no rate limiting for default token
                     depositCapacityCap: 1_000_000.0  // Default: high capacity cap
@@ -3103,6 +3104,7 @@ access(all) contract FlowCreditMarket {
 
             // Add token to global ledger with its interest curve and deposit parameters
             self.globalLedger[tokenType] = TokenState(
+                tokenType: tokenType,
                 interestCurve: interestCurve,
                 depositRate: depositRate,
                 depositCapacityCap: depositCapacityCap
