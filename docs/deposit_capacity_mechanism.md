@@ -19,7 +19,7 @@ The deposit capacity system implements a multi-layered rate limiting mechanism t
 **Purpose**: The flat amount added to `depositCapacityCap` approximately once per hour.
 
 **Behavior**:
-- `depositRate` is a flat amount (not a rate per second)
+- `depositRate` is a per-hour rate and will be multiplied by the amount of time passed
 - It is added to `depositCapacityCap` when capacity regenerates
 - Regeneration occurs approximately once per hour (when `dt > 3600.0` seconds)
 - The regeneration check happens in `regenerateDepositCapacity()` which is called via `updateForTimeChange()`

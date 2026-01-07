@@ -108,13 +108,25 @@ access(all) contract FlowCreditMarket {
         curveType: String
     )
 
+    access(all) event DepositCapacityRegenerated(
+        tokenType: Type,
+        oldCapacityCap: UFix64,
+        newCapacityCap: UFix64
+    )
+
+    access(all) event DepositCapacityConsumed(
+        tokenType: Type,
+        pid: UInt64,
+        amount: UFix64,
+        remainingCapacity: UFix64
+    )
+
     /* --- CONSTRUCTS & INTERNAL METHODS ---- */
 
     access(all) entitlement EPosition
     access(all) entitlement EGovernance
     access(all) entitlement EImplementation
     access(all) entitlement EParticipant
-    access(all) entitlement ETokenStateView
 
     /* --- NUMERIC TYPES POLICY ---
         - External/public APIs (Vault amounts, deposits/withdrawals, events) use UFix64.
@@ -589,6 +601,8 @@ access(all) contract FlowCreditMarket {
     /// The TokenState struct tracks values related to a single token Type within the Pool.
     access(all) struct TokenState {
 
+        access(EImplementation) var tokenType : Type
+
         /// The timestamp at which the TokenState was last updated
         access(EImplementation) var lastUpdate: UFix64
 
@@ -631,6 +645,7 @@ access(all) contract FlowCreditMarket {
 
         /// The rate at which depositCapacity can increase over time. This is per hour. and should be applied to the depositCapacityCap once an hour.
         access(EImplementation) var depositRate: UFix64
+
         /// The timestamp of the last deposit capacity update
         access(EImplementation) var lastDepositCapacityUpdate: UFix64
 
@@ -640,15 +655,18 @@ access(all) contract FlowCreditMarket {
         /// The upper bound on total deposits of the related token,
         /// limiting how much depositCapacity can reach
         access(EImplementation) var depositCapacityCap: UFix64
+
         /// Tracks per-user deposit usage for enforcing user deposit limits
         /// Maps position ID -> usage amount (how much of each user's limit has been consumed for this token type)
         access(EImplementation) var depositUsage: {UInt64: UFix64}
 
         init(
+            tokenType: Type,
             interestCurve: {InterestCurve},
             depositRate: UFix64,
             depositCapacityCap: UFix64
         ) {
+            self.tokenType = tokenType
             self.lastUpdate = getCurrentBlock().timestamp
             self.totalCreditBalance = 0.0
             self.totalDebitBalance = 0.0
@@ -676,8 +694,10 @@ access(all) contract FlowCreditMarket {
             self.depositLimitFraction = frac
         }
 
-        /// Sets the deposit rate for this token state
+        /// Sets the deposit rate for this token state after settling the old rate
         access(EImplementation) fun setDepositRate(_ rate: UFix64) {
+            // settle using old rate if for some reason too much time has passed without regeneration
+            self.regenerateDepositCapacity() 
             self.depositRate = rate
         }
 
@@ -700,16 +720,22 @@ access(all) contract FlowCreditMarket {
         /// Decreases deposit capacity by the specified amount and tracks per-user deposit usage
         /// (used when deposits are made)
         access(EImplementation) fun consumeDepositCapacity(_ amount: UFix64, pid: UInt64) {
-            if amount > self.depositCapacity {
-                // Safety check: this shouldn't happen if depositLimit() is working correctly
-                self.depositCapacity = 0.0
-            } else {
-                self.depositCapacity = self.depositCapacity - amount
-            }
+            assert(
+                amount <= self.depositCapacity,
+                message: "cannot consume more than available deposit capacity"
+            )
+            self.depositCapacity = self.depositCapacity - amount
             
             // Track per-user deposit usage for the accepted amount
             let currentUserUsage = self.depositUsage[pid] ?? 0.0
             self.depositUsage[pid] = currentUserUsage + amount
+
+            emit DepositCapacityConsumed(
+                tokenType: self.tokenType,
+                pid: pid,
+                amount: amount,
+                remainingCapacity: self.depositCapacity
+            )
         }
 
         /// Sets deposit capacity (used for time-based regeneration)
@@ -832,6 +858,12 @@ access(all) contract FlowCreditMarket {
                 }
                 
                 self.lastDepositCapacityUpdate = currentTime
+
+                emit DepositCapacityRegenerated(
+                    tokenType: self.tokenType,
+                    oldCapacityCap: oldCap,
+                    newCapacityCap: newDepositCapacityCap
+                )
             }
         }
 
