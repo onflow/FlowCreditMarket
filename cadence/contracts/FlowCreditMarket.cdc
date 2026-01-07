@@ -1451,7 +1451,7 @@ access(all) contract FlowCreditMarket {
             let Pcd_dex_oracle_diffPct: UFix64 = Pcd_dex < Pcd_oracle ? Pcd_dex_oracle_diff / Pcd_dex : Pcd_dex_oracle_diff / Pcd_oracle
             let Pcd_dex_oracle_diffBps = UInt16(Pcd_dex_oracle_diffPct * 10_000.0) // cannot overflow because Pcd_dex_oracle_diffPct<=1
 
-            assert(Pcd_dex_oracle_diffBps > self.dexOracleDeviationBps, message: "Too large difference between dex/oracle prices diff=\(Pcd_dex_oracle_diffBps)bps")
+            assert(Pcd_dex_oracle_diffBps <= self.dexOracleDeviationBps, message: "Too large difference between dex/oracle prices diff=\(Pcd_dex_oracle_diffBps)bps")
 
             // Execute the liquidation
             return <- self._doLiquidation(pid: pid, from: <-repaymentSource, debtType: debtType, seizeType: seizeType, seizeAmount: seizeAmount)
