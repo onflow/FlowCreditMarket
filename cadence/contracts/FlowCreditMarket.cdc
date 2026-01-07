@@ -1441,10 +1441,14 @@ access(all) contract FlowCreditMarket {
         /// Returns the queued deposit balances for a given position
         access(all) fun getQueuedDeposits(pid: UInt64): {Type: UFix64} {
             let position = self._borrowPosition(pid: pid)
-            // Return a copy to avoid returning an auth reference
             let result: {Type: UFix64} = {}
-            for type in position.queuedDepositAmounts.keys {
-                result[type] = position.queuedDepositAmounts[type]!
+            for depositType in position.queuedDeposits.keys {
+                if let amount = position.queuedDepositAmounts[depositType] {
+                    result[depositType] = amount
+                } else {
+                    let queuedVaultRef = (&position.queuedDeposits[depositType] as &{FungibleToken.Vault}?)!
+                    result[depositType] = queuedVaultRef.balance
+                }
             }
             return result
         }
@@ -2715,7 +2719,12 @@ access(all) contract FlowCreditMarket {
                     position.queuedDepositAmounts[type] = queuedAmount
                 } else {
                     position.queuedDeposits[type]!.deposit(from: <-queuedDeposit)
-                    position.queuedDepositAmounts[type] = position.queuedDepositAmounts[type]! + queuedAmount
+                    if let existingQueued = position.queuedDepositAmounts[type] {
+                        position.queuedDepositAmounts[type] = existingQueued + queuedAmount
+                    } else {
+                        let queuedVaultRef = (&position.queuedDeposits[type] as &{FungibleToken.Vault}?)!
+                        position.queuedDepositAmounts[type] = queuedVaultRef.balance
+                    }
                 }
             }
 
