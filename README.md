@@ -58,10 +58,10 @@ The project includes comprehensive tests covering all functionality:
 
 ```bash
 # Run all tests with coverage
-flow test --cover
+flow test --cover cadence/tests/*_test.cdc
 
 # Run specific test file
-flow test cadence/tests/core_vault_test.cdc
+flow test cadence/tests/interest_curve_test.cdc
 ```
 
 ### Test Results Summary
@@ -100,7 +100,7 @@ flow dependencies install
 
 3. Run tests:
 ```bash
-flow test --cover
+flow test --cover cadence/tests/*_test.cdc
 ```
 
 ### Deploy to Emulator
@@ -176,10 +176,10 @@ pool.deposit(pid: positionId, funds: <-vault)
 
 ```bash
 # Run all tests
-flow test --cover
+flow test --cover cadence/tests/*_test.cdc
 
 # Run specific test category
-flow test cadence/tests/interest_mechanics_test.cdc
+flow test cadence/tests/interest_curve_test.cdc
 ```
 
 ## 📚 Documentation
