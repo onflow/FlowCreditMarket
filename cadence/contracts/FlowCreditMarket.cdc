@@ -640,7 +640,7 @@ access(all) contract FlowCreditMarket {
         /// The insurance rate applied to total credit when computing credit interest (default 0.1%)
         access(EImplementation) var insuranceRate: UFix64
 
-        /// Per-deposit limit fraction of capacity (default 0.05 i.e., 5%)
+        /// Per-position limit fraction of capacity (default 0.05 i.e., 5%)
         access(EImplementation) var depositLimitFraction: UFix64
 
         /// The rate at which depositCapacity can increase over time. This is per hour. and should be applied to the depositCapacityCap once an hour.
