@@ -1286,6 +1286,12 @@ access(all) contract FlowCreditMarket {
             return self.insuranceFund.balance
         }
 
+        /// Returns the insurance rate for a given token type
+        access(all) view fun getInsuranceRate(tokenType: Type): UFix64 {
+            assert(self.globalLedger[tokenType] != nil, message: "Token type not supported")
+            return self.globalLedger[tokenType]?.insuranceRate ?? 0.0
+        }
+
         /// Returns a position's balance available for withdrawal of a given Vault type.
         /// Phase 0 refactor: compute via pure helpers using a PositionView and TokenSnapshot for the base path.
         /// When `pullFromTopUpSource` is true and a topUpSource exists, preserve deposit-assisted semantics.
