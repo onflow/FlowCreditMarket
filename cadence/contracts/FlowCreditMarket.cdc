@@ -868,6 +868,7 @@ access(all) contract FlowCreditMarket {
             self.maxHealth = max
         }
 
+        /// Returns the true balance of the given token in this position, accounting for interest.
         access(all) fun trueBalance(ofToken: Type): UFix128 {
             let balance = self.balances[ofToken]!
             let tokenSnapshot = self.snapshots[ofToken]!
@@ -1069,6 +1070,9 @@ access(all) contract FlowCreditMarket {
         /// Time this pool most recently had liquidations paused
         access(self) var lastUnpausedAt: UInt64?
 
+        /// TODO: unused! To remove, must re-deploy existing contracts
+        access(self) var protocolLiquidationFeeBps: UInt16
+
         // TODO(jord): figure out how to reference dex https://github.com/onflow/FlowCreditMarket/issues/94
         //  - either need to redeploy contract to create new dex field
         //  - or need to revert to allowlist pattern and pass in swapper instances (I worry about security of this option)
@@ -1118,6 +1122,7 @@ access(all) contract FlowCreditMarket {
             self.liquidationsPaused = false
             self.liquidationWarmupSec = 300
             self.lastUnpausedAt = nil
+            self.protocolLiquidationFeeBps = 0
             self.allowedSwapperTypes = {}
             self.dex = nil
             self.dexOracleDeviationBps = UInt16(300) // 3% default
@@ -1423,7 +1428,7 @@ access(all) contract FlowCreditMarket {
             let postHealth = FlowCreditMarket.healthComputation(effectiveCollateral: Ce_post, effectiveDebt: De_post)
             assert(postHealth <= self.liquidationTargetHF, message: "Liquidation must not exceed target health: \(postHealth)>\(self.liquidationTargetHF)")
 
-            // TODO(jord): uncomment following when implementing SwapperProvider
+            // TODO(jord): uncomment following when implementing dex logic https://github.com/onflow/FlowCreditMarket/issues/94
 /* 
             // Compare the liquidation offer to liquidation via DEX. If the DEX would provide a better price, reject the offer.
             let swapper = self.dex!.getSwapper(inType: seizeType, outType: debtType)! // TODO: will revert if pair unsupported
