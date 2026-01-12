@@ -1379,12 +1379,10 @@ access(all) contract FlowCreditMarket {
             repayment: @{FungibleToken.Vault}
         ): @{FungibleToken.Vault} {
             pre {
-                // debt, collateral are both supported tokens
-                // liquidationsPaused is false
-                // liquidation warmup?
-            }
-            post {
-                // health factor should be <= target
+                self.isTokenSupported(tokenType: debtType): "Debt token type unsupported: \(debtType.identifier)"
+                self.isTokenSupported(tokenType: seizeType): "Collateral token type unsupported: \(seizeType.identifier)"
+                debtType == repayment.getType(): "Repayment vault does not match debt type: \(debtType.identifier)!=\(repayment.getType().identifier)"
+                // TODO(jord): liquidation paused / post-pause warm
             }
 
             let positionView = self.buildPositionView(pid: pid)

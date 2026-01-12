@@ -3,11 +3,13 @@ import BlockchainHelpers
 import "test_helpers.cdc"
 import "FlowCreditMarket"
 import "MOET"
+import "MockYieldToken"
 import "FlowToken"
 import "FlowCreditMarketMath"
 
 access(all) let flowTokenIdentifier = "A.0000000000000003.FlowToken.Vault"
 access(all) let moetIdentifier = "A.0000000000000007.MOET.Vault"
+access(all) let mockYieldTokenIdentifier = "A.0000000000000007.MockYieldToken.Vault"
 access(all) var snapshot: UInt64 = 0
 
 access(all)
@@ -308,7 +310,8 @@ fun testManualLiquidation_reduceHealth() {
     let hAfterPriceUF = FlowCreditMarketMath.toUFix64Round(hAfterPrice)
     log("[LIQ] Health after price drop: raw=\(hAfterPrice), approx=\(hAfterPriceUF)")
 
-    let collateralBalance = getPositionBalance(pid: pid, vaultID: flowTokenIdentifier).balance
+    let collateralBalancePreLiq = getPositionBalance(pid: pid, vaultID: flowTokenIdentifier).balance
+    let debtBalancePreLiq = getPositionBalance(pid: pid, vaultID: moetIdentifier).balance
 
     // execute liquidation
     let liquidator = Test.createAccount()
@@ -320,7 +323,7 @@ fun testManualLiquidation_reduceHealth() {
     log("Liquidator MOET balance after mint: \(liqBalance)")
 
     // Repay MOET to seize FLOW. Choose seize amount above collateral balance
-    let seizeAmount = collateralBalance - 0.01
+    let seizeAmount = collateralBalancePreLiq - 0.01
     let repayAmount = seizeAmount * newPrice * 1.01
     let liqRes = _executeTransaction(
         "../transactions/flow-credit-market/pool-management/manual_liquidation.cdc",
@@ -330,7 +333,14 @@ fun testManualLiquidation_reduceHealth() {
     // Should succeed, even though we are reducing health
     Test.expect(liqRes, Test.beSucceeded())
 
-    // TODO(jord): validate post-liquidation balances
+    // Validate position balances post-liquidation
+    let collateralBalanceAfterLiq = getPositionBalance(pid: pid, vaultID: flowTokenIdentifier).balance
+    let debtBalanceAfterLiq = getPositionBalance(pid: pid, vaultID: moetIdentifier).balance
+    Test.assert(collateralBalanceAfterLiq == collateralBalancePreLiq - seizeAmount, message: "should lose exactly seized collateral")
+    Test.assert(debtBalanceAfterLiq == debtBalancePreLiq -repayAmount, message: "should lose exactly repaid debt")
+
+    let liquidatorFlowBalance = getBalance(address: liquidator.address, vaultPublicPath: /public/flowTokenBalance) ?? 0.0
+    Test.assert(liquidatorFlowBalance == seizeAmount, message: "liquidator should hold seized flow")
 
     // health after liquidation
     let hAfterLiq = getPositionHealth(pid: pid, beFailed: false)
@@ -347,8 +357,72 @@ fun testManualLiquidation_increaseHealthBelowTarget() {}
 access(all)
 fun testManualLiquidation_liquidateToTarget() {}
 
+/// Test the case where the liquidator provides a repayment vault of the collateral type instead of debt type.
+
+/// Test the case where the liquidator provides a repayment vault with different type than the debt type.
 access(all)
-fun testManualLiquidation_repaymentVaultWrongType() {}
+fun testManualLiquidation_repaymentVaultTypeMismatch() {
+    safeReset()
+    let pid: UInt64 = 0
+
+    // user setup
+    let user = Test.createAccount()
+    setupMoetVault(user, beFailed: false)
+    transferFlowTokens(to: user, amount: 1000.0)
+
+    // open wrapped position and deposit via existing helper txs
+    // debt is MOET, collateral is FLOW
+    let openRes = _executeTransaction(
+        "./transactions/mock-flow-credit-market-consumer/create_wrapped_position.cdc",
+        [1000.0, /storage/flowTokenVault, true],
+        user
+    )
+    Test.expect(openRes, Test.beSucceeded())
+
+    // health before price drop
+    let hBefore = getPositionHealth(pid: pid, beFailed: false)
+    let hBeforeUF = FlowCreditMarketMath.toUFix64Round(hBefore)
+    log("[LIQ] Health before price drop: raw=\(hBefore), approx=\(hBeforeUF)")
+
+    // cause undercollateralization
+    let newPrice = 0.7 // $/FLOW
+    setMockOraclePrice(signer: Test.getAccount(0x0000000000000007), forTokenIdentifier: flowTokenIdentifier, price: newPrice)
+    let hAfterPrice = getPositionHealth(pid: pid, beFailed: false)
+    let hAfterPriceUF = FlowCreditMarketMath.toUFix64Round(hAfterPrice)
+    log("[LIQ] Health after price drop: raw=\(hAfterPrice), approx=\(hAfterPriceUF)")
+
+    let debtPositionBalance = getPositionBalance(pid: pid, vaultID: moetIdentifier)
+    Test.assert(debtPositionBalance.direction == FlowCreditMarket.BalanceDirection.Debit)
+    var debtBalance = debtPositionBalance.balance
+
+    // execute liquidation, attempting to pass in MockYieldToken instead of MOET
+    let liquidator = Test.createAccount()
+    setupMockYieldTokenVault(liquidator, beFailed: false)
+    mintMockYieldToken(signer: Test.getAccount(0x0000000000000007), to: liquidator.address, amount: 1000.0, beFailed: false)
+
+    let liqBalance = getBalance(address: liquidator.address, vaultPublicPath: MockYieldToken.VaultPublicPath) ?? 0.0
+    log("Liquidator mock balance after mint: \(liqBalance)")
+
+    // Purport to repay MOET to seize FLOW, but we will actually pass in a MockYieldToken vault for repayment
+    let repayAmount = debtBalance + 0.001
+    let seizeAmount = (repayAmount / newPrice) * 0.99
+    let liqRes = _executeTransaction(
+        "../tests/transactions/flow-credit-market/pool-management/manual_liquidation_chosen_vault.cdc",
+        [pid, Type<@MOET.Vault>().identifier, mockYieldTokenIdentifier, flowTokenIdentifier, seizeAmount, repayAmount],
+        liquidator
+    )
+    // Should fail because we are passing in a repayment vault with the wrong type
+    Test.expect(liqRes, Test.beFailed())
+    log(liqRes.error)
+    Test.assertError(liqRes, errorMessage: "Repayment vault does not match debt type")
+
+    // health after liquidation
+    let hAfterLiq = getPositionHealth(pid: pid, beFailed: false)
+    let hAfterLiqUF = FlowCreditMarketMath.toUFix64Round(hAfterLiq)
+    log("[LIQ] Health after liquidation: raw=\(hAfterLiq), approx=\(hAfterLiqUF)")
+
+    Test.assert(hAfterLiq == hAfterPrice, message: "sanity check: health should not change after failed liquidation")
+}
 
 access(all)
 fun testManualLiquidation_unsupportedDebtType() {}

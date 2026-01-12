@@ -383,6 +383,18 @@ fun mintMoet(signer: Test.TestAccount, to: Address, amount: UFix64, beFailed: Bo
     Test.expect(mintRes, beFailed ? Test.beFailed() : Test.beSucceeded())
 }
 
+access(all)
+fun setupMockYieldTokenVault(_ signer: Test.TestAccount, beFailed: Bool) {
+    let setupRes = _executeTransaction("../transactions/mocks/yieldtoken/setup_vault.cdc", [], signer)
+    Test.expect(setupRes, beFailed ? Test.beFailed() : Test.beSucceeded())
+}
+
+access(all)
+fun mintMockYieldToken(signer: Test.TestAccount, to: Address, amount: UFix64, beFailed: Bool) {
+    let mintRes = _executeTransaction("../transactions/mocks/yieldtoken/mint.cdc", [to, amount], signer)
+    Test.expect(mintRes, beFailed ? Test.beFailed() : Test.beSucceeded())
+}
+
 
 // Transfer Flow tokens from service account to recipient
 access(all)
