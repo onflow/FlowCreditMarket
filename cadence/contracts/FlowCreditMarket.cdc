@@ -1243,6 +1243,23 @@ access(all) contract FlowCreditMarket {
             return self.globalLedger[tokenType] != nil
         }
 
+        /// Returns whether an insurance swapper is configured for a given token type
+        access(all) view fun hasInsuranceSwapper(tokenType: Type): Bool {
+            if let tokenState = self.globalLedger[tokenType] {
+                return tokenState.insuranceSwapper != nil
+            }
+            return false
+        }
+
+        /// Returns the timestamp of the last insurance collection for a given token type
+        /// Returns nil if the token type is not supported
+        access(all) view fun getLastInsuranceCollection(tokenType: Type): UFix64? {
+            if let tokenState = self.globalLedger[tokenType] {
+                return tokenState.lastInsuranceCollection
+            }
+            return nil
+        }
+
         /// Returns current liquidation parameters
         access(all) fun getLiquidationParams(): FlowCreditMarket.LiquidationParamsView {
             return FlowCreditMarket.LiquidationParamsView(
@@ -3147,6 +3164,16 @@ access(all) contract FlowCreditMarket {
                 assert(swapper.outType() == Type<@MOET.Vault>(), message: "Swapper output type must be MOET")
             }
             tsRef.setInsuranceSwapper(swapper)
+        }
+
+        /// Manually triggers insurance collection for a given token type.
+        /// This is useful for governance to collect accrued insurance on-demand.
+        /// Insurance is calculated based on time elapsed since last collection.
+        access(EGovernance) fun collectInsurance(tokenType: Type) {
+            pre {
+                self.globalLedger[tokenType] != nil: "Unsupported token type"
+            }
+            self.updateInterestRatesAndCollectInsurance(tokenType: tokenType)
         }
 
         /// Updates the per-deposit limit fraction for a given token (fraction in [0,1])
