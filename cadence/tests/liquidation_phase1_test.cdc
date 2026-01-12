@@ -555,6 +555,7 @@ fun testManualLiquidation_unsupportedCollateralType() {
     // execute liquidation
     let liquidator = Test.createAccount()
     setupMoetVault(liquidator, beFailed: false)
+    setupMockYieldTokenVault(liquidator, beFailed: false)
     let mintRes = _executeTransaction("../transactions/moet/mint_moet.cdc", [liquidator.address, 1000.0], Test.getAccount(0x0000000000000007))
     Test.expect(mintRes, Test.beSucceeded())
 
@@ -570,16 +571,8 @@ fun testManualLiquidation_unsupportedCollateralType() {
         liquidator
     )
     // Should fail because we are specifying an unsupported collateral type (yield token)
-    Test.expect(liqRes, Test.beSucceeded())
-
-    // Validate position balances post-liquidation
-    let collateralBalanceAfterLiq = getPositionBalance(pid: pid, vaultID: flowTokenIdentifier).balance
-    let debtBalanceAfterLiq = getPositionBalance(pid: pid, vaultID: moetIdentifier).balance
-    Test.assert(collateralBalanceAfterLiq == collateralBalancePreLiq - seizeAmount, message: "should lose exactly seized collateral")
-    Test.assert(debtBalanceAfterLiq == debtBalancePreLiq -repayAmount, message: "should lose exactly repaid debt")
-
-    let liquidatorFlowBalance = getBalance(address: liquidator.address, vaultPublicPath: /public/flowTokenBalance) ?? 0.0
-    Test.assert(liquidatorFlowBalance == seizeAmount, message: "liquidator should hold seized flow")
+    Test.expect(liqRes, Test.beFailed())
+    Test.assertError(liqRes, errorMessage: "Collateral token type unsupported")
 }
 
 /// A liquidator specifies a supported debt type to repay, for an unhealthy position, but the position
