@@ -3294,6 +3294,16 @@ access(all) contract FlowCreditMarket {
             recipient.deposit(from: <-withdrawn)
         }
 
+        /// Manually triggers fees for a given token type.
+        /// This is useful for governance to collect accrued stability on-demand.
+        /// Fee is calculated based on time elapsed since last collection.
+        access(EGovernance) fun collectFees(tokenType: Type) {
+            pre {
+                self.globalLedger[tokenType] != nil: "Unsupported token type"
+            }
+            self.updateInterestRatesAndCollectFees(tokenType: tokenType)
+        }
+
         /// Regenerates deposit capacity for all supported token types
         /// Each token type's capacity regenerates independently based on its own depositRate,
         /// approximately once per hour, up to its respective depositCapacityCap
