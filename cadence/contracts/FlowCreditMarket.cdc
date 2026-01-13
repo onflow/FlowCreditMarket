@@ -1326,6 +1326,12 @@ access(all) contract FlowCreditMarket {
         /// Returns whether a given token Type is supported or not
         access(all) view fun isTokenSupported(tokenType: Type): Bool {
             return self.globalLedger[tokenType] != nil
+        } 
+
+        /// Returns the current balance of the stability fund for a given token type
+        access(all) view fun stabilityFundBalance(tokenType: Type): UFix64 {
+            let fundRef = &self.stabilityFunds[tokenType] as &{FungibleToken.Vault}?
+            return fundRef?.balance ?? 0.0
         }
 
         /// Returns current liquidation parameters
@@ -3262,6 +3268,30 @@ access(all) contract FlowCreditMarket {
             let tsRef = &self.globalLedger[tokenType] as auth(EImplementation) &TokenState?
                 ?? panic("Invariant: token state missing")
             tsRef.setDepositCapacityCap(cap)
+        }
+
+        /// Updates the stability fee rate for a given token (fraction in [0,1])
+        access(EGovernance) fun setStabilityFeeRate(tokenType: Type, stabilityFeeRate: UFix64) {
+            pre {
+                self.globalLedger[tokenType] != nil: "Unsupported token type \(tokenType.identifier)"
+                stabilityFeeRate >= 0.0 && stabilityFeeRate <= 1.0: "stabilityFeeRate must be between 0 and 1"
+            }
+            let tsRef = &self.globalLedger[tokenType] as auth(EImplementation) &TokenState?
+                ?? panic("Invariant: token state missing")
+            tsRef.setStabilityFeeRate(stabilityFeeRate)
+        }
+
+        /// Withdraws stability funds collected from the stability fee for a given token
+        access(EGovernance) fun withdrawStabilityFund(tokenType: Type, amount: UFix64, recipient: &{FungibleToken.Receiver}) {
+            pre {
+                self.stabilityFunds[tokenType] != nil: "No stability fund exists for token type \(tokenType.identifier)"
+                amount > 0.0: "Withdrawal amount must be positive"
+            }
+            let fundRef = (&self.stabilityFunds[tokenType] as auth(FungibleToken.Withdraw) &{FungibleToken.Vault}?)!
+            assert(fundRef.balance >= amount, message: "Insufficient stability fund balance. Available: \(fundRef.balance), requested: \(amount)")
+            
+            let withdrawn <- fundRef.withdraw(amount: amount)
+            recipient.deposit(from: <-withdrawn)
         }
 
         /// Regenerates deposit capacity for all supported token types
