@@ -449,7 +449,6 @@ access(all) contract FlowCreditMarket {
         /// Sets the InternalPosition's topUpSource. If `nil`, the Pool will not be able to pull underflown value when
         /// the position falls below its minimum health which may result in liquidation.
         access(EImplementation) fun setTopUpSource(_ source: {DeFiActions.Source}?) {
-            // TODO(jord): must be a supported token type?
             self.topUpSource = source
         }
     }
@@ -1387,7 +1386,6 @@ access(all) contract FlowCreditMarket {
         /// to its debt as denominated in the Pool's default token.
         /// "Effective collateral" means the value of each credit balance times the liquidation threshold
         /// for that token, i.e. the maximum borrowable amount
-        // TODO: make this output enumeration of effective debts/collaterals (or provide option that does)
         access(all) fun positionHealth(pid: UInt64): UFix128 {
             let position = self._borrowPosition(pid: pid)
 
