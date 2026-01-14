@@ -6,6 +6,10 @@ import "FlowCreditMarket"
 access(all) let defaultTokenIdentifier = "A.0000000000000007.MOET.Vault"
 access(all) let flowTokenIdentifier = "A.0000000000000003.FlowToken.Vault"
 
+// Time constant matching FlowCreditMarket.secondsInYear (365.25 days)
+// Fix64 type for use with Test.moveTime()
+access(all) let secondsInYear: Fix64 = 31_557_600.0
+
 access(all) let defaultUFixVariance = 0.00000001
 // Variance for UFix64 comparisons
 access(all) let defaultUIntVariance: UInt128 = 1_000_000_000_000_000
@@ -21,6 +25,18 @@ access(all) var intMinHealth: UFix128 = 1.1
 access(all) var intTargetHealth: UFix128 = 1.3
 access(all) var intMaxHealth: UFix128 = 1.5
 access(all) let ceilingHealth: UFix128 = UFix128.max      // infinite health when debt ~ 0.0
+
+/* --- Assertion helpers --- */
+
+/// Asserts that two UFix64 values are equal within defaultUFixVariance tolerance
+access(all)
+fun assertEqualWithVariance(_ expected: UFix64, _ actual: UFix64) {
+    let diff = expected > actual ? expected - actual : actual - expected
+    Test.assert(
+        diff <= defaultUFixVariance,
+        message: "Expected \(expected) but got \(actual) (diff: \(diff), variance: \(defaultUFixVariance))"
+    )
+}
 
 /* --- Test execution helpers --- */
 

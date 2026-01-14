@@ -13,6 +13,7 @@ fun setup() {
     createAndStorePool(signer: protocolAccount, defaultTokenIdentifier: defaultTokenIdentifier, beFailed: false)
     // take snapshot first, then advance time so reset() target is always lower than current height
     snapshot = getCurrentBlockHeight()
+    // move time by 1 second so Test.reset() works properly before each test
     Test.moveTime(by: 1.0)
 }
 
@@ -128,7 +129,7 @@ fun test_collectInsurance_noTimeElapsed_returnsNil() {
 
     // check for no additional collection
     let balanceAfterSecond = getInsuranceFundBalance()
-    Test.assertEqual(balanceAfterFirst, balanceAfterSecond)
+    assertEqualWithVariance(balanceAfterFirst, balanceAfterSecond)
 }
 
 // -----------------------------------------------------------------------------
@@ -166,7 +167,7 @@ fun test_collectInsurance_partialReserves_collectsAvailable() {
     let reserveBalanceBefore = getReserveBalance(vaultIdentifier: defaultTokenIdentifier)
     Test.assert(reserveBalanceBefore > 0.0, message: "Reserves should exist after deposit")
 
-    Test.moveTime(by: 31622400.0) // 1 year + 1 day - at 100% rate this would want to collect more than 500 MOET
+    Test.moveTime(by: secondsInYear + Fix64(24.0 * 60.0 * 60.0)) // 1 year + 1 day - at 100% rate this would want to collect more than 500 MOET
 
     // collect insurance - should collect up to available reserve balance
     collectInsurance(signer: protocolAccount, tokenTypeIdentifier: defaultTokenIdentifier, beFailed: false)
@@ -182,10 +183,11 @@ fun test_collectInsurance_partialReserves_collectsAvailable() {
     Test.assert(amountWithdrawnFromReserves > 0.0, message: "Amount should have been withdrawn from reserves")
 
     // with 1:1 swap ratio, insurance fund balance should equal amount withdrawn from reserves
-    Test.assertEqual(amountWithdrawnFromReserves, finalInsuranceBalance)
+    assertEqualWithVariance(amountWithdrawnFromReserves, finalInsuranceBalance)
 
     // verify collection was limited by reserves
-    Test.assertEqual(finalInsuranceBalance, 500.0)
+    // Formula: 500.0 * 1.0 * (secondsInYear / secondsInYearPlusDay) ≈ 501.37 MOET, but limited to totalCreditBalance = 500.0
+    assertEqualWithVariance(500.0, finalInsuranceBalance)
 }
 
 // -----------------------------------------------------------------------------
@@ -265,7 +267,7 @@ fun test_collectInsurance_success_fullAmount() {
     let reserveBalanceBefore = getReserveBalance(vaultIdentifier: defaultTokenIdentifier)
     Test.assert(reserveBalanceBefore > 0.0, message: "Reserves should exist after deposit")
 
-    Test.moveTime(by: 31536000.0) // 1 year
+    Test.moveTime(by: secondsInYear)
 
     collectInsurance(signer: protocolAccount, tokenTypeIdentifier: defaultTokenIdentifier, beFailed: false)
 
@@ -277,10 +279,10 @@ fun test_collectInsurance_success_fullAmount() {
 
     // verify the amount withdrawn from reserves equals the insurance fund balance (1:1 swap ratio)
     let amountWithdrawnFromReserves = reserveBalanceBefore - reserveBalanceAfter
-    Test.assertEqual(amountWithdrawnFromReserves, finalInsuranceBalance)
+    assertEqualWithVariance(amountWithdrawnFromReserves, finalInsuranceBalance)
 
     // verify lastInsuranceCollection was updated to current block timestamp
     let currentTimestamp = getBlockTimestamp()
     let lastCollection = getLastInsuranceCollection(tokenTypeIdentifier: defaultTokenIdentifier)
-    Test.assertEqual(currentTimestamp, lastCollection!)
+    assertEqualWithVariance(currentTimestamp, lastCollection!)
 }
