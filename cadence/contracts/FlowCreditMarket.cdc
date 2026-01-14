@@ -121,6 +121,17 @@ access(all) contract FlowCreditMarket {
         remainingCapacity: UFix64
     )
 
+    access(all) event StabilityFeeRateUpdated(
+        poolUUID: UInt64,
+        tokenType: String,
+        stabilityFeeRate: UFix64,
+    )
+
+    access(all) event LastStabilityFeeCollectionUpdated(
+        tokenType: String,
+        lastStabilityFeeCollection: UFix64,
+    )
+
     /* --- CONSTRUCTS & INTERNAL METHODS ---- */
 
     access(all) entitlement EPosition
@@ -982,6 +993,11 @@ access(all) contract FlowCreditMarket {
             // Stability amount is a percentage of total credit balance per year
             let stabilityAmount = self.totalCreditBalance * stabilityFeeRate * UFix128(yearsElapsed)
             let stabilityAmountUFix64 = FlowCreditMarketMath.toUFix64RoundDown(stabilityAmount)
+
+            emit LastStabilityFeeCollectionUpdated(
+                tokenType: reserveVault.getType().identifier,
+                lastStabilityFeeCollection: currentTime,
+            )
 
             // If calculated amount is zero or negative, skip collection but update timestamp
             if stabilityAmountUFix64 <= 0.0 {
@@ -3280,6 +3296,12 @@ access(all) contract FlowCreditMarket {
             let tsRef = &self.globalLedger[tokenType] as auth(EImplementation) &TokenState?
                 ?? panic("Invariant: token state missing")
             tsRef.setStabilityFeeRate(stabilityFeeRate)
+            
+            emit StabilityFeeRateUpdated(
+                poolUUID: self.uuid,
+                tokenType: tokenType.identifier,
+                stabilityFeeRate: stabilityFeeRate,
+            )
         }
 
         /// Withdraws stability funds collected from the stability fee for a given token
