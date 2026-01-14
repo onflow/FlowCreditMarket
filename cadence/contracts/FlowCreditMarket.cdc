@@ -374,13 +374,18 @@ access(all) contract FlowCreditMarket {
     /// An internal resource used to track deposits, withdrawals, balances, and queued deposits to an open position.
     access(all) resource InternalPosition {
 
-        /// The target health of the position
+        /// The position-specific target health, for auto-balancing purposes.
+        /// When the position health moves outside the range [minHealth, maxHealth], the balancing operation
+        /// should result in a position health of targetHealth.
         access(EImplementation) var targetHealth: UFix128
 
-        /// The minimum health of the position, below which a position is considered undercollateralized
+        /// The position-specific minimum health threshold, below which a position is considered undercollateralized.
+        /// When a position is under-collateralized, it is eligible for rebalancing.
+        /// NOTE: An under-collateralized position is distinct from an unhealthy position, and cannot be liquidated
         access(EImplementation) var minHealth: UFix128
 
-        /// The maximum health of the position, above which a position is considered overcollateralized
+        /// The position-specific maximum health threshold, above which a position is considered overcollateralized.
+        /// When a position is over-collateralized, it is eligible for rebalancing.
         access(EImplementation) var maxHealth: UFix128
 
         /// The balances of deposited and withdrawn token types
@@ -444,14 +449,18 @@ access(all) contract FlowCreditMarket {
         /// Sets the InternalPosition's topUpSource. If `nil`, the Pool will not be able to pull underflown value when
         /// the position falls below its minimum health which may result in liquidation.
         access(EImplementation) fun setTopUpSource(_ source: {DeFiActions.Source}?) {
+            // TODO(jord): must be a supported token type?
             self.topUpSource = source
         }
     }
 
     /// InterestCurve
     ///
-    /// A simple interface to calculate interest rate
+    /// A simple interface to calculate interest rate for a token type.
     access(all) struct interface InterestCurve {
+        /// Returns the annual interest rate for the given credit and debit balance, for some token T.
+        /// @param creditBalance The credit (deposit) balance of token T
+        /// @param debitBalance The debit (withdrawal) balance of token T
         access(all) fun interestRate(creditBalance: UFix128, debitBalance: UFix128): UFix128 {
             post {
                 // Max rate is 400% (4.0) to accommodate high-utilization scenarios
@@ -956,7 +965,11 @@ access(all) contract FlowCreditMarket {
 
     /// Copy-only representation of a position used by pure math (no storage refs)
     access(all) struct PositionView {
+        /// Set of all non-zero balances in the position.
+        /// If the position does not have a balance for a supported token, no entry for that token exists in this map.
         access(all) let balances: {Type: InternalBalance}
+        /// Set of all token snapshots for which this position has a non-zero balance.
+        /// If the position does not have a balance for a supported token, no entry for that token exists in this map.
         access(all) let snapshots: {Type: TokenSnapshot}
         access(all) let defaultToken: Type
         access(all) let minHealth: UFix128
@@ -1008,8 +1021,9 @@ access(all) contract FlowCreditMarket {
     }
 
     /// Computes health = totalEffectiveCollateral / totalEffectiveDebt (∞ when debt == 0)
-    // TODO: return BalanceSheet, this seems like a dupe of _getUpdatedBalanceSheet
     access(all) view fun healthFactor(view: PositionView): UFix128 {
+        // TODO: this logic partly duplicates BalanceSheet construction in _getUpdatedBalanceSheet
+        // This function differs in that it does not read any data from a Pool resource. Consider consolidating the two implementations.
         var effectiveCollateralTotal: UFix128 = 0.0
         var effectiveDebtTotal: UFix128 = 0.0
 
@@ -1053,7 +1067,8 @@ access(all) contract FlowCreditMarket {
             return 0.0
         }
 
-        // TODO(jord): this logic duplicates BalanceSheet construction
+        // TODO: this logic partly duplicates BalanceSheet construction in _getUpdatedBalanceSheet
+        // This function differs in that it does not read any data from a Pool resource. Consider consolidating the two implementations.
         var effectiveCollateralTotal: UFix128 = 0.0
         var effectiveDebtTotal: UFix128 = 0.0
 
@@ -1305,7 +1320,7 @@ access(all) contract FlowCreditMarket {
 
         /// Returns a reference to the reserve vault for the given type, if the token type is supported.
         /// If no reserve vault exists yet, and the token type is supported, the reserve vault is created.
-        access(self) fun _borrowOrCreateReserveVault(type: Type): &{FungibleToken.Vault} {
+        access(self) fun _borrowOrCreateReserveVault(type: Type): auth(FungibleToken.Withdraw) &{FungibleToken.Vault} {
             pre {
                 self.isTokenSupported(tokenType: type)
             }
@@ -1582,7 +1597,7 @@ access(all) contract FlowCreditMarket {
                 position.balances[seizeType] = InternalBalance(direction: BalanceDirection.Credit, scaledBalance: 0.0)
             }
             position.balances[seizeType]!.recordWithdrawal(amount: UFix128(seizeAmount), tokenState: seizeState)
-            let seizeReserveRef = (&self.reserves[seizeType] as auth(FungibleToken.Withdraw) &{FungibleToken.Vault}?)!
+            let seizeReserveRef = self._borrowOrCreateReserveVault(type: seizeType)
             let seizedCollateral <- seizeReserveRef.withdraw(amount: seizeAmount)
 
             let newHealth = self.positionHealth(pid: pid)
@@ -2281,10 +2296,7 @@ access(all) contract FlowCreditMarket {
             }
 
             // Create vault if it doesn't exist yet
-            if self.reserves[type] == nil {
-                self.reserves[type] <-! from.createEmptyVault()
-            }
-            let reserveVault = (&self.reserves[type] as auth(FungibleToken.Withdraw) &{FungibleToken.Vault}?)!
+            let reserveVault = self._borrowOrCreateReserveVault(type: type)
 
             // Reflect the deposit in the position's balance.
             //
@@ -2446,7 +2458,7 @@ access(all) contract FlowCreditMarket {
                 )
             }
 
-            let reserveVault = (&self.reserves[type] as auth(FungibleToken.Withdraw) &{FungibleToken.Vault}?)!
+            let reserveVault = self._borrowOrCreateReserveVault(type: type)
 
             // Reflect the withdrawal in the position's balance
             let uintAmount = UFix128(amount)
@@ -2954,7 +2966,6 @@ access(all) contract FlowCreditMarket {
         }
 
         /// Returns a position's BalanceSheet containing its effective collateral and debt as well as its current health
-        /// TODO(jord): in all cases callers already are calling _borrowPosition, more efficient to pass in PositionView?
         access(self) fun _getUpdatedBalanceSheet(pid: UInt64): BalanceSheet {
             let position = self._borrowPosition(pid: pid)
 
