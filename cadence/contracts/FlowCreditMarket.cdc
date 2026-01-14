@@ -1412,9 +1412,12 @@ access(all) contract FlowCreditMarket {
         }
 
         /// Returns the insurance rate for a given token type
-        access(all) view fun getInsuranceRate(tokenType: Type): UFix64 {
-            assert(self.isTokenSupported(tokenType: tokenType), message: "Token type not supported")
-            return self.globalLedger[tokenType]?.insuranceRate ?? 0.0
+        access(all) view fun getInsuranceRate(tokenType: Type): UFix64? {
+            if let tokenState = self.globalLedger[tokenType] {
+                return tokenState.insuranceRate
+            }
+            
+            return nil
         }
 
         /// Returns a position's balance available for withdrawal of a given Vault type.

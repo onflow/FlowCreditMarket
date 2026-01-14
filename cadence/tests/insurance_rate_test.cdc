@@ -40,7 +40,7 @@ access(all) fun testSetInsuranceRate_WithEGovernanceEntitlement() {
     Test.expect(res, Test.beSucceeded())
 
     let actual = getInsuranceRate(tokenTypeIdentifier: defaultTokenIdentifier)
-    Test.assertEqual(insuranceRate, actual)
+    Test.assertEqual(insuranceRate, actual!)
 }
 
 /* --- Boundary Tests: insuranceRate must be between 0 and 1 --- */
@@ -83,18 +83,25 @@ access(all) fun testSetInsuranceRate_RateLessThanZero_Fails() {
 
 /* --- Token Type Tests --- */
 
-access(all) fun testSetInsuranceRate_InvalidTokenType_Fails() {
-    let invalidTokenIdentifier = "InvalidTokenType"
-    
+access(all) fun testSetInsuranceRate_InvalidTokenType_Fails() {    
+    let unsupportedTokenIdentifier = flowTokenIdentifier
     let res = setInsuranceRate(
         signer: protocolAccount,
-        tokenTypeIdentifier: invalidTokenIdentifier,
+        tokenTypeIdentifier: unsupportedTokenIdentifier,
         insuranceRate: 0.05,
     )
-    // should fail with "Invalid tokenTypeIdentifier"
+    // should fail with "Unsupported token type"
     Test.expect(res, Test.beFailed())
 
     let errorMessage = res.error!.message
-    let containsExpectedError = errorMessage.contains("Invalid tokenTypeIdentifier")
+    let containsExpectedError = errorMessage.contains("Unsupported token type")
     Test.assert(containsExpectedError, message: "expected error about insurance rate bounds, got: \(errorMessage)")
+}
+
+access(all) fun testGetInsuranceRate_InvalidTokenType() {
+    let unsupportedTokenIdentifier = flowTokenIdentifier
+    
+    let actual = getInsuranceRate(tokenTypeIdentifier: unsupportedTokenIdentifier)
+    // should return nil for unsupported token type identifier
+    Test.assertEqual(nil, actual)
 }
