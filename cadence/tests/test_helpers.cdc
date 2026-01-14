@@ -251,6 +251,13 @@ fun insuranceSwapperExists(tokenTypeIdentifier: String): Bool {
     return res.returnValue as! Bool
 }
 
+access(all)
+fun getLastInsuranceCollection(tokenTypeIdentifier: String): UFix64? {
+    let res = _executeScript("../scripts/flow-credit-market/get_last_insurance_collection.cdc", [tokenTypeIdentifier])
+    Test.expect(res, Test.beSucceeded())
+    return res.returnValue as? UFix64
+}
+
 /* --- Transaction Helpers --- */
 
 access(all)
