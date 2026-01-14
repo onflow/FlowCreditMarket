@@ -219,3 +219,54 @@ fun test_collectInsurance_tinyAmount_roundsToZero_returnsNil() {
     let finalBalance = getInsuranceFundBalance()
     Test.assertEqual(0.0, finalBalance)
 }
+
+// -----------------------------------------------------------------------------
+// Test: collectInsurance full success flow
+// Full flow: deposit to create credit → advance time → collect insurance
+// → verify MOET returned and reserves reduced
+// -----------------------------------------------------------------------------
+access(all)
+fun test_collectInsurance_success_fullAmount() {
+    // setup user and create a position with deposit
+    let user = Test.createAccount()
+    setupMoetVault(user, beFailed: false)
+    mintMoet(signer: protocolAccount, to: user.address, amount: 1000.0, beFailed: false)
+
+    // create position with deposit - this creates reserves and credit balance
+    grantPoolCapToConsumer()
+    createWrappedPosition(signer: user, amount: 500.0, vaultStoragePath: MOET.VaultStoragePath, pushToDrawDownSink: false)
+
+    // setup protocol account with MOET vault for the swapper
+    setupMoetVault(protocolAccount, beFailed: false)
+    mintMoet(signer: protocolAccount, to: protocolAccount.address, amount: 10000.0, beFailed: false)
+
+    // configure insurance swapper (1:1 ratio)
+    let swapperResult = setInsuranceSwapper(signer: protocolAccount, tokenTypeIdentifier: defaultTokenIdentifier, priceRatio: 1.0)
+    Test.expect(swapperResult, Test.beSucceeded())
+
+    // set a moderate insurance rate (10% annual)
+    let rateResult = setInsuranceRate(signer: protocolAccount, tokenTypeIdentifier: defaultTokenIdentifier, insuranceRate: 0.1)
+    Test.expect(rateResult, Test.beSucceeded())
+
+    // initial insurance and reserves
+    let initialInsuranceBalance = getInsuranceFundBalance()
+    Test.assertEqual(0.0, initialInsuranceBalance)
+    let reserveBalanceBefore = getReserveBalance(vaultIdentifier: defaultTokenIdentifier)
+    Test.assert(reserveBalanceBefore > 0.0, message: "Reserves should exist after deposit")
+
+    Test.moveTime(by: 31536000.0) //  1 year
+
+    collectInsurance(signer: protocolAccount, tokenTypeIdentifier: defaultTokenIdentifier, beFailed: false)
+
+    // verify insurance was collected, reserves decreased
+    let finalInsuranceBalance = getInsuranceFundBalance()
+    Test.assert(finalInsuranceBalance > 0.0, message: "Insurance fund should have received MOET")
+    let reserveBalanceAfter = getReserveBalance(vaultIdentifier: defaultTokenIdentifier)
+    Test.assert(reserveBalanceAfter < reserveBalanceBefore, message: "Reserves should have decreased after collection")
+
+    // verify the collected amount is reasonable (10% of 500 = 50 MOET for 1 year)
+    // Allow some variance due to interest accrual
+    let expectedApprox = 50.0
+    Test.assert(finalInsuranceBalance >= expectedApprox * 0.9, message: "Collected amount should be approximately 10% of credit balance")
+    Test.assert(finalInsuranceBalance <= expectedApprox * 1.1, message: "Collected amount should not exceed expected by too much")
+}
