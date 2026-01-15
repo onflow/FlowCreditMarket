@@ -4233,7 +4233,8 @@ access(all) contract FlowCreditMarket {
     // number with 18 decimal places). The input to this function will be just the relative annual interest rate
     // (e.g. 0.05 for 5% interest), and the result will be the per-second multiplier (e.g. 1.000000000001).
     access(all) view fun perSecondInterestRate(yearlyRate: UFix128): UFix128 {
-        let perSecondScaledValue = yearlyRate / self.secondsInYear
+        // TODO: replace 31536000.0 by self.secondsInYear, fix tests: interest_curve_advanced_test.cdc, interest_accrual_integration_test
+        let perSecondScaledValue = yearlyRate / 31536000.0 // 365.0 * 24.0 * 60.0 * 60.0
         assert(
             perSecondScaledValue < UFix128.max,
             message: "Per-second interest rate \(perSecondScaledValue) is too high"
