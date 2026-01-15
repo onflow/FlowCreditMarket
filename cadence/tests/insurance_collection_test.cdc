@@ -2,10 +2,12 @@ import Test
 import BlockchainHelpers
 
 import "MOET"
+import "FlowToken"
 import "test_helpers.cdc"
 
 access(all) let protocolAccount = Test.getAccount(0x0000000000000007)
 access(all) var snapshot: UInt64 = 0
+access(all) let flowVaultStoragePath = /storage/flowTokenVault
 
 access(all)
 fun setup() {
@@ -285,4 +287,110 @@ fun test_collectInsurance_success_fullAmount() {
     let currentTimestamp = getBlockTimestamp()
     let lastCollection = getLastInsuranceCollection(tokenTypeIdentifier: defaultTokenIdentifier)
     assertEqualWithVariance(currentTimestamp, lastCollection!)
+}
+
+// -----------------------------------------------------------------------------
+// Test: collectInsurance with multiple token types
+// Verifies that insurance collection works independently for different tokens
+// Each token type has its own lastInsuranceCollection timestamp and rate
+// -----------------------------------------------------------------------------
+access(all)
+fun test_collectInsurance_multipleTokens() {
+    // set oracle price for FlowToken (needed for collateral factor calculations)
+    setMockOraclePrice(signer: protocolAccount, forTokenIdentifier: flowTokenIdentifier, price: 1.0)
+
+    // add FlowToken as a supported collateral type
+    addSupportedTokenZeroRateCurve(
+        signer: protocolAccount,
+        tokenTypeIdentifier: flowTokenIdentifier,
+        collateralFactor: 0.8,
+        borrowFactor: 1.0,
+        depositRate: 1_000_000.0,
+        depositCapacityCap: 1_000_000.0
+    )
+
+    // setup users with both token types
+    let moetUser = Test.createAccount()
+    setupMoetVault(moetUser, beFailed: false)
+    mintMoet(signer: protocolAccount, to: moetUser.address, amount: 1000.0, beFailed: false)
+
+    let flowUser = Test.createAccount()
+    setupMoetVault(flowUser, beFailed: false)
+    transferFlowTokens(to: flowUser, amount: 1000.0)
+
+    // create positions with deposits for both token types
+    grantPoolCapToConsumer()
+    createWrappedPosition(signer: moetUser, amount: 500.0, vaultStoragePath: MOET.VaultStoragePath, pushToDrawDownSink: false)
+    createWrappedPosition(signer: flowUser, amount: 500.0, vaultStoragePath: flowVaultStoragePath, pushToDrawDownSink: false)
+
+    // setup protocol account with MOET vault for the swapper
+    setupMoetVault(protocolAccount, beFailed: false)
+    mintMoet(signer: protocolAccount, to: protocolAccount.address, amount: 20000.0, beFailed: false)
+
+    // configure insurance swappers for both tokens (both swap to MOET at 1:1)
+    let moetSwapperResult = setInsuranceSwapper(signer: protocolAccount, tokenTypeIdentifier: defaultTokenIdentifier, priceRatio: 1.0)
+    Test.expect(moetSwapperResult, Test.beSucceeded())
+
+    let flowSwapperResult = setInsuranceSwapper(signer: protocolAccount, tokenTypeIdentifier: flowTokenIdentifier, priceRatio: 1.0)
+    Test.expect(flowSwapperResult, Test.beSucceeded())
+
+    // set different insurance rates for each token type
+    let moetRateResult = setInsuranceRate(signer: protocolAccount, tokenTypeIdentifier: defaultTokenIdentifier, insuranceRate: 0.1) // 10%
+    Test.expect(moetRateResult, Test.beSucceeded())
+
+    let flowRateResult = setInsuranceRate(signer: protocolAccount, tokenTypeIdentifier: flowTokenIdentifier, insuranceRate: 0.05) // 5%
+    Test.expect(flowRateResult, Test.beSucceeded())
+
+    // verify initial state
+    let initialInsuranceBalance = getInsuranceFundBalance()
+    Test.assertEqual(0.0, initialInsuranceBalance)
+
+    let moetReservesBefore = getReserveBalance(vaultIdentifier: defaultTokenIdentifier)
+    let flowReservesBefore = getReserveBalance(vaultIdentifier: flowTokenIdentifier)
+    Test.assert(moetReservesBefore > 0.0, message: "MOET reserves should exist after deposit")
+    Test.assert(flowReservesBefore > 0.0, message: "Flow reserves should exist after deposit")
+
+    // advance time
+    Test.moveTime(by: secondsInYear)
+
+    // collect insurance for MOET only
+    collectInsurance(signer: protocolAccount, tokenTypeIdentifier: defaultTokenIdentifier, beFailed: false)
+
+    let balanceAfterMoetCollection = getInsuranceFundBalance()
+    Test.assert(balanceAfterMoetCollection > 0.0, message: "Insurance fund should have received MOET after MOET collection")
+
+    // verify the amount withdrawn from MOET reserves equals the insurance fund balance increase (1:1 swap ratio)
+    let moetAmountWithdrawn = moetReservesBefore - getReserveBalance(vaultIdentifier: defaultTokenIdentifier)
+    assertEqualWithVariance(moetAmountWithdrawn, balanceAfterMoetCollection)
+
+    let moetLastCollection = getLastInsuranceCollection(tokenTypeIdentifier: defaultTokenIdentifier)
+    let flowLastCollectionBeforeFlowCollection = getLastInsuranceCollection(tokenTypeIdentifier: flowTokenIdentifier)
+
+    // MOET timestamp should be updated, Flow timestamp should still be at pool creation time
+    Test.assert(moetLastCollection != nil, message: "MOET lastInsuranceCollection should be set")
+    Test.assert(flowLastCollectionBeforeFlowCollection != nil, message: "Flow lastInsuranceCollection should be set")
+    Test.assert(moetLastCollection! > flowLastCollectionBeforeFlowCollection!, message: "MOET timestamp should be newer than Flow timestamp")
+
+    // collect insurance for Flow
+    collectInsurance(signer: protocolAccount, tokenTypeIdentifier: flowTokenIdentifier, beFailed: false)
+
+    let balanceAfterFlowCollection = getInsuranceFundBalance()
+    Test.assert(balanceAfterFlowCollection > balanceAfterMoetCollection, message: "Insurance fund should increase after Flow collection")
+
+    let flowLastCollectionAfter = getLastInsuranceCollection(tokenTypeIdentifier: flowTokenIdentifier)
+    Test.assert(flowLastCollectionAfter != nil, message: "Flow lastInsuranceCollection should be set after collection")
+
+    // verify reserves decreased for both token types
+    let moetReservesAfter = getReserveBalance(vaultIdentifier: defaultTokenIdentifier)
+    let flowReservesAfter = getReserveBalance(vaultIdentifier: flowTokenIdentifier)
+    Test.assert(moetReservesAfter < moetReservesBefore, message: "MOET reserves should have decreased")
+    Test.assert(flowReservesAfter < flowReservesBefore, message: "Flow reserves should have decreased")
+
+    // verify the amount withdrawn from Flow reserves equals the insurance fund balance increase (1:1 swap ratio)
+    let flowAmountWithdrawn = flowReservesBefore - flowReservesAfter
+    let flowInsuranceIncrease = balanceAfterFlowCollection - balanceAfterMoetCollection
+    assertEqualWithVariance(flowAmountWithdrawn, flowInsuranceIncrease)
+
+    // verify Flow timestamp is now updated (should be >= MOET timestamp since it was collected after)
+    Test.assert(flowLastCollectionAfter! >= moetLastCollection!, message: "Flow timestamp should be >= MOET timestamp")
 }

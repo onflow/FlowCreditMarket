@@ -1353,7 +1353,7 @@ access(all) contract FlowCreditMarket {
         }
 
         /// Returns whether an insurance swapper is configured for a given token type
-        access(all) view fun hasInsuranceSwapper(tokenType: Type): Bool {
+        access(all) view fun isInsuranceSwapper(tokenType: Type): Bool {
             if let tokenState = self.globalLedger[tokenType] {
                 return tokenState.insuranceSwapper != nil
             }

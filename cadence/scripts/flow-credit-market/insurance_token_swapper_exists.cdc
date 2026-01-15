@@ -15,5 +15,5 @@ fun main(tokenTypeIdentifier: String): Bool {
     let pool = getAccount(protocolAddress).capabilities.borrow<&FlowCreditMarket.Pool>(FlowCreditMarket.PoolPublicPath)
         ?? panic("Could not find Pool at path \(FlowCreditMarket.PoolPublicPath)")
 
-    return pool.hasInsuranceSwapper(tokenType: tokenType)
+    return pool.isInsuranceSwapper(tokenType: tokenType)
 }
