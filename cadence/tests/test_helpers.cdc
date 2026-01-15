@@ -445,6 +445,20 @@ fun setStabilityFeeRate(
 }
 
 access(all)
+fun collectFees(
+    signer: Test.TestAccount,
+    tokenTypeIdentifier: String,
+): Test.TransactionResult {
+    let res = _executeTransaction(
+        "../transactions/flow-credit-market/pool-governance/collect_fees.cdc",
+        [ tokenTypeIdentifier ],
+        signer
+    )
+    
+    return res
+}
+
+access(all)
 fun withdrawStabilityFund(
     signer: Test.TestAccount,
     tokenTypeIdentifier: String,
