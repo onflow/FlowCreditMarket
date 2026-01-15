@@ -593,10 +593,14 @@ access(all) contract FlowCreditMarket {
         /// The timestamp at which the TokenState was last updated
         access(EImplementation) var lastUpdate: UFix64
 
-        /// The total credit balance of the related Token across the whole Pool in which this TokenState resides
+        /// The total credit balance for this token, in a specific Pool.
+        /// The total credit balance is the sum of balances of all positions with a credit balance (ie. they have lent this token).
+        /// In other words, it is the the sum of net deposits among positions which are net creditors in this token.
         access(EImplementation) var totalCreditBalance: UFix128
 
-        /// The total debit balance of the related Token across the whole Pool in which this TokenState resides
+        /// The total debit balance for this token, in a specific Pool.
+        /// The total debit balance is the sum of balances of all positions with a debit balance (ie. they have borrowed this token).
+        /// In other words, it is the the sum of net withdrawals among positions which are net debtors in this token.
         access(EImplementation) var totalDebitBalance: UFix128
 
         /// The index of the credit interest for the related token.
@@ -747,6 +751,7 @@ access(all) contract FlowCreditMarket {
         /// which recalculates interest rates based on the new utilization ratio.
         /// This ensures rates always reflect the current state of the pool
         /// without requiring manual rate update calls.
+
         access(EImplementation) fun increaseCreditBalance(by amount: UFix128) {
             self.totalCreditBalance = self.totalCreditBalance + amount
             self.updateForUtilizationChange()
@@ -776,6 +781,7 @@ access(all) contract FlowCreditMarket {
         }
 
         /// Updates the totalCreditBalance by the provided amount
+        /// TODO(jord): unused
         access(EImplementation) fun updateCreditBalance(amount: Int256) {
             // temporary cast the credit balance to a signed value so we can add/subtract
             let adjustedBalance = Int256(self.totalCreditBalance) + amount
@@ -788,6 +794,7 @@ access(all) contract FlowCreditMarket {
             self.updateForUtilizationChange()
         }
 
+        /// TODO(jord): unused
         access(EImplementation) fun updateDebitBalance(amount: Int256) {
             // temporary cast the debit balance to a signed value so we can add/subtract
             let adjustedBalance = Int256(self.totalDebitBalance) + amount
@@ -800,7 +807,7 @@ access(all) contract FlowCreditMarket {
             self.updateForUtilizationChange()
         }
 
-        // Enhanced updateInterestIndices with deposit capacity update
+        // Updates the credit and debit interest index for this token, accounting for time since the last update.
         access(EImplementation) fun updateInterestIndices() {
             let currentTime = getCurrentBlock().timestamp
             let dt = currentTime - self.lastUpdate
@@ -892,6 +899,7 @@ access(all) contract FlowCreditMarket {
             //    Used for stable assets like MOET where rates are governance-controlled
             // 2. KinkInterestCurve (and others): reserve factor model
             //    Insurance is a percentage of interest income, not a fixed spread
+            // TODO(jord): seems like InterestCurve abstraction could be improved if we need to check specific types here.
             if self.interestCurve.getType() == Type<FlowCreditMarket.FixedRateInterestCurve>() {
                 // FixedRate path: creditRate = debitRate - insuranceRate
                 // This provides a fixed, predictable spread between borrower and lender rates
@@ -2856,6 +2864,7 @@ access(all) contract FlowCreditMarket {
                     let sinkCapacity = drawDownSink.minimumCapacity()
                     let sinkAmount = (idealWithdrawal > sinkCapacity) ? sinkCapacity : idealWithdrawal
 
+                    // TODO(jord): we enforce in setDrawDownSink that the type is MOET -> we should panic here if that does not hold (currently silently fail)
                     if sinkAmount > 0.0 && sinkType == Type<@MOET.Vault>() {
                         let tokenState = self._borrowUpdatedTokenState(type: Type<@MOET.Vault>())
                         if position.balances[Type<@MOET.Vault>()] == nil {
