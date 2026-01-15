@@ -2792,7 +2792,9 @@ access(all) contract FlowCreditMarket {
         /// If force=true, the position will be rebalanced regardless of its current health.
         ///
         /// When rebalancing, funds are withdrawn from the position's topUpSource or deposited to its drawDownSink.
-        /// Rebalancing 
+        /// Rebalancing is done on a best effort basis (even when force=true). If the position has no sink/source,
+        /// of either cannot accept/provide sufficient funds for rebalancing, the rebalance will still occur but will
+        /// not cause the position to reach its target health.
         access(EPosition) fun rebalancePosition(pid: UInt64, force: Bool) {
             if self.debugLogging {
                 log("    [CONTRACT] rebalancePosition(pid: \(pid), force: \(force))")
