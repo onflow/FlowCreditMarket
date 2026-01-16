@@ -1185,20 +1185,25 @@ access(all) contract FlowCreditMarket {
         //  - also to make allowlist pattern work with automated liquidation, initiator of this automation will need actual handle on a dex in order to pass it to FCM 
 
         /// Allowlist of permitted DeFiActions Swapper types for DEX liquidations
+        /// TODO: unused! To remove, must re-deploy existing contracts
         access(self) var allowedSwapperTypes: {Type: Bool}
+
+        /// A trusted DEX (or set of DEXes) used by FCM as a pricing oracle and trading counterparty for liquidations.
+        access(self) let dex: {DeFiActions.SwapperProvider}
 
         /// Max allowed deviation in basis points between DEX-implied price and oracle price
         access(self) var dexOracleDeviationBps: UInt16
 
         /// Max slippage allowed in basis points for DEX liquidations
         /// TODO(jord): revisit this. Is this ever necessary if we are also checking dexOracleDeviationBps? Do we want both a spot price check and a slippage from spot price check?
+        /// TODO: unused! To remove, must re-deploy existing contracts
         access(self) var dexMaxSlippageBps: UInt64
 
         /// Max route hops allowed for DEX liquidations
-        // TODO(jord): unused
+        /// TODO: unused! To remove, must re-deploy existing contracts
         access(self) var dexMaxRouteHops: UInt64
 
-        init(defaultToken: Type, priceOracle: {DeFiActions.PriceOracle}) {
+        init(defaultToken: Type, priceOracle: {DeFiActions.PriceOracle}, dex: {DeFiActions.SwapperProvider}) {
             pre {
                 priceOracle.unitOfAccount() == defaultToken:
                     "Price oracle must return prices in terms of the default token"
@@ -1230,6 +1235,7 @@ access(all) contract FlowCreditMarket {
             self.lastUnpausedAt = nil
             self.protocolLiquidationFeeBps = 0
             self.allowedSwapperTypes = {}
+            self.dex = dex
             self.dexOracleDeviationBps = UInt16(300) // 3% default
             self.dexMaxSlippageBps = 100
             self.dexMaxRouteHops = 3
@@ -1531,14 +1537,12 @@ access(all) contract FlowCreditMarket {
             let postHealth = FlowCreditMarket.healthComputation(effectiveCollateral: Ce_post, effectiveDebt: De_post)
             assert(postHealth <= self.liquidationTargetHF, message: "Liquidation must not exceed target health: \(postHealth)>\(self.liquidationTargetHF)")
 
-            // TODO(jord): uncomment following when implementing dex logic https://github.com/onflow/FlowCreditMarket/issues/94
-/* 
             // Compare the liquidation offer to liquidation via DEX. If the DEX would provide a better price, reject the offer.
             let swapper = self.dex!.getSwapper(inType: seizeType, outType: debtType)! // TODO: will revert if pair unsupported
             // Get a quote: "how much collateral do I need to give you to get `repayAmount` debt tokens"
             let quote = swapper.quoteIn(forDesired: repayAmount, reverse: false)
             assert(seizeAmount < quote.inAmount, message: "Liquidation offer must be better than that offered by DEX")
-            
+
             // Compare the DEX price to the oracle price and revert if they diverge beyond configured threshold.
             let Pcd_dex = quote.outAmount / quote.inAmount // price of collateral, denominated in debt token, implied by dex quote (D/C)
             // Compute the absolute value of the difference between the oracle price and dex price
@@ -1548,7 +1552,6 @@ access(all) contract FlowCreditMarket {
             let Pcd_dex_oracle_diffBps = UInt16(Pcd_dex_oracle_diffPct * 10_000.0) // cannot overflow because Pcd_dex_oracle_diffPct<=1
 
             assert(Pcd_dex_oracle_diffBps <= self.dexOracleDeviationBps, message: "Too large difference between dex/oracle prices diff=\(Pcd_dex_oracle_diffBps)bps")
-*/
 
             // Execute the liquidation
             return <- self._doLiquidation(pid: pid, repayment: <-repayment, debtType: debtType, seizeType: seizeType, seizeAmount: seizeAmount)
@@ -2100,7 +2103,7 @@ access(all) contract FlowCreditMarket {
             )
         }
 
-         // Returns health value of this position if the given amount of the specified token were withdrawn without
+        // Returns health value of this position if the given amount of the specified token were withdrawn without
         // using the top up source.
         // NOTE: This method can return health values below 1.0, which aren't actually allowed. This indicates
         // that the proposed withdrawal would fail (unless a top up source is available and used).
@@ -3082,12 +3085,12 @@ access(all) contract FlowCreditMarket {
     ///
     access(all) resource PoolFactory {
         /// Creates the contract-managed Pool and saves it to the canonical path, reverting if one is already stored
-        access(all) fun createPool(defaultToken: Type, priceOracle: {DeFiActions.PriceOracle}) {
+        access(all) fun createPool(defaultToken: Type, priceOracle: {DeFiActions.PriceOracle}, dex: {DeFiActions.SwapperProvider}) {
             pre {
                 FlowCreditMarket.account.storage.type(at: FlowCreditMarket.PoolStoragePath) == nil:
                     "Storage collision - Pool has already been created & saved to \(FlowCreditMarket.PoolStoragePath)"
             }
-            let pool <- create Pool(defaultToken: defaultToken, priceOracle: priceOracle)
+            let pool <- create Pool(defaultToken: defaultToken, priceOracle: priceOracle, dex: dex)
             FlowCreditMarket.account.storage.save(<-pool, to: FlowCreditMarket.PoolStoragePath)
             let cap = FlowCreditMarket.account.capabilities.storage.issue<&Pool>(FlowCreditMarket.PoolStoragePath)
             FlowCreditMarket.account.capabilities.unpublish(FlowCreditMarket.PoolPublicPath)

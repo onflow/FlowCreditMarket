@@ -8,6 +8,33 @@ import "DeFiActionsUtils"
 /// Do NOT use in production.
 access(all) contract MockDexSwapper {
 
+    /// Holds the set of available swappers which will be provided to users of SwapperProvider.
+    /// inType -> outType -> Swapper
+    access(self) let swappers: {Type: {Type: Swapper}}
+
+    init() {
+        self.swappers = {}
+    }
+
+    access(all) fun getSwapper(inType: Type, outType: Type): Swapper? {
+        if let swappersForInType = self.swappers[inType] {
+            return swappersForInType[outType]
+        }
+        return nil
+    }
+
+    /// Used by testing code to configure the DEX with swappers.
+    /// Overwrites existing swapper with same types, if any.
+    access(all) fun _addSwapper(swapper: Swapper) {
+        if self.swappers[swapper.inType()] == nil {
+            self.swappers[swapper.inType()] = { swapper.outType(): swapper }
+        } else {
+            let swappersForInType = self.swappers[swapper.inType()]!
+            swappersForInType[swapper.outType()] = swapper
+            self.swappers[swapper.inType()] = swappersForInType
+        }
+    }
+
     access(all) struct BasicQuote : DeFiActions.Quote {
         access(all) let inType: Type
         access(all) let outType: Type
@@ -21,9 +48,11 @@ access(all) contract MockDexSwapper {
         }
     }
 
+    /// NOTE: reverse swaps are unsupported.
     access(all) struct Swapper : DeFiActions.Swapper {
         access(self) let inVault: Type
         access(self) let outVault: Type
+        /// source for output tokens only (reverse swaps unsupported)
         access(self) let vaultSource: Capability<auth(FungibleToken.Withdraw) &{FungibleToken.Vault}>
         access(self) let priceRatio: UFix64 // out per unit in
         access(contract) var uniqueID: DeFiActions.UniqueIdentifier?
@@ -85,5 +114,11 @@ access(all) contract MockDexSwapper {
         }
         access(contract) view fun copyID(): DeFiActions.UniqueIdentifier? { return self.uniqueID }
         access(contract) fun setID(_ id: DeFiActions.UniqueIdentifier?) { self.uniqueID = id }
+    }
+
+    access(all) struct SwapperProvider : DeFiActions.SwapperProvider {
+        access(all) fun getSwapper(inType: Type, outType: Type): Swapper? {
+            return MockDexSwapper.getSwapper(inType: inType, outType: outType)
+        }
     }
 }
