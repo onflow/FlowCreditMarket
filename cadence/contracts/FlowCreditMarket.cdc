@@ -990,8 +990,9 @@ access(all) contract FlowCreditMarket {
             let secondsPerYear = 365.25 * 24.0 * 60.0 * 60.0
             let yearsElapsed = timeElapsed / secondsPerYear
             let stabilityFeeRate = UFix128(self.stabilityFeeRate)
-            // Stability amount is a percentage of total credit balance per year
-            let stabilityAmount = self.totalCreditBalance * stabilityFeeRate * UFix128(yearsElapsed)
+
+            let interestIncome = self.totalDebitBalance * UFix128(self.currentDebitRate) * UFix128(yearsElapsed) 
+            let stabilityAmount = interestIncome * stabilityFeeRate
             let stabilityAmountUFix64 = FlowCreditMarketMath.toUFix64RoundDown(stabilityAmount)
 
             emit LastStabilityFeeCollectionUpdated(
