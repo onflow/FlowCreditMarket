@@ -44,7 +44,7 @@ fun test_collectInsurance_success_fullAmount() {
     let rateResult = setInsuranceRate(signer: protocolAccount, tokenTypeIdentifier: defaultTokenIdentifier, insuranceRate: 0.1)
     Test.expect(rateResult, Test.beSucceeded())
 
-    // collect insurance to reset lastInsuranceCollection timestamp,
+    // collect insurance to reset last insurance collection timestamp,
     // this accounts for timing variation between pool creation and this point
     // (each transaction/script execution advances the block timestamp slightly)
     collectInsurance(signer: protocolAccount, tokenTypeIdentifier: defaultTokenIdentifier, beFailed: false)
@@ -73,10 +73,10 @@ fun test_collectInsurance_success_fullAmount() {
     // verify the amount withdrawn from reserves equals the collected amount (1:1 swap ratio)
     Test.assert(ufixEqualWithinVariance(amountWithdrawnFromReserves, collectedAmount), message: "Amount withdrawn from reserves should equal collected amount")
 
-    // verify lastInsuranceCollection was updated to current block timestamp
+    // verify last insurance collection time was updated to current block timestamp
     let currentTimestamp = getBlockTimestamp()
-    let lastCollection = getLastInsuranceCollection(tokenTypeIdentifier: defaultTokenIdentifier)
-    Test.assert(ufixEqualWithinVariance(currentTimestamp, lastCollection!), message: "lastInsuranceCollection should match current timestamp")
+    let lastInsuranceCollectionTime = getLastInsuranceCollectionTime(tokenTypeIdentifier: defaultTokenIdentifier)
+    Test.assert(ufixEqualWithinVariance(currentTimestamp, lastInsuranceCollectionTime!), message: "lastInsuranceCollectionTime should match current timestamp")
 
     // verify formula: insuranceAmount = totalCreditBalance * insuranceRate * (timeElapsed / secondsPerYear)
     // Expected: 500.0 * 0.1 * (secondsInYear / secondsInYear) = 50.0 MOET

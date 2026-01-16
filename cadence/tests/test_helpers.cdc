@@ -256,8 +256,8 @@ fun insuranceSwapperExists(tokenTypeIdentifier: String): Bool {
 }
 
 access(all)
-fun getLastInsuranceCollection(tokenTypeIdentifier: String): UFix64? {
-    let res = _executeScript("../scripts/flow-credit-market/get_last_insurance_collection.cdc", [tokenTypeIdentifier])
+fun getLastInsuranceCollectionTime(tokenTypeIdentifier: String): UFix64? {
+    let res = _executeScript("../scripts/flow-credit-market/get_last_insurance_collection_time.cdc", [tokenTypeIdentifier])
     Test.expect(res, Test.beSucceeded())
     return res.returnValue as? UFix64
 }

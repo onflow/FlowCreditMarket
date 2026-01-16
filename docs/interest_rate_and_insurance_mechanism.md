@@ -113,7 +113,7 @@ Insurance is collected through the `collectInsurance()` function on `TokenState`
 
 1. **Calculates Accrued Insurance**:
    ```
-   timeElapsed = currentTime - lastInsuranceCollection
+   timeElapsed = currentTime - lastInsuranceCollectionTime
    yearsElapsed = timeElapsed / secondsPerYear
    insuranceAmount = totalCreditBalance * insuranceRate * yearsElapsed
    ```
@@ -225,7 +225,7 @@ The Pool maintains a single `insuranceFund` vault that stores all collected MOET
 - **Rate Validation**: Interest rates are validated to prevent overflow/underflow
 - **Swapper Validation**: Insurance swappers are validated when set to ensure they output MOET
 - **Reserve Checks**: Insurance collection checks that sufficient reserves exist before withdrawing
-- **Timestamp Tracking**: `lastInsuranceCollection` prevents double-counting of insurance periods
+- **Timestamp Tracking**: `lastInsuranceCollectionTime` prevents double-counting of insurance periods
 - **Precision**: Uses UFix128 for internal calculations to maintain precision during compounding
 
 ## Governance

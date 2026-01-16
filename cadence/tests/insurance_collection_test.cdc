@@ -190,7 +190,7 @@ fun test_collectInsurance_partialReserves_collectsAvailable() {
 // -----------------------------------------------------------------------------
 // Test: collectInsurance when calculated amount rounds to zero returns nil
 // Very small time elapsed + small credit balance can result in insuranceAmountUFix64 == 0
-// Should return nil and update the lastInsuranceCollection timestamp
+// Should return nil and update the last insurance collection timestamp
 // -----------------------------------------------------------------------------
 access(all)
 fun test_collectInsurance_tinyAmount_roundsToZero_returnsNil() {
@@ -278,16 +278,16 @@ fun test_collectInsurance_success_fullAmount() {
     let amountWithdrawnFromReserves = reserveBalanceBefore - reserveBalanceAfter
     Test.assert(ufixEqualWithinVariance(amountWithdrawnFromReserves, finalInsuranceBalance), message: "Amount withdrawn from reserves should equal insurance fund balance")
 
-    // verify lastInsuranceCollection was updated to current block timestamp
+    // verify last insurance collection time was updated to current block timestamp
     let currentTimestamp = getBlockTimestamp()
-    let lastCollection = getLastInsuranceCollection(tokenTypeIdentifier: defaultTokenIdentifier)
-    Test.assert(ufixEqualWithinVariance(currentTimestamp, lastCollection!), message: "lastInsuranceCollection should match current timestamp")
+    let lastCollectionTime = getLastInsuranceCollectionTime(tokenTypeIdentifier: defaultTokenIdentifier)
+    Test.assert(ufixEqualWithinVariance(currentTimestamp, lastCollectionTime!), message: "lastInsuranceCollectionTime should match current timestamp")
 }
 
 // -----------------------------------------------------------------------------
 // Test: collectInsurance with multiple token types
 // Verifies that insurance collection works independently for different tokens
-// Each token type has its own lastInsuranceCollection timestamp and rate
+// Each token type has its own last insurance collection timestamp and rate
 // -----------------------------------------------------------------------------
 access(all)
 fun test_collectInsurance_multipleTokens() {
@@ -358,13 +358,13 @@ fun test_collectInsurance_multipleTokens() {
     let moetAmountWithdrawn = moetReservesBefore - getReserveBalance(vaultIdentifier: defaultTokenIdentifier)
     Test.assert(ufixEqualWithinVariance(moetAmountWithdrawn, balanceAfterMoetCollection), message: "MOET withdrawn should equal insurance fund increase")
 
-    let moetLastCollection = getLastInsuranceCollection(tokenTypeIdentifier: defaultTokenIdentifier)
-    let flowLastCollectionBeforeFlowCollection = getLastInsuranceCollection(tokenTypeIdentifier: flowTokenIdentifier)
+    let moetLastCollectionTime = getLastInsuranceCollectionTime(tokenTypeIdentifier: defaultTokenIdentifier)
+    let flowLastCollectionTimeBeforeFlowCollection = getLastInsuranceCollectionTime(tokenTypeIdentifier: flowTokenIdentifier)
 
     // MOET timestamp should be updated, Flow timestamp should still be at pool creation time
-    Test.assert(moetLastCollection != nil, message: "MOET lastInsuranceCollection should be set")
-    Test.assert(flowLastCollectionBeforeFlowCollection != nil, message: "Flow lastInsuranceCollection should be set")
-    Test.assert(moetLastCollection! > flowLastCollectionBeforeFlowCollection!, message: "MOET timestamp should be newer than Flow timestamp")
+    Test.assert(moetLastCollectionTime != nil, message: "MOET lastInsuranceCollectionTime should be set")
+    Test.assert(flowLastCollectionTimeBeforeFlowCollection != nil, message: "Flow lastInsuranceCollectionTime should be set")
+    Test.assert(moetLastCollectionTime! > flowLastCollectionTimeBeforeFlowCollection!, message: "MOET timestamp should be newer than Flow timestamp")
 
     // collect insurance for Flow
     collectInsurance(signer: protocolAccount, tokenTypeIdentifier: flowTokenIdentifier, beFailed: false)
@@ -372,8 +372,8 @@ fun test_collectInsurance_multipleTokens() {
     let balanceAfterFlowCollection = getInsuranceFundBalance()
     Test.assert(balanceAfterFlowCollection > balanceAfterMoetCollection, message: "Insurance fund should increase after Flow collection")
 
-    let flowLastCollectionAfter = getLastInsuranceCollection(tokenTypeIdentifier: flowTokenIdentifier)
-    Test.assert(flowLastCollectionAfter != nil, message: "Flow lastInsuranceCollection should be set after collection")
+    let flowLastCollectionTimeAfter = getLastInsuranceCollectionTime(tokenTypeIdentifier: flowTokenIdentifier)
+    Test.assert(flowLastCollectionTimeAfter != nil, message: "Flow lastInsuranceCollectionTime should be set after collection")
 
     // verify reserves decreased for both token types
     let moetReservesAfter = getReserveBalance(vaultIdentifier: defaultTokenIdentifier)
@@ -387,5 +387,5 @@ fun test_collectInsurance_multipleTokens() {
     Test.assert(ufixEqualWithinVariance(flowAmountWithdrawn, flowInsuranceIncrease), message: "Flow withdrawn should equal insurance fund increase")
 
     // verify Flow timestamp is now updated (should be >= MOET timestamp since it was collected after)
-    Test.assert(flowLastCollectionAfter! >= moetLastCollection!, message: "Flow timestamp should be >= MOET timestamp")
+    Test.assert(flowLastCollectionTimeAfter! >= moetLastCollectionTime!, message: "Flow timestamp should be >= MOET timestamp")
 }

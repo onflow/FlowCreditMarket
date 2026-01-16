@@ -131,7 +131,7 @@ access(all) contract FlowCreditMarket {
         poolUUID: UInt64,
         tokenType: String,
         insuranceAmount: UFix64,
-        lastInsuranceCollection: UFix64,
+        lastInsuranceCollectionTime: UFix64,
     )
 
     /* --- CONSTRUCTS & INTERNAL METHODS ---- */
@@ -657,7 +657,7 @@ access(all) contract FlowCreditMarket {
         access(EImplementation) var insuranceRate: UFix64
 
         /// Timestamp of the last insurance collection for this token
-        access(EImplementation) var lastInsuranceCollection: UFix64
+        access(EImplementation) var lastInsuranceCollectionTime: UFix64
 
         /// Swapper used to convert this token to MOET for insurance collection
         access(EImplementation) var insuranceSwapper: {DeFiActions.Swapper}?
@@ -699,7 +699,7 @@ access(all) contract FlowCreditMarket {
             self.currentDebitRate = 1.0
             self.interestCurve = interestCurve
             self.insuranceRate = 0.001
-            self.lastInsuranceCollection = getCurrentBlock().timestamp
+            self.lastInsuranceCollectionTime = getCurrentBlock().timestamp
             self.insuranceSwapper = nil
             self.depositLimitFraction = 0.05
             self.depositRate = depositRate
@@ -715,8 +715,8 @@ access(all) contract FlowCreditMarket {
         }
 
         /// Sets the last insurance collection timestamp
-        access(EImplementation) fun setLastInsuranceCollection(_ timestamp: UFix64) {
-            self.lastInsuranceCollection = timestamp
+        access(EImplementation) fun setLastInsuranceCollectionTime(_ lastInsuranceCollectionTime: UFix64) {
+            self.lastInsuranceCollectionTime = lastInsuranceCollectionTime
         }
 
         /// Sets the swapper used for insurance collection (must swap from this token type to MOET)
@@ -985,7 +985,7 @@ access(all) contract FlowCreditMarket {
 
             // Calculate accrued insurance amount based on time elapsed since last collection
             let currentTime = getCurrentBlock().timestamp
-            let timeElapsed = currentTime - self.lastInsuranceCollection
+            let timeElapsed = currentTime - self.lastInsuranceCollectionTime
             
             // If no time has elapsed, nothing to collect
             if timeElapsed <= 0.0 {
@@ -1001,13 +1001,13 @@ access(all) contract FlowCreditMarket {
 
             // If calculated amount is zero or negative, skip collection but update timestamp
             if insuranceAmountUFix64 <= 0.0 {
-                self.setLastInsuranceCollection(currentTime)
+                self.setLastInsuranceCollectionTime(currentTime)
                 return nil
             }
             
             // Check if we have enough balance in reserves
             if reserveVault.balance <= 0.0 {
-                self.setLastInsuranceCollection(currentTime)
+                self.setLastInsuranceCollectionTime(currentTime)
                 return nil
             }
 
@@ -1026,7 +1026,7 @@ access(all) contract FlowCreditMarket {
             var moetVault <- insuranceSwapper.swap(quote: quote, inVault: <-insuranceVault) as! @MOET.Vault
 
             // Update last collection time
-            self.setLastInsuranceCollection(currentTime)
+            self.setLastInsuranceCollectionTime(currentTime)
 
             // Return the MOET vault for the caller to deposit
             return <-moetVault
@@ -1364,9 +1364,9 @@ access(all) contract FlowCreditMarket {
 
         /// Returns the timestamp of the last insurance collection for a given token type
         /// Returns nil if the token type is not supported
-        access(all) view fun getLastInsuranceCollection(tokenType: Type): UFix64? {
+        access(all) view fun getLastInsuranceCollectionTime(tokenType: Type): UFix64? {
             if let tokenState = self.globalLedger[tokenType] {
-                return tokenState.lastInsuranceCollection
+                return tokenState.lastInsuranceCollectionTime
             }
             return nil
         }
@@ -3660,7 +3660,7 @@ access(all) contract FlowCreditMarket {
                         poolUUID: self.uuid,
                         tokenType: tokenType.identifier,
                         insuranceAmount: collectedMOETBalance,
-                        lastInsuranceCollection: tokenState.lastInsuranceCollection
+                        lastInsuranceCollectionTime: tokenState.lastInsuranceCollectionTime
                     )
                 }
             }
