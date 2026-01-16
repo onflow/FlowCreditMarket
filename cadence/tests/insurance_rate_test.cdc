@@ -1,0 +1,129 @@
+import Test
+
+import "test_helpers.cdc"
+import "FlowCreditMarket"
+
+access(all) let protocolAccount = Test.getAccount(0x0000000000000007)
+access(all) let alice = Test.createAccount()
+
+access(all)
+fun setup() {
+    deployContracts()
+
+    createAndStorePool(signer: protocolAccount, defaultTokenIdentifier: defaultTokenIdentifier, beFailed: false)
+}
+
+// -----------------------------------------------------------------------------
+// Test: setInsuranceRate without EGovernance entitlement should fail
+// Verifies that accounts without EGovernance entitlement cannot set insurance rate
+// -----------------------------------------------------------------------------
+access(all)
+fun test_setInsuranceRate_withoutEGovernanceEntitlement() {
+    let res = setInsuranceRate(
+        signer: alice,
+        tokenTypeIdentifier: defaultTokenIdentifier,
+        insuranceRate: 0.01,
+    )
+
+    // should fail due to missing EGovernance entitlement
+    Test.expect(res, Test.beFailed())
+}
+
+// -----------------------------------------------------------------------------
+// Test: setInsuranceRate with EGovernance entitlement should succeed
+// Verifies the function requires proper EGovernance entitlement and updates rate
+// -----------------------------------------------------------------------------
+access(all)
+fun test_setInsuranceRate_withEGovernanceEntitlement() {
+    let defaultInsuranceRate = 0.001
+    var actual = getInsuranceRate(tokenTypeIdentifier: defaultTokenIdentifier)
+    Test.assertEqual(defaultInsuranceRate, actual!)
+
+    let insuranceRate = 0.02
+    // use protocol account with proper entitlement
+    let res = setInsuranceRate(
+        signer: protocolAccount,
+        tokenTypeIdentifier: defaultTokenIdentifier,
+        insuranceRate: insuranceRate,
+    )
+
+    Test.expect(res, Test.beSucceeded())
+
+    actual = getInsuranceRate(tokenTypeIdentifier: defaultTokenIdentifier)
+    Test.assertEqual(insuranceRate, actual!)
+}
+
+// -----------------------------------------------------------------------------
+// Test: setInsuranceRate with rate > 1.0 should fail
+// Insurance rate must be between 0 and 1 (0% to 100%)
+// -----------------------------------------------------------------------------
+access(all)
+fun test_setInsuranceRate_rateGreaterThanOne_fails() {
+    let invalidRate = 1.01
+
+    let res = setInsuranceRate(
+        signer: protocolAccount,
+        tokenTypeIdentifier: defaultTokenIdentifier,
+        insuranceRate: invalidRate,
+    )
+
+    Test.expect(res, Test.beFailed())
+
+    let errorMessage = res.error!.message
+    let containsExpectedError = errorMessage.contains("insuranceRate must be between 0 and 1")
+    Test.assert(containsExpectedError, message: "expected error about insurance rate bounds, got: \(errorMessage)")
+}
+
+// -----------------------------------------------------------------------------
+// Test: setInsuranceRate with rate < 0 should fail
+// Negative rates are invalid (UFix64 constraint)
+// -----------------------------------------------------------------------------
+access(all)
+fun test_setInsuranceRate_rateLessThanZero_fails() {
+    let invalidRate = -0.01
+
+    let res = _executeTransaction(
+        "../transactions/flow-credit-market/pool-governance/set_insurance_rate.cdc",
+        [defaultTokenIdentifier, invalidRate],
+        protocolAccount
+    )
+
+    Test.expect(res, Test.beFailed())
+
+    let errorMessage = res.error!.message
+    let containsExpectedError = errorMessage.contains("invalid argument at index 1: expected value of type `UFix64`")
+    Test.assert(containsExpectedError, message: "expected error about insurance rate bounds, got: \(errorMessage)")
+}
+
+// -----------------------------------------------------------------------------
+// Test: setInsuranceRate with unsupported token type should fail
+// Only supported tokens can have insurance rates configured
+// -----------------------------------------------------------------------------
+access(all)
+fun test_setInsuranceRate_invalidTokenType_fails() {
+    let unsupportedTokenIdentifier = flowTokenIdentifier
+    let res = setInsuranceRate(
+        signer: protocolAccount,
+        tokenTypeIdentifier: unsupportedTokenIdentifier,
+        insuranceRate: 0.05,
+    )
+
+    Test.expect(res, Test.beFailed())
+
+    let errorMessage = res.error!.message
+    let containsExpectedError = errorMessage.contains("Unsupported token type")
+    Test.assert(containsExpectedError, message: "expected error about unsupported token type, got: \(errorMessage)")
+}
+
+// -----------------------------------------------------------------------------
+// Test: getInsuranceRate for unsupported token type returns nil
+// Query for non-existent token should return nil, not fail
+// -----------------------------------------------------------------------------
+access(all)
+fun test_getInsuranceRate_invalidTokenType_returnsNil() {
+    let unsupportedTokenIdentifier = flowTokenIdentifier
+
+    let actual = getInsuranceRate(tokenTypeIdentifier: unsupportedTokenIdentifier)
+
+    Test.assertEqual(nil, actual)
+}

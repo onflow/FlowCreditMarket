@@ -121,6 +121,19 @@ access(all) contract FlowCreditMarket {
         remainingCapacity: UFix64
     )
 
+    access(all) event InsuranceRateUpdated(
+        poolUUID: UInt64,
+        tokenType: String,
+        insuranceRate: UFix64,
+    )
+
+    access(all) event InsuranceFeeCollected(
+        poolUUID: UInt64,
+        tokenType: String,
+        insuranceAmount: UFix64,
+        lastInsuranceCollectionTime: UFix64,
+    )
+
     /* --- CONSTRUCTS & INTERNAL METHODS ---- */
 
     access(all) entitlement EPosition
@@ -138,6 +151,9 @@ access(all) contract FlowCreditMarket {
           health/price computations.
         - We convert at boundaries via type casting to UFix128 or FlowCreditMarketMath.toUFix64.
     */
+
+    /// Seconds in a year (365.25 days to account for leap years)
+    access(all) let secondsInYear: UFix64
 
     /// InternalBalance
     ///
@@ -637,8 +653,14 @@ access(all) contract FlowCreditMarket {
         /// The interest curve implementation used to calculate interest rate
         access(EImplementation) var interestCurve: {InterestCurve}
 
-        /// The insurance rate applied to total credit when computing credit interest (default 0.1%)
+        /// The annual insurance rate applied to total credit when computing credit interest (default 0.1%)
         access(EImplementation) var insuranceRate: UFix64
+
+        /// Timestamp of the last insurance collection for this token
+        access(EImplementation) var lastInsuranceCollectionTime: UFix64
+
+        /// Swapper used to convert this token to MOET for insurance collection
+        access(EImplementation) var insuranceSwapper: {DeFiActions.Swapper}?
 
         /// Per-position limit fraction of capacity (default 0.05 i.e., 5%)
         access(EImplementation) var depositLimitFraction: UFix64
@@ -677,6 +699,8 @@ access(all) contract FlowCreditMarket {
             self.currentDebitRate = 1.0
             self.interestCurve = interestCurve
             self.insuranceRate = 0.001
+            self.lastInsuranceCollectionTime = getCurrentBlock().timestamp
+            self.insuranceSwapper = nil
             self.depositLimitFraction = 0.05
             self.depositRate = depositRate
             self.depositCapacity = depositCapacityCap
@@ -688,6 +712,20 @@ access(all) contract FlowCreditMarket {
         /// Sets the insurance rate for this token state
         access(EImplementation) fun setInsuranceRate(_ rate: UFix64) {
             self.insuranceRate = rate
+        }
+
+        /// Sets the last insurance collection timestamp
+        access(EImplementation) fun setLastInsuranceCollectionTime(_ lastInsuranceCollectionTime: UFix64) {
+            self.lastInsuranceCollectionTime = lastInsuranceCollectionTime
+        }
+
+        /// Sets the swapper used for insurance collection (must swap from this token type to MOET)
+        access(EImplementation) fun setInsuranceSwapper(_ swapper: {DeFiActions.Swapper}?) {
+            if let swapper = swapper {
+                assert(swapper.inType() == self.tokenType, message: "Insurance swapper must accept \(self.tokenType.identifier), not \(swapper.inType().identifier)")
+                assert(swapper.outType() == Type<@MOET.Vault>(), message: "Insurance swapper must output MOET")
+            }
+            self.insuranceSwapper = swapper
         }
 
         /// Sets the per-deposit limit fraction for this token state
@@ -925,6 +963,74 @@ access(all) contract FlowCreditMarket {
             self.currentCreditRate = FlowCreditMarket.perSecondInterestRate(yearlyRate: creditRate)
             self.currentDebitRate = FlowCreditMarket.perSecondInterestRate(yearlyRate: debitRate)
         }
+
+        /// Collects insurance by withdrawing from reserves and swapping to MOET.
+        /// The insurance amount is calculated based on the insurance rate applied to the total credit balance over the time elapsed.
+        /// This should be called periodically (e.g., when updateInterestRates is called) to accumulate the insurance fund.
+        ///
+        /// @param reserveVault: The reserve vault for this token type to withdraw insurance from
+        /// @return: A MOET vault containing the collected insurance funds, or nil if no collection occurred
+        access(EImplementation) fun collectInsurance(
+            reserveVault: auth(FungibleToken.Withdraw) &{FungibleToken.Vault}
+        ): @MOET.Vault? {
+            // If no swapper configured, skip collection
+            if self.insuranceSwapper == nil {
+                return nil
+            }
+
+            // If no credit balance, nothing to collect
+            if self.totalCreditBalance == 0.0 {
+                return nil
+            }
+
+            // Calculate accrued insurance amount based on time elapsed since last collection
+            let currentTime = getCurrentBlock().timestamp
+            let timeElapsed = currentTime - self.lastInsuranceCollectionTime
+            
+            // If no time has elapsed, nothing to collect
+            if timeElapsed <= 0.0 {
+                return nil
+            }
+
+            // Calculate insurance amount: insuranceRate is annual, so prorate by time elapsed
+            let yearsElapsed = UFix128(timeElapsed) / UFix128(FlowCreditMarket.secondsInYear)
+            let insuranceRate = UFix128(self.insuranceRate)
+            // Insurance amount is a percentage of total credit balance per year
+            let insuranceAmount = self.totalCreditBalance * insuranceRate * yearsElapsed
+            let insuranceAmountUFix64 = FlowCreditMarketMath.toUFix64RoundDown(insuranceAmount)
+
+            // If calculated amount is zero or negative, skip collection but update timestamp
+            if insuranceAmountUFix64 <= 0.0 {
+                self.setLastInsuranceCollectionTime(currentTime)
+                return nil
+            }
+            
+            // Check if we have enough balance in reserves
+            if reserveVault.balance <= 0.0 {
+                self.setLastInsuranceCollectionTime(currentTime)
+                return nil
+            }
+
+            // Withdraw insurance amount from reserves (use available balance if less than calculated)
+            let amountToCollect = insuranceAmountUFix64 > reserveVault.balance ? reserveVault.balance : insuranceAmountUFix64
+            var insuranceVault <- reserveVault.withdraw(amount: amountToCollect)
+
+			let insuranceSwapper = self.insuranceSwapper ?? panic("missing insurance swapper")
+
+            // Validate swapper input and output types (input and output types are already validated when swapper is set)
+            assert(insuranceSwapper.inType() == reserveVault.getType(), message: "Insurance swapper input type must be same as reserveVault")
+            assert(insuranceSwapper.outType() == Type<@MOET.Vault>(), message: "Insurance swapper must output MOET")
+
+            // Get quote and perform swap
+            let quote = insuranceSwapper.quoteOut(forProvided: amountToCollect, reverse: false)
+            var moetVault <- insuranceSwapper.swap(quote: quote, inVault: <-insuranceVault) as! @MOET.Vault
+
+            // Update last collection time
+            self.setLastInsuranceCollectionTime(currentTime)
+
+            // Return the MOET vault for the caller to deposit
+            return <-moetVault
+        }
     }
 
     /// Risk parameters for a token used in effective collateral/debt computations.
@@ -1119,6 +1225,9 @@ access(all) contract FlowCreditMarket {
         /// The actual reserves of each token
         access(self) var reserves: @{Type: {FungibleToken.Vault}}
 
+        /// The insurance fund vault storing MOET tokens collected from insurance rates
+        access(self) var insuranceFund: @MOET.Vault
+
         /// Auto-incrementing position identifier counter
         access(self) var nextPositionID: UInt64
 
@@ -1194,6 +1303,7 @@ access(all) contract FlowCreditMarket {
             }
             self.positions <- {}
             self.reserves <- {}
+            self.insuranceFund <- MOET.createEmptyVault(vaultType: Type<@MOET.Vault>())
             self.defaultToken = defaultToken
             self.priceOracle = priceOracle
             self.collateralFactor = {defaultToken: 1.0}
@@ -1244,6 +1354,23 @@ access(all) contract FlowCreditMarket {
             return self.globalLedger[tokenType] != nil
         }
 
+        /// Returns whether an insurance swapper is configured for a given token type
+        access(all) view fun isInsuranceSwapperConfigured(tokenType: Type): Bool {
+            if let tokenState = self.globalLedger[tokenType] {
+                return tokenState.insuranceSwapper != nil
+            }
+            return false
+        }
+
+        /// Returns the timestamp of the last insurance collection for a given token type
+        /// Returns nil if the token type is not supported
+        access(all) view fun getLastInsuranceCollectionTime(tokenType: Type): UFix64? {
+            if let tokenState = self.globalLedger[tokenType] {
+                return tokenState.lastInsuranceCollectionTime
+            }
+            return nil
+        }
+
         /// Returns current liquidation parameters
         access(all) fun getLiquidationParams(): FlowCreditMarket.LiquidationParamsView {
             return FlowCreditMarket.LiquidationParamsView(
@@ -1280,6 +1407,20 @@ access(all) contract FlowCreditMarket {
         access(all) view fun reserveBalance(type: Type): UFix64 {
             let vaultRef = &self.reserves[type] as auth(FungibleToken.Withdraw) &{FungibleToken.Vault}?
             return vaultRef?.balance ?? 0.0
+        }
+
+        /// Returns the balance of the MOET insurance fund
+        access(all) view fun insuranceFundBalance(): UFix64 {
+            return self.insuranceFund.balance
+        }
+
+        /// Returns the insurance rate for a given token type
+        access(all) view fun getInsuranceRate(tokenType: Type): UFix64? {
+            if let tokenState = self.globalLedger[tokenType] {
+                return tokenState.insuranceRate
+            }
+            
+            return nil
         }
 
         /// Returns a position's balance available for withdrawal of a given Vault type.
@@ -3126,7 +3267,7 @@ access(all) contract FlowCreditMarket {
         /// Sets per-token liquidation bonus fraction (0.0 to 1.0). E.g., 0.05 means +5% seize bonus.
         access(EGovernance) fun setTokenLiquidationBonus(tokenType: Type, bonus: UFix64) {
             pre {
-                self.globalLedger[tokenType] != nil:
+                self.isTokenSupported(tokenType: tokenType):
                     "Unsupported token type \(tokenType.identifier)"
                 bonus >= 0.0 && bonus <= 1.0:
                     "Liquidation bonus must be between 0 and 1"
@@ -3137,7 +3278,7 @@ access(all) contract FlowCreditMarket {
         /// Updates the insurance rate for a given token (fraction in [0,1])
         access(EGovernance) fun setInsuranceRate(tokenType: Type, insuranceRate: UFix64) {
             pre {
-                self.globalLedger[tokenType] != nil:
+                self.isTokenSupported(tokenType: tokenType):
                     "Unsupported token type \(tokenType.identifier)"
                 insuranceRate >= 0.0 && insuranceRate <= 1.0:
                     "insuranceRate must be between 0 and 1"
@@ -3145,12 +3286,43 @@ access(all) contract FlowCreditMarket {
             let tsRef = &self.globalLedger[tokenType] as auth(EImplementation) &TokenState?
                 ?? panic("Invariant: token state missing")
             tsRef.setInsuranceRate(insuranceRate)
+
+            emit InsuranceRateUpdated(
+                poolUUID: self.uuid,
+                tokenType: tokenType.identifier,
+                insuranceRate: insuranceRate,
+            )
+        }
+
+        /// Sets the insurance swapper for a given token type (must swap from tokenType to MOET)
+        access(EGovernance) fun setInsuranceSwapper(tokenType: Type, swapper: {DeFiActions.Swapper}?) {
+            pre {
+                self.isTokenSupported(tokenType: tokenType): "Unsupported token type"
+            }
+            let tsRef = &self.globalLedger[tokenType] as auth(EImplementation) &TokenState?
+                ?? panic("Invariant: token state missing")
+            if let swapper = swapper {
+                // Validate swapper types match
+                assert(swapper.inType() == tokenType, message: "Swapper input type must match token type")
+                assert(swapper.outType() == Type<@MOET.Vault>(), message: "Swapper output type must be MOET")
+            }
+            tsRef.setInsuranceSwapper(swapper)
+        }
+
+        /// Manually triggers insurance collection for a given token type.
+        /// This is useful for governance to collect accrued insurance on-demand.
+        /// Insurance is calculated based on time elapsed since last collection.
+        access(EGovernance) fun collectInsurance(tokenType: Type) {
+            pre {
+                self.isTokenSupported(tokenType: tokenType): "Unsupported token type"
+            }
+            self.updateInterestRatesAndCollectInsurance(tokenType: tokenType)
         }
 
         /// Updates the per-deposit limit fraction for a given token (fraction in [0,1])
         access(EGovernance) fun setDepositLimitFraction(tokenType: Type, fraction: UFix64) {
             pre {
-                self.globalLedger[tokenType] != nil:
+                self.isTokenSupported(tokenType: tokenType):
                     "Unsupported token type \(tokenType.identifier)"
                 fraction > 0.0 && fraction <= 1.0:
                     "fraction must be in (0,1]"
@@ -3163,7 +3335,7 @@ access(all) contract FlowCreditMarket {
         /// Updates the deposit rate for a given token (tokens per hour)
         access(EGovernance) fun setDepositRate(tokenType: Type, hourlyRate: UFix64) {
             pre {
-                self.globalLedger[tokenType] != nil: "Unsupported token type"
+                self.isTokenSupported(tokenType: tokenType): "Unsupported token type"
             }
             let tsRef = &self.globalLedger[tokenType] as auth(EImplementation) &TokenState?
                 ?? panic("Invariant: token state missing")
@@ -3173,7 +3345,7 @@ access(all) contract FlowCreditMarket {
         /// Updates the deposit capacity cap for a given token
         access(EGovernance) fun setDepositCapacityCap(tokenType: Type, cap: UFix64) {
             pre {
-                self.globalLedger[tokenType] != nil: "Unsupported token type"
+                self.isTokenSupported(tokenType: tokenType): "Unsupported token type"
             }
             let tsRef = &self.globalLedger[tokenType] as auth(EImplementation) &TokenState?
                 ?? panic("Invariant: token state missing")
@@ -3202,7 +3374,7 @@ access(all) contract FlowCreditMarket {
         /// new rate, which would be incorrect.
         access(EGovernance) fun setInterestCurve(tokenType: Type, interestCurve: {InterestCurve}) {
             pre {
-                self.globalLedger[tokenType] != nil: "Unsupported token type"
+                self.isTokenSupported(tokenType: tokenType): "Unsupported token type"
             }
             // First, update interest indices to compound any accrued interest at the OLD rate
             // This "finalizes" all interest accrued up to this moment before switching curves
@@ -3460,6 +3632,38 @@ access(all) contract FlowCreditMarket {
             let state = &self.globalLedger[type]! as auth(EImplementation) &TokenState
             state.updateForTimeChange()
             return state
+        }
+
+        /// Updates interest rates for a token and collects insurance if a swapper is configured for the token.
+        /// This method should be called periodically to ensure rates are current and insurance is collected.
+        ///
+        /// @param tokenType: The token type to update rates for
+        access(self) fun updateInterestRatesAndCollectInsurance(tokenType: Type) {
+            let tokenState = self._borrowUpdatedTokenState(type: tokenType)
+            tokenState.updateInterestRates()
+            
+            // Collect insurance if swapper is configured
+            // Ensure reserves exist for this token type
+            if self.reserves[tokenType] == nil {
+                return
+            }
+
+            // Get reference to reserves
+            if let reserveRef = (&self.reserves[tokenType] as auth(FungibleToken.Withdraw) &{FungibleToken.Vault}?) {
+                // Collect insurance and get MOET vault
+                if let collectedMOET <- tokenState.collectInsurance(reserveVault: reserveRef) {
+                    let collectedMOETBalance = collectedMOET.balance
+                    // Deposit collected MOET into insurance fund
+                    self.insuranceFund.deposit(from: <-collectedMOET)
+
+                    emit InsuranceFeeCollected(
+                        poolUUID: self.uuid,
+                        tokenType: tokenType.identifier,
+                        insuranceAmount: collectedMOETBalance,
+                        lastInsuranceCollectionTime: tokenState.lastInsuranceCollectionTime
+                    )
+                }
+            }
         }
 
         /// Returns an authorized reference to the requested InternalPosition or `nil` if the position does not exist
@@ -4052,8 +4256,8 @@ access(all) contract FlowCreditMarket {
     // number with 18 decimal places). The input to this function will be just the relative annual interest rate
     // (e.g. 0.05 for 5% interest), and the result will be the per-second multiplier (e.g. 1.000000000001).
     access(all) view fun perSecondInterestRate(yearlyRate: UFix128): UFix128 {
-        let secondsInYear: UFix128 = 31_536_000.0
-        let perSecondScaledValue = yearlyRate / secondsInYear
+        // TODO: replace 31536000.0 by self.secondsInYear, fix tests: interest_curve_advanced_test.cdc, interest_accrual_integration_test
+        let perSecondScaledValue = yearlyRate / 31536000.0 // 365.0 * 24.0 * 60.0 * 60.0
         assert(
             perSecondScaledValue < UFix128.max,
             message: "Per-second interest rate \(perSecondScaledValue) is too high"
@@ -4102,6 +4306,7 @@ access(all) contract FlowCreditMarket {
     }
 
     init() {
+        self.secondsInYear = 31_557_600.0 // 365.25 * 24.0 * 60.0 * 60.0
         self.PoolStoragePath = StoragePath(identifier: "flowCreditMarketPool_\(self.account.address)")!
         self.PoolFactoryPath = StoragePath(identifier: "flowCreditMarketPoolFactory_\(self.account.address)")!
         self.PoolPublicPath = PublicPath(identifier: "flowCreditMarketPool_\(self.account.address)")!

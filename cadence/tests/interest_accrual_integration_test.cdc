@@ -41,7 +41,6 @@ access(all) let protocolConsumerAccount = Test.getAccount(0x0000000000000008)
 access(all) var snapshot: UInt64 = 0
 
 // Token identifiers and storage paths
-access(all) let flowTokenIdentifier = "A.0000000000000003.FlowToken.Vault"
 access(all) let flowVaultStoragePath = /storage/flowTokenVault
 access(all) let wrapperStoragePath = /storage/flowCreditMarketPositionWrapper
 
@@ -930,11 +929,12 @@ fun test_insurance_deduction_verification() {
     // Insurance Rate: 1% (vs default 0.1%)
     // Debit Rate: 10% (vs default 4%)
     // Expected Credit Rate: 10% - 1% = 9%
-    setInsuranceRate(
+    let setRes = setInsuranceRate(
         signer: protocolAccount,
         tokenTypeIdentifier: defaultTokenIdentifier,
         insuranceRate: 0.01  // 1% insurance rate
     )
+    Test.expect(setRes, Test.beSucceeded())
 
     let highDebitRate: UFix128 = 0.10
     setInterestCurveFixed(
